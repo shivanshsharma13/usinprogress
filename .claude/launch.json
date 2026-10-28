@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "us-in-progress",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--disable-warning=ExperimentalWarning",
+        "server/index.ts"
+      ],
+      "port": 3100,
+      "env": {
+        "NODE_ENV": "production",
+        "PORT": "3100"
+      }
+    }
+  ]
+}
