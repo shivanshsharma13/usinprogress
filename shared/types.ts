@@ -115,6 +115,7 @@ export interface Topic {
   estimatedMinutes: number | null;
   sessionTargetMinutes: number | null;
   deadline: string | null;
+  planTaskId: string | null; // set when this topic is a task from a goal's sprint
   position: number;
   createdBy: string;
   status: 'active' | 'archived';
@@ -157,12 +158,14 @@ export interface SessionRecord {
 
 export interface PlanTask {
   id: string;
-  day: number; // 0-based day of the plan
+  day: number | null; // 0-based day of the plan it's scheduled on; null = in the backlog
+  plannedDay: number | null; // the day it was planned for (kept when it slips into the backlog)
   title: string;
   estMinutes: number | null;
   starred: boolean;
-  topicId: string | null; // set once the sprint is pulled into a room
+  topicId: string | null; // set once its sprint is pulled into a room
   done: boolean;
+  doneDate: string | null; // owner's calendar date it was completed
   focusedMs: number;
 }
 
@@ -170,14 +173,16 @@ export type DayStatus = 'upcoming' | 'today' | 'done' | 'partial' | 'missed' | '
 
 export interface PlanDay {
   day: number; // 0-based day of the plan
-  number: number; // 1-based day of the plan, as shown ("Day 6")
+  number: number; // 1-based, as shown ("Day 6")
   date: string;
   status: DayStatus;
+  /** Today/upcoming: tasks scheduled that day. Past days: what was planned or done that day. */
   tasks: PlanTask[];
 }
 
 export interface PlanSprint {
   number: number;
+  length: number; // days
   startDate: string;
   endDate: string;
   roomId: string | null;
@@ -185,6 +190,8 @@ export interface PlanSprint {
   completedAt: number | null;
   done: number;
   total: number;
+  focusedMs: number;
+  estMinutes: number;
   days: PlanDay[];
 }
 
@@ -192,19 +199,21 @@ export interface PlanSummary {
   id: string;
   title: string;
   startDate: string;
-  endDate: string;
-  sprintDays: number;
+  endDate: string; // end of the last sprint
+  sprintDays: number; // default length for a new sprint
   sprintCount: number;
   sprintsCompleted: number;
   currentSprint: number | null; // the sprint covering today, if any
   done: number;
   total: number;
+  backlog: number;
   focusedMs: number;
   status: 'active' | 'archived';
 }
 
 export interface Plan extends PlanSummary {
   sprints: PlanSprint[];
+  backlogTasks: PlanTask[];
 }
 
 /** A pulled sprint as shown in a room, for either member. */

@@ -74,8 +74,9 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
   const active = room.status === 'active';
   const topics = room.topics.filter((t) => t.createdBy === ownerId);
   const sprints = room.sprints.filter((s) => s.ownerId === ownerId);
-  const inSprints = new Set(sprints.flatMap((s) => s.days.flatMap((d) => d.tasks.map((t) => t.topicId))));
-  const loose = topics.filter((t) => !inSprints.has(t.id));
+  const loose = topics.filter((t) => !t.planTaskId);
+  // Goal → its sprints in this room.
+  const goals = [...new Set(sprints.map((s) => s.planId))].map((planId) => sprints.filter((s) => s.planId === planId));
   const ctx: RowContext = { ownerId, isMe, active };
 
   return (
@@ -120,8 +121,8 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
         </p>
       )}
 
-      {sprints.map((s) => (
-        <SprintBlock key={`${s.planId}-${s.number}`} sprint={s} topics={topics} {...ctx} />
+      {goals.map((list) => (
+        <GoalGroup key={list[0].planId} sprints={list} topics={topics} {...ctx} />
       ))}
 
       {(loose.length > 0 || (isMe && active && !sprints.length)) && (
@@ -146,39 +147,94 @@ interface RowContext {
   active: boolean;
 }
 
-/** A sprint pulled into the room: its days, with today open. Tasks are studied as room topics. */
-function SprintBlock({ sprint, topics, ...ctx }: { sprint: RoomSprint; topics: Topic[] } & RowContext) {
-  const byId = new Map(topics.map((t) => [t.id, t]));
+const timeVsEstimate = (ms: number, est: number) => `${fmt(ms)}${est ? ` / ~${formatMinutes(est)}` : ''}`;
+
+/** One goal in the room with its pulled sprints nested inside. */
+function GoalGroup({ sprints, topics, ...ctx }: { sprints: RoomSprint[]; topics: Topic[] } & RowContext) {
+  const first = sprints[0];
+  const done = sprints.reduce((n, s) => n + s.done, 0);
+  const total = sprints.reduce((n, s) => n + s.total, 0);
+  const ms = sprints.reduce((n, s) => n + s.focusedMs, 0);
+  const est = sprints.reduce((n, s) => n + s.estMinutes, 0);
   return (
     <div className="goal-block">
       <div className="goal-head">
         <div className="grow" style={{ minWidth: 0 }}>
-          <div className="bold">
-            {sprint.planTitle} · Sprint {sprint.number}
-          </div>
+          <div className="bold">{first.planTitle}</div>
           <div className="tiny muted num">
-            {sprint.done} of {sprint.total} tasks done · {formatDate(sprint.startDate)} – {formatDate(sprint.endDate)}
+            {done} of {total} tasks done · {timeVsEstimate(ms, est)}
           </div>
         </div>
         {ctx.isMe && (
-          <Link to={`/goals/${sprint.planId}`} className="btn ghost small">
-            Open plan
+          <Link to={`/goals/${first.planId}`} className="btn ghost small">
+            Open goal
           </Link>
         )}
       </div>
+      <ProgressBar value={done} max={total} thin label={first.planTitle} />
+      {sprints.map((s) => (
+        <SprintBlock key={s.number} sprint={s} topics={topics} {...ctx} />
+      ))}
+    </div>
+  );
+}
+
+/** A pulled sprint: today and upcoming days with their topics; earlier days fold into a short history. */
+function SprintBlock({ sprint, topics, ...ctx }: { sprint: RoomSprint; topics: Topic[] } & RowContext) {
+  const navigate = useNavigate();
+  const byId = new Map(topics.map((t) => [t.id, t]));
+  const unpull = useAction(() => api.post(`/plans/${sprint.planId}/sprints/${sprint.number}/unpull`), {
+    invalidate: [['room'], ['rooms'], ['plan', sprint.planId], ['plans']],
+    success: `Sprint ${sprint.number} taken out of the room`,
+  });
+  const ahead = sprint.days.filter((d) => d.status === 'today' || (d.status === 'upcoming' && d.tasks.length));
+  const earlier = sprint.days.filter((d) => d.status !== 'today' && d.status !== 'upcoming');
+  return (
+    <div className="goal-block nested">
+      <div className="goal-head">
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="bold">Sprint {sprint.number}</div>
+          <div className="tiny muted num">
+            {sprint.done} of {sprint.total} done · {timeVsEstimate(sprint.focusedMs, sprint.estMinutes)} · {formatDate(sprint.startDate)} – {formatDate(sprint.endDate)}
+          </div>
+        </div>
+        {ctx.isMe && (
+          <Menu
+            label={`Sprint ${sprint.number} actions`}
+            items={[
+              { label: 'Edit sprint', onClick: () => navigate(`/goals/${sprint.planId}`) },
+              { label: 'Remove from room', danger: true, onClick: () => confirm(`Take sprint ${sprint.number} out of this room? Its topics are archived here and come back if you pull it in again.`) && unpull.mutate(undefined) },
+            ]}
+          />
+        )}
+      </div>
       <ProgressBar value={sprint.done} max={sprint.total} thin label={`Sprint ${sprint.number}`} />
-      {sprint.days
-        .filter((d) => d.tasks.length || d.status === 'today')
-        .map((d) => (
-          <SprintDay key={d.day} day={d} topics={d.tasks.map((t) => byId.get(t.topicId ?? '')).filter(Boolean) as Topic[]} {...ctx} />
-        ))}
+      {ahead.map((d) => (
+        <SprintDay key={d.day} day={d} topics={d.tasks.map((t) => byId.get(t.topicId ?? '')).filter(Boolean) as Topic[]} {...ctx} />
+      ))}
+      {earlier.length > 0 && (
+        <details className="small">
+          <summary className="muted">Earlier days</summary>
+          <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+            {earlier.map((d) => (
+              <div key={d.day} className="row between">
+                <span>
+                  Day {d.number} · {formatDate(d.date, { weekday: 'short', day: 'numeric', month: 'short' })}
+                </span>
+                <span className={`tiny day-status ${d.status}`}>{DAY_STATUS_LABEL[d.status]}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
 
 function SprintDay({ day, topics, ...ctx }: { day: PlanDay; topics: Topic[] } & RowContext) {
   const [open, setOpen] = useState(day.status === 'today');
-  const label = DAY_STATUS_LABEL[day.status];
+  const ms = day.tasks.reduce((n, t) => n + t.focusedMs, 0);
+  const est = day.tasks.reduce((n, t) => n + (t.estMinutes ?? 0), 0);
   return (
     <div className={`day-row${day.status === 'today' ? ' today' : ''}`}>
       {day.status === 'today' && <span className="today-tag">Today</span>}
@@ -187,7 +243,7 @@ function SprintDay({ day, topics, ...ctx }: { day: PlanDay; topics: Topic[] } & 
           Day {day.number} · {formatDate(day.date, { weekday: 'short', day: 'numeric', month: 'short' })}
         </span>
         <span className="grow" />
-        {day.status !== 'today' && label && <span className={`tiny day-status ${day.status}`}>{label}</span>}
+        <span className="tiny muted num">{timeVsEstimate(ms, est)}</span>
         {open ? <ChevronDown width={16} /> : <ChevronRight width={16} />}
       </button>
       {open && (
@@ -237,8 +293,7 @@ function TopicRow({ topic: t, index, siblings, ownerId, isMe, active, planned }:
       <div style={{ minWidth: 0 }}>
         <div className="bold">{t.title}</div>
         <div className="tiny muted">
-          {statusText(p)}
-          {meta && ` · ${meta}`}
+          {planned ? `${statusText(p).split(' · ')[0]} · ${timeVsEstimate(p?.focusedMs ?? 0, t.estimatedMinutes ?? 0)}` : `${statusText(p)}${meta ? ` · ${meta}` : ''}`}
         </div>
       </div>
       {isMe && active && (

@@ -113,27 +113,30 @@ export const sessionCorrectSchema = z.object({
   reason: text(200).optional(),
 });
 
+const sprintLength = z.number().int().min(1, 'At least 1 day').max(60, 'Up to 60 days');
+
 export const planCreateSchema = z.object({
   title,
   startDate: date,
-  sprintDays: z.number().int().min(1, 'At least 1 day').max(60, 'Up to 60 days'),
-  sprintCount: z.number().int().min(1, 'At least 1 sprint').max(100, 'Up to 100 sprints'),
+  sprintDays: sprintLength,
 });
 
 export const planUpdateSchema = z.object({
   title: title.optional(),
-  sprintCount: z.number().int().min(1).max(100).optional(),
   status: z.enum(['active', 'archived']).optional(),
 });
 
+export const sprintCreateSchema = z.object({ days: sprintLength.optional() });
+export const sprintUpdateSchema = z.object({ days: sprintLength });
+
 export const planTaskCreateSchema = z.object({
-  day: z.number().int().min(0),
+  day: z.number().int().min(0).nullable(), // null = straight into the backlog
   title,
   estMinutes: minutes.max(24 * 60).nullable().optional(),
 });
 
 export const planTaskUpdateSchema = z.object({
-  day: z.number().int().min(0).optional(),
+  day: z.number().int().min(0).nullable().optional(),
   title: title.optional(),
   estMinutes: minutes.max(24 * 60).nullable().optional(),
   starred: z.boolean().optional(),

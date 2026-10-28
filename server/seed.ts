@@ -5,7 +5,7 @@ import { hashPassword } from './auth.ts';
 import { addDays, localDate } from '../shared/dates.ts';
 import { createRoom, completeTopic } from './services/rooms.ts';
 import { sendFriendRequest, respondToRequest, encourage } from './services/social.ts';
-import { addTask, createPlan, pullSprint } from './services/plans.ts';
+import { addSprint, addTask, createPlan, pullSprint } from './services/plans.ts';
 import { createTask } from './services/tasks.ts';
 
 if (process.env.NODE_ENV === 'production') {
@@ -51,8 +51,9 @@ respondToRequest(db, mira, req.id, true);
 // One shared room. Each person pulls the current sprint of their own plan into it.
 const room = createRoom(db, asha, { friendId: mira, name: 'Our 90-Day Growth Plan', description: 'DSA for Asha, medicine for Mira.', startDate: today, endDate: addDays(today, 90), color: 'sage' });
 
-// Asha's plan: 11 sprints of 12 days, started 5 days ago, so today is Day 6.
-const gtfo = createPlan(db, asha, { title: 'GTFO 2026', startDate: addDays(today, -5), sprintDays: 12, sprintCount: 11 });
+// Asha's plan: sprints of 12 days, started 5 days ago, so today is Day 6. Sprints are added as needed.
+const gtfo = createPlan(db, asha, { title: 'GTFO 2026', startDate: addDays(today, -5), sprintDays: 12 });
+addSprint(db, asha, gtfo);
 const ashaDays: [string, number][][] = [
   [['Set Matrix Zeroes', 30], ['Pascal’s Triangle', 20], ['Next Permutation (first try)', 30]],
   [['Kadane’s Algorithm', 25], ['Sort 0s, 1s and 2s', 20]],
@@ -65,8 +66,8 @@ const ashaDays: [string, number][][] = [
 ];
 ashaDays.forEach((tasks, day) => tasks.forEach(([title, est]) => addTask(db, asha, gtfo, { day, title, estMinutes: est })));
 
-// Mira's plan: 6 sprints of 14 days, started 2 days ago.
-const med = createPlan(db, mira, { title: 'Medical syllabus 2026', startDate: addDays(today, -2), sprintDays: 14, sprintCount: 6 });
+// Mira's plan: 14-day sprints, started 2 days ago.
+const med = createPlan(db, mira, { title: 'Medical syllabus 2026', startDate: addDays(today, -2), sprintDays: 14 });
 const miraDays: [string, number][][] = [
   [['Enzyme kinetics', 90], ['Michaelis–Menten questions', 40]],
   [['Glycolysis', 80], ['TCA cycle', 60]],

@@ -82,9 +82,10 @@ interface ProgressRow {
 function loadTopics(db: DB, roomIds: string[], includeArchived: boolean): Topic[] {
   if (!roomIds.length) return [];
   const ph = placeholders(roomIds.length);
-  const topics = all<TopicRow>(
+  const topics = all<TopicRow & { plan_task_id: string | null }>(
     db,
-    `SELECT * FROM topics WHERE room_id IN (${ph}) ${includeArchived ? '' : "AND status = 'active'"} ORDER BY position, created_at`,
+    `SELECT t.*, pt.id AS plan_task_id FROM topics t LEFT JOIN plan_tasks pt ON pt.topic_id = t.id AND pt.status = 'active'
+      WHERE t.room_id IN (${ph}) ${includeArchived ? '' : "AND t.status = 'active'"} ORDER BY t.position, t.created_at`,
     ...roomIds,
   );
   if (!topics.length) return [];
@@ -131,6 +132,7 @@ function loadTopics(db: DB, roomIds: string[], includeArchived: boolean): Topic[
       deadline: t.deadline,
       position: t.position,
       createdBy: t.created_by,
+      planTaskId: t.plan_task_id,
       status: t.status,
       createdAt: t.created_at,
       progress: prog,
@@ -150,7 +152,7 @@ function summarize(db: DB, viewerId: string, room: RoomRow, topics: Topic[]): Ro
   const active = topics.filter((t) => t.status === 'active');
   // Today's plan task comes first; otherwise the first of your open topics in this room.
   const mine = active.filter((t) => t.createdBy === viewerId);
-  const next = nextPlanTopic(db, viewerId, room.id) ?? mine.find((t) => !isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising');
+  const next = nextPlanTopic(db, viewerId, room.id) ?? mine.find((t) => !t.planTaskId && (!isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising'));
   return {
     id: room.id,
     name: room.name,
@@ -380,7 +382,9 @@ export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afte
     db,
     `SELECT t.id, t.title, p.status FROM topics t
        LEFT JOIN topic_progress p ON p.topic_id = t.id AND p.user_id = ?
-      WHERE t.room_id = ? AND t.created_by = ? AND t.status = 'active' ORDER BY t.position, t.created_at`,
+      WHERE t.room_id = ? AND t.created_by = ? AND t.status = 'active'
+        AND NOT EXISTS (SELECT 1 FROM plan_tasks pt WHERE pt.topic_id = t.id AND pt.status = 'active')
+      ORDER BY t.position, t.created_at`,
     userId,
     roomId,
     userId,

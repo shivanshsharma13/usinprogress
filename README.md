@@ -4,11 +4,15 @@ A private, shared study garden for two friends. Everything hangs off one simple 
 
 **Goal → sprints → days → tasks**, then **pull a sprint into a shared room** to study it there.
 
-A goal (say "GTFO 2026") is your own plan: a start date, a sprint length (e.g. 12 days) and a number of
-sprints. The app lays out the days; you put tasks with estimated times on each day. When a sprint starts,
-pull it into the room you share with your friend: its tasks appear in your column there, you study them
-with the timer, and each finished task ticks off on its day. Past days show **Completed**, **Partially
-completed** or **Missed**; the goal page shows what to start next, today's progress and a ☆ revision list.
+A goal (say "GTFO 2026") is your own plan. It starts with one sprint (e.g. 12 days) and you **add sprints
+as you go**, each with its own length. You put tasks with estimated times on each day. Pull a sprint into
+the room you share with your friend: in your column there it shows as goal → sprints → days → topics, each
+with time spent against the estimate, and you study with the timer. You can **take a sprint out of the
+room** again (its topics are archived, history kept, and come back if you pull it in later).
+
+A task you don't finish on its day goes to the **backlog**. It doesn't move forward on its own and stays
+out of the room until you schedule it again ("Do today" or pick a day). Past days keep an honest record —
+**Completed**, **Partially completed** or **Missed** — judged by what was done on that day.
 
 ---
 
@@ -124,11 +128,13 @@ time zone.
   index allows only one running/paused session per user. `measured_ms` (what the clock said) is kept
   alongside `focused_ms` (what counts).
 - **session_corrections** — every change to a recorded duration, with old and new values.
-- **plans** — a goal: owner, title, start date, days per sprint, number of sprints. Days aren't stored;
-  day N is the start date + N.
-- **plan_sprints** — only for sprints pulled into a room (`room_id`) or reviewed (`completed_at`).
-- **plan_tasks** — tasks on a day of a plan, with estimate, ☆ star and, once its sprint is in a room, the
-  `topic_id` it's studied as. Removing a task archives its topic, so study history stays.
+- **plans** — a goal: owner, title, start date, default sprint length. Days aren't stored; day N is the
+  start date + N.
+- **plan_sprints** — one row per sprint, numbered, each with its own length (`days`); the room it's pulled
+  into and when it was reviewed. Sprints run back to back.
+- **plan_tasks** — `day` (NULL = parked in the backlog), `planned_day` (the day it was planned for, kept
+  when it slips), estimate, ☆ star and, once its sprint is in a room, the `topic_id` it's studied as.
+  Removing a task archives its topic, so study history stays.
 - `goals` / `topics.goal_id` from an earlier version are no longer used.
 - **tasks** + **task_events** — calendar items: date, optional time/duration, optional room/topic, shared
   flag, private note. Moves are logged; removal archives.
@@ -151,11 +157,15 @@ around). The next topic is selected but its timer is **not** started. Completing
 **Goals and sprints.** A plan task becomes a room topic when its sprint is pulled into a room, so the timer,
 completions, live status and the friend's view need nothing new. Progress is never stored: a task is done
 when its topic has a (non-revoked) completion, and its time is the topic's finished sessions. A day is
-*Completed* when all its tasks are done, *Partially completed* when some are, *Missed* when none are (past
-days only). Editing a task on the plan keeps its room topic in step; a task can't move into a sprint that's
-in a different room. "Review & complete" closes a sprint (it leaves the room view; history stays). In the
-room, "Study next" is today's first open task, then overdue ones; finishing a task moves on to the next one
-that day, then the following days.
+judged on what was planned for it (`planned_day`) and done by that date: all → *Completed*, some → *Partially
+completed*, none → *Missed*. Backlog = unfinished tasks whose day has passed, or parked ones; scheduling one
+again keeps its `planned_day`, while re-planning a task that isn't overdue moves it. A room shows only tasks
+scheduled for today or later in open sprints pulled into it, so the backlog never leaks in. Resizing a
+sprint shifts the sprints after it (ended sprints can't change; days with tasks can't be cut). Only the
+last, empty sprint can be removed. Taking a sprint out of a room archives its topics; pulling it in again
+(to any room) restores them with their done state. Editing a task on the plan keeps its room topic in step.
+"Review & complete" closes a sprint. In the room, "Study next" is today's first open task, then upcoming
+ones; finishing a task moves on to the next one that day, then the following days.
 
 **Topic ownership.** A room is a shared space with two personal lists — an engineer's DSA topics next to a
 doctor's biochemistry topics. `requireOwnTopic` in `services/core.ts` rejects any change, completion or study
@@ -180,8 +190,8 @@ reconnect the client refetches everything, and a small indicator shows "Reconnec
   between friends and only two members, independent topic progress, live partner status over SSE, pause
   excluding paused time, refresh recovery, complete → next topic not started, finish without completion,
   idempotent retries, long-session confirmation with audited corrections, goal plans with day statuses,
-  pulling a sprint into a room (studyable there, partner read-only, next task in day order, edits kept in
-  step, removing a task keeps history, completing a sprint), shared vs
+  adding/resizing/removing sprints, the backlog (stays out of the room, scheduling keeps day history),
+  pulling and removing sprints from rooms, partner read-only, next task in day order, shared vs
   private calendar items and notes, moving tasks keeping sessions, archiving keeping history, encouragement in
   real time, hidden status, owner-only profile edits, and accurate failure responses.
 - Manually in a browser: sign-in, home, starting/pausing/resuming the timer, reload recovery, completing a

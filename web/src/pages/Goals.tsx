@@ -46,7 +46,7 @@ export function GoalsPage() {
               </button>
             }
           >
-            For example “GTFO 2026”: 11 sprints of 12 days, with a few problems or chapters on each day.
+            For example “GTFO 2026”: sprints of 12 days, with a few problems or chapters on each day. Add sprints as you go.
           </Empty>
         </div>
       )}
@@ -89,11 +89,10 @@ export function GoalsPage() {
 
 function NewPlanModal({ today, onClose }: { today: string; onClose: () => void }) {
   const navigate = useNavigate();
-  const [f, setF] = useState({ title: '', startDate: today, sprintDays: '12', sprintCount: '4' });
+  const [f, setF] = useState({ title: '', startDate: today, sprintDays: '12' });
   const [err, setErr] = useState<string | null>(null);
-  const body = { title: f.title, startDate: f.startDate, sprintDays: Number(f.sprintDays), sprintCount: Number(f.sprintCount) };
+  const body = { title: f.title, startDate: f.startDate, sprintDays: Number(f.sprintDays) };
   const valid = planCreateSchema.safeParse(body).success;
-  const days = body.sprintDays * body.sprintCount;
   const create = useAction(() => api.post<{ id: string }>('/plans', body), {
     invalidate: [['plans']],
     success: 'Goal created 🌱',
@@ -135,15 +134,12 @@ function NewPlanModal({ today, onClose }: { today: string; onClose: () => void }
         <Field label="Starts on" full>
           <input className="input" type="date" value={f.startDate} onChange={(e) => setF({ ...f, startDate: e.target.value })} />
         </Field>
-        <Field label="Days per sprint">
+        <Field label="Days per sprint" hint="You can give each sprint its own length later." full>
           <input className="input" type="number" min="1" max="60" inputMode="numeric" value={f.sprintDays} onChange={(e) => setF({ ...f, sprintDays: e.target.value })} />
-        </Field>
-        <Field label="Number of sprints">
-          <input className="input" type="number" min="1" max="100" inputMode="numeric" value={f.sprintCount} onChange={(e) => setF({ ...f, sprintCount: e.target.value })} />
         </Field>
         {valid && (
           <p className="small muted full">
-            {days} days in total, ending {formatDate(addDays(f.startDate, days - 1), { day: 'numeric', month: 'short', year: 'numeric' })}. You can add sprints later.
+            Sprint 1 runs {formatDate(f.startDate)} – {formatDate(addDays(f.startDate, body.sprintDays - 1), { day: 'numeric', month: 'short', year: 'numeric' })}. Add more sprints whenever you need them.
           </p>
         )}
         {err && (

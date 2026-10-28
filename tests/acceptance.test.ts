@@ -282,94 +282,129 @@ test('reconnecting replays nothing: realtime events only invalidate, state comes
 
 // ───────────── Goals ─────────────
 
-test('goals are plans of sprints and days; days show done, partial, missed or today', async () => {
-  // Started 3 days ago: day 0..2 are past, day 3 is today. 2 sprints of 4 days.
-  const res = await A.post('/plans', { title: 'GTFO 2026', startDate: addDays(today, -3), sprintDays: 4, sprintCount: 2 });
+test('a goal starts with one sprint; sprints are added, resized and removed as needed', async () => {
+  // Started 3 days ago with 4-day sprints: day 0..2 are past, day 3 (end of sprint 1) is today.
+  const res = await A.post('/plans', { title: 'GTFO 2026', startDate: addDays(today, -3), sprintDays: 4 });
   assert.equal(res.status, 201);
   const planId = res.body.id;
-  const add = async (day: number, title: string, estMinutes = 20) => (await A.post(`/plans/${planId}/tasks`, { day, title, estMinutes })).body.id as string;
-  await add(0, 'Set Matrix Zeroes');
-  await add(0, 'Pascal’s Triangle');
-  await add(1, 'Kadane');
-  await add(3, 'Next Permutation', 26);
-  await add(3, 'Majority Element II', 25);
-  await add(5, 'Two Sum');
-  assert.equal((await A.post(`/plans/${planId}/tasks`, { day: 8, title: 'Too late' })).status, 400);
+  const get = async () => (await A.get(`/plans/${planId}`)).body.plan;
+  let plan = await get();
+  assert.equal(plan.sprintCount, 1);
+  assert.equal(plan.endDate, today);
 
-  const plan = (await A.get(`/plans/${planId}`)).body.plan;
-  assert.equal(plan.endDate, addDays(today, 4));
-  assert.equal(plan.currentSprint, 1);
-  assert.equal(plan.sprints.length, 2);
-  const [s1, s2] = plan.sprints;
-  assert.deepEqual(s1.days.map((d: any) => d.number), [1, 2, 3, 4]);
-  assert.deepEqual(s1.days.map((d: any) => d.status), ['missed', 'missed', 'rest', 'today']);
-  assert.equal(s2.days[0].date, addDays(today, 1));
-  assert.equal(s2.days[1].tasks[0].title, 'Two Sum');
-  // Nothing is studyable until the sprint is pulled into a room.
-  assert.ok(s1.days[3].tasks.every((t: any) => t.topicId === null));
+  const add = async (day: number | null, title: string, estMinutes = 20) => A.post(`/plans/${planId}/tasks`, { day, title, estMinutes });
+  for (const [day, title] of [[0, 'Set Matrix Zeroes'], [0, 'Pascal’s Triangle'], [1, 'Kadane'], [3, 'Next Permutation'], [3, 'Majority Element II']] as const) {
+    assert.equal((await add(day, title)).status, 201);
+  }
+  assert.equal((await add(5, 'Two Sum')).status, 400); // no sprint 2 yet
+
+  // Add a sprint of a different length when you need it.
+  assert.equal((await A.post(`/plans/${planId}/sprints`, { days: 3 })).body.number, 2);
+  assert.equal((await add(5, 'Two Sum')).status, 201);
+  plan = await get();
+  assert.deepEqual(plan.sprints.map((s: any) => s.length), [4, 3]);
+  assert.equal(plan.endDate, addDays(today, 3));
+  assert.deepEqual(plan.sprints[0].days.map((d: any) => d.status), ['missed', 'missed', 'rest', 'today']);
+  // Unfinished tasks on past days are the backlog.
+  assert.equal(plan.backlog, 3);
+  assert.deepEqual(plan.backlogTasks.map((t: any) => t.title), ['Set Matrix Zeroes', 'Pascal’s Triangle', 'Kadane']);
+
+  // Lengthening sprint 1 pushes sprint 2 (and its tasks) back; shortening brings them forward.
+  await A.patch(`/plans/${planId}/sprints/1`, { days: 5 });
+  plan = await get();
+  assert.equal(plan.sprints[1].startDate, addDays(today, 2));
+  assert.equal(plan.sprints[1].days[1].tasks[0].title, 'Two Sum');
+  await A.patch(`/plans/${planId}/sprints/1`, { days: 4 });
+  assert.equal((await get()).sprints[1].days[1].tasks[0].title, 'Two Sum');
+  assert.equal((await A.patch(`/plans/${planId}/sprints/1`, { days: 2 })).status, 400); // would cut days with tasks
+
+  // Only the last, empty sprint can be removed.
+  assert.equal((await A.del(`/plans/${planId}/sprints/1`)).status, 400);
+  assert.equal((await A.del(`/plans/${planId}/sprints/2`)).status, 400);
+  await A.post(`/plans/${planId}/sprints`, {});
+  assert.equal((await get()).sprints[2].length, 4);
+  assert.equal((await A.del(`/plans/${planId}/sprints/3`)).status, 200);
+  assert.equal((await get()).sprintCount, 2);
 });
 
-test('pulling a sprint into a room makes its tasks studyable there, in day order, for both of you to see', async () => {
+test('pulled sprints: study in the room, backlog stays out until you schedule it, and sprints can leave the room', async () => {
   const planId = (await A.get('/plans')).body.plans.find((p: any) => p.title === 'GTFO 2026').id;
-  // Strangers and the partner can't touch the plan or pull it.
+  const get = async () => (await A.get(`/plans/${planId}`)).body.plan;
   assert.equal((await B.get(`/plans/${planId}`)).status, 404);
   assert.equal((await B.post(`/plans/${planId}/sprints/1/pull`, { roomId })).status, 404);
-  assert.equal((await A.post(`/plans/${planId}/sprints/1/pull`, { roomId: 'nope' })).status, 404);
 
   assert.equal((await A.post(`/plans/${planId}/sprints/1/pull`, { roomId })).status, 200);
-  assert.equal((await A.post(`/plans/${planId}/sprints/1/pull`, { roomId })).status, 200); // idempotent
-  assert.equal((await A.post(`/plans/${planId}/sprints/1/pull`, { roomId: room2Id })).status, 409);
+  let plan = await get();
+  const [s1] = plan.sprints;
+  const todays = s1.days[3].tasks;
+  const backlogTask = plan.backlogTasks[0];
+  assert.ok(todays.every((t: any) => t.topicId));
 
-  let plan = (await A.get(`/plans/${planId}`)).body.plan;
-  const s1 = plan.sprints[0];
-  assert.equal(s1.roomId, roomId);
-  const day1 = s1.days[0].tasks;
-  const today = s1.days[3].tasks;
-  assert.ok([...day1, ...today].every((t: any) => t.topicId));
-  assert.equal(plan.sprints[1].days[1].tasks[0].topicId, null); // sprint 2 still in the plan only
+  // The partner sees the sprint in the room, read-only.
+  let room = (await B.get(`/rooms/${roomId}`)).body;
+  assert.equal(room.sprints.find((sp: any) => sp.planId === planId).ownerId, a.id);
+  assert.equal((await B.post(`/topics/${todays[0].topicId}/complete`)).status, 403);
 
-  // The partner sees A's sprint in the room, read-only.
-  const room = (await B.get(`/rooms/${roomId}`)).body;
-  const seen = room.sprints.find((sp: any) => sp.planId === planId);
-  assert.equal(seen.ownerId, a.id);
-  assert.equal(seen.days[3].tasks.length, 2);
-  assert.equal((await B.post(`/topics/${today[0].topicId}/complete`)).status, 403);
-  assert.equal((await B.patch(`/plan-tasks/${today[0].id}`, { title: 'x' })).status, 404);
+  // "Study next" is today's first task — never a backlog task.
+  room = (await A.get(`/rooms/${roomId}`)).body;
+  assert.equal(room.nextTopic.id, todays[0].topicId);
+  assert.ok(room.topics.find((t: any) => t.id === todays[0].topicId).planTaskId);
+  const s = (await A.post('/sessions', { topicId: todays[0].topicId })).body.session;
+  assert.equal((await A.post(`/sessions/${s.id}/finish`, { completeTopic: true })).body.nextTopic.id, todays[1].topicId);
 
-  // "Study next" in the room is today's first task; finishing it moves to the next task that day.
-  const mine = (await A.get(`/rooms/${roomId}`)).body;
-  assert.equal(mine.nextTopic.id, today[0].topicId);
-  const s = (await A.post('/sessions', { topicId: today[0].topicId })).body.session;
-  const done = (await A.post(`/sessions/${s.id}/finish`, { completeTopic: true })).body;
-  assert.equal(done.nextTopic.id, today[1].topicId);
+  // You decide when a backlog task comes back: schedule it for today. Its old day keeps its history.
+  await A.patch(`/plan-tasks/${backlogTask.id}`, { day: 3 });
+  plan = await get();
+  assert.equal(plan.backlog, 2);
+  assert.ok(plan.sprints[0].days[3].tasks.some((t: any) => t.id === backlogTask.id));
+  assert.equal(plan.sprints[0].days[0].status, 'missed');
+  const moved = plan.sprints[0].days[3].tasks.find((t: any) => t.id === backlogTask.id);
+  assert.equal(moved.plannedDay, 0);
+  await A.post(`/topics/${moved.topicId}/complete`);
+  assert.equal((await get()).sprints[0].days[0].status, 'missed'); // done, but not on its day
 
-  // Past day with one of two done → partial; the time shows on the task.
-  await A.post(`/topics/${day1[0].topicId}/complete`);
-  plan = (await A.get(`/plans/${planId}`)).body.plan;
-  assert.equal(plan.sprints[0].days[0].status, 'partial');
-  assert.equal(plan.sprints[0].days[3].tasks[0].done, true);
-  assert.ok(plan.sprints[0].days[3].tasks[0].focusedMs >= 0);
-  assert.equal(plan.done, 2);
-  assert.equal(plan.total, 6);
+  // A task done on its own day counts for that day.
+  const other = plan.backlogTasks.find((t: any) => t.title === 'Pascal’s Triangle');
+  await A.patch(`/plan-tasks/${other.id}`, { day: 3 });
+  const otherTopic = (await get()).sprints[0].days[3].tasks.find((t: any) => t.id === other.id).topicId;
+  await A.post(`/topics/${otherTopic}/complete`);
+  srv.db.prepare('UPDATE topic_completions SET local_date = ? WHERE topic_id = ?').run(addDays(today, -3), otherTopic);
+  assert.equal((await get()).sprints[0].days[0].status, 'partial');
 
-  // Adding a task to a pulled sprint puts it in the room right away; editing keeps the topic in step.
-  const extra = (await A.post(`/plans/${planId}/tasks`, { day: 3, title: 'Count Inversions', estMinutes: 23 })).body.id;
-  let task = (await A.get(`/plans/${planId}`)).body.plan.sprints[0].days[3].tasks.find((t: any) => t.id === extra);
-  assert.ok(task.topicId);
-  await A.patch(`/plan-tasks/${extra}`, { title: 'Count Inversions (merge sort)', starred: true });
-  const topic = (await A.get(`/rooms/${roomId}`)).body.topics.find((t: any) => t.id === task.topicId);
-  assert.equal(topic.title, 'Count Inversions (merge sort)');
-  task = (await A.get(`/plans/${planId}`)).body.plan.sprints[0].days[3].tasks.find((t: any) => t.id === extra);
-  assert.equal(task.starred, true);
+  // Parking today's task in the backlog takes it out of the room.
+  await A.patch(`/plan-tasks/${todays[1].id}`, { day: null });
+  room = (await A.get(`/rooms/${roomId}`)).body;
+  const roomToday = room.sprints.find((sp: any) => sp.planId === planId).days[3].tasks.map((t: any) => t.id);
+  assert.ok(!roomToday.includes(todays[1].id));
+  assert.notEqual(room.nextTopic?.id, todays[1].topicId);
 
-  // Moving a studied task into a sprint that isn't in this room is refused.
+  // Take the sprint out of the room: its topics are archived; pull it back and they return, still done.
+  const doneBefore = (await get()).done;
+  await A.post(`/plans/${planId}/sprints/1/unpull`);
+  room = (await A.get(`/rooms/${roomId}`)).body;
+  assert.ok(!room.sprints.some((sp: any) => sp.planId === planId));
+  assert.ok(room.archivedTopics.some((t: any) => t.id === todays[0].topicId));
+  assert.equal((await get()).sprints[0].roomId, null);
+  await A.post(`/plans/${planId}/sprints/1/pull`, { roomId });
+  room = (await A.get(`/rooms/${roomId}`)).body;
+  assert.ok(room.topics.some((t: any) => t.id === todays[0].topicId));
+  assert.equal((await get()).done, doneBefore);
+
+  // Sprints can live in different rooms; moving a task between them moves its topic.
   await A.post(`/plans/${planId}/sprints/2/pull`, { roomId: room2Id });
-  assert.equal((await A.patch(`/plan-tasks/${extra}`, { day: 5 })).status, 400);
+  await A.patch(`/plan-tasks/${todays[0].id}`, { day: 5 });
+  assert.ok((await A.get(`/rooms/${room2Id}`)).body.topics.some((t: any) => t.id === todays[0].topicId));
 
-  // Removing a task archives its topic (history kept); completing the sprint takes it out of the room view.
+  // Editing on the plan keeps the room topic in step; removing a task keeps its history.
+  const extra = (await A.post(`/plans/${planId}/tasks`, { day: 3, title: 'Count Inversions', estMinutes: 23 })).body.id;
+  await A.patch(`/plan-tasks/${extra}`, { title: 'Count Inversions (merge sort)', starred: true });
+  const task = (await get()).sprints[0].days[3].tasks.find((t: any) => t.id === extra);
+  assert.equal(task.starred, true);
+  assert.equal((await A.get(`/rooms/${roomId}`)).body.topics.find((t: any) => t.id === task.topicId).title, 'Count Inversions (merge sort)');
   await A.del(`/plan-tasks/${extra}`);
-  const after = (await A.get(`/rooms/${roomId}`)).body;
-  assert.ok(after.archivedTopics.some((t: any) => t.id === task.topicId));
+  assert.ok((await A.get(`/rooms/${roomId}`)).body.archivedTopics.some((t: any) => t.id === task.topicId));
+
+  // Review & complete takes the sprint out of the room view.
   await A.post(`/plans/${planId}/sprints/1/complete`);
   assert.ok(!(await A.get(`/rooms/${roomId}`)).body.sprints.some((sp: any) => sp.planId === planId));
   assert.equal((await A.get('/plans')).body.plans.find((p: any) => p.id === planId).sprintsCompleted, 1);

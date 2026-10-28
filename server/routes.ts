@@ -321,6 +321,31 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
     res.json({ ok: true });
   });
 
+  r.post('/plans/:id/sprints', (req, res) => {
+    const number = plans.addSprint(db, req.userId, String(req.params.id), parse(v.sprintCreateSchema, req.body).days);
+    notifyPlan(req);
+    res.status(201).json({ number });
+  });
+
+  r.patch('/plans/:id/sprints/:n', (req, res) => {
+    plans.resizeSprint(db, req.userId, String(req.params.id), sprintNumber(req), parse(v.sprintUpdateSchema, req.body).days);
+    notifyPlan(req);
+    res.json({ ok: true });
+  });
+
+  r.delete('/plans/:id/sprints/:n', (req, res) => {
+    plans.removeSprint(db, req.userId, String(req.params.id), sprintNumber(req));
+    notifyPlan(req);
+    res.json({ ok: true });
+  });
+
+  r.post('/plans/:id/sprints/:n/unpull', (req, res) => {
+    const roomId = plans.unpullSprint(db, req.userId, String(req.params.id), sprintNumber(req));
+    notifyPlan(req);
+    if (roomId) notifyRoom(roomId, ['rooms', 'room', 'plans']);
+    res.json({ ok: true });
+  });
+
   r.post('/plans/:id/sprints/:n/pull', (req, res) => {
     const roomId = plans.pullSprint(db, req.userId, String(req.params.id), sprintNumber(req), parse(v.pullSprintSchema, req.body).roomId);
     notifyPlan(req);

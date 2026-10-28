@@ -1,10 +1,12 @@
-// Plans (shown as "Goals"): a personal plan split into sprints of days, each day holding tasks.
+// Plans (shown as "Goals"): plan → sprints → days → tasks.
 //
-//   plan → sprints → days → tasks
+// Sprints are added one at a time and each has its own length; they run back to back, so day N of a
+// plan is simply start_date + N. A task is scheduled on a day, or parked in the backlog (day NULL).
+// A task left unfinished on a past day also counts as backlog; it never moves forward on its own.
 //
-// Days are computed (day N = start_date + N); only tasks are stored. A task becomes studyable once
-// its sprint is pulled into a shared room: it then gets a topic in that room, and its progress and
-// time come from that topic (topic_completions and study_sessions stay the single record of work).
+// A task becomes studyable once its sprint is pulled into a shared room: it gets a topic there, and
+// its done state and time come from that topic (topic_completions / study_sessions stay the single
+// record of work). A room only shows tasks scheduled for today or later in sprints pulled into it.
 import { all, get, newId, placeholders, run, transaction, type DB } from '../db.ts';
 import { badRequest, conflict, notFound } from '../http.ts';
 import { addDays } from '../../shared/dates.ts';
@@ -18,7 +20,6 @@ interface PlanRow {
   title: string;
   start_date: string;
   sprint_days: number;
-  sprint_count: number;
   status: 'active' | 'archived';
   created_at: number;
 }
@@ -26,7 +27,8 @@ interface PlanRow {
 interface TaskRow {
   id: string;
   plan_id: string;
-  day: number;
+  day: number | null;
+  planned_day: number | null;
   title: string;
   est_minutes: number | null;
   position: number;
@@ -37,13 +39,21 @@ interface TaskRow {
 interface SprintRow {
   plan_id: string;
   number: number;
+  days: number;
   room_id: string | null;
   room_name: string | null;
   completed_at: number | null;
 }
 
-const sprintOf = (plan: PlanRow, day: number) => Math.floor(day / plan.sprint_days) + 1;
-const totalDays = (plan: PlanRow) => plan.sprint_days * plan.sprint_count;
+/** A sprint with the plan days it covers (first..last, inclusive). */
+interface SprintSpan extends SprintRow {
+  first: number;
+  last: number;
+}
+
+const dateOf = (plan: PlanRow, day: number) => addDays(plan.start_date, day);
+/** The day a task belongs to for history and sprint totals. */
+const homeDay = (t: { day: number | null; plannedDay: number | null }) => t.plannedDay ?? t.day;
 
 function ownPlan(db: DB, userId: string, planId: string): PlanRow {
   const p = get<PlanRow>(db, 'SELECT * FROM plans WHERE id = ? AND owner_id = ?', planId, userId);
@@ -51,92 +61,120 @@ function ownPlan(db: DB, userId: string, planId: string): PlanRow {
   return p;
 }
 
-function dayStatus(date: string, today: string, tasks: PlanTask[]): DayStatus {
-  if (date > today) return 'upcoming';
-  if (date === today) return 'today';
-  if (!tasks.length) return 'rest';
-  const done = tasks.filter((t) => t.done).length;
-  return done === tasks.length ? 'done' : done ? 'partial' : 'missed';
+function spans(db: DB, planIds: string[]): Map<string, SprintSpan[]> {
+  const out = new Map<string, SprintSpan[]>(planIds.map((id) => [id, []]));
+  if (!planIds.length) return out;
+  const rows = all<SprintRow>(
+    db,
+    `SELECT s.plan_id, s.number, s.days, s.room_id, r.name AS room_name, s.completed_at
+       FROM plan_sprints s LEFT JOIN rooms r ON r.id = s.room_id
+      WHERE s.plan_id IN (${placeholders(planIds.length)}) ORDER BY s.plan_id, s.number`,
+    ...planIds,
+  );
+  for (const id of planIds) {
+    let first = 0;
+    for (const r of rows.filter((x) => x.plan_id === id)) {
+      out.get(id)!.push({ ...r, first, last: first + r.days - 1 });
+      first += r.days;
+    }
+  }
+  return out;
 }
 
-/** Tasks of the given plans with their done state and time, read from their room topics. */
-function loadTasks(db: DB, plans: PlanRow[]): Map<string, PlanTask[]> {
-  const byPlan = new Map<string, PlanTask[]>(plans.map((p) => [p.id, []]));
-  if (!plans.length) return byPlan;
+const sprintFor = (list: SprintSpan[], day: number) => list.find((s) => day >= s.first && day <= s.last);
+
+/** Tasks of the given plans with done state and time, read from their room topics. */
+function loadTasks(db: DB, planIds: string[]): Map<string, PlanTask[]> {
+  const byPlan = new Map<string, PlanTask[]>(planIds.map((id) => [id, []]));
+  if (!planIds.length) return byPlan;
   const rows = all<TaskRow>(
     db,
-    `SELECT * FROM plan_tasks WHERE status = 'active' AND plan_id IN (${placeholders(plans.length)}) ORDER BY day, position, created_at`,
-    ...plans.map((p) => p.id),
+    `SELECT * FROM plan_tasks WHERE status = 'active' AND plan_id IN (${placeholders(planIds.length)}) ORDER BY day IS NULL, day, position, created_at`,
+    ...planIds,
   );
   const topicIds = rows.map((r) => r.topic_id).filter(Boolean) as string[];
-  const done = new Set<string>();
+  const doneOn = new Map<string, string>();
   const time = new Map<string, number>();
   if (topicIds.length) {
     const ph = placeholders(topicIds.length);
-    // Topics are only ever completed or studied by their owner (the plan owner).
-    for (const r of all<{ topic_id: string }>(db, `SELECT topic_id FROM topic_completions WHERE kind = 'first' AND revoked_at IS NULL AND topic_id IN (${ph})`, ...topicIds)) done.add(r.topic_id);
-    for (const r of all<{ topic_id: string; ms: number }>(db, `SELECT topic_id, SUM(focused_ms) AS ms FROM study_sessions WHERE state = 'finished' AND topic_id IN (${ph}) GROUP BY topic_id`, ...topicIds)) time.set(r.topic_id, r.ms);
+    // A plan's topics are only ever completed or studied by the plan's owner.
+    for (const r of all<{ topic_id: string; local_date: string }>(db, `SELECT topic_id, local_date FROM topic_completions WHERE kind = 'first' AND revoked_at IS NULL AND topic_id IN (${ph})`, ...topicIds)) {
+      doneOn.set(r.topic_id, r.local_date);
+    }
+    for (const r of all<{ topic_id: string; ms: number }>(db, `SELECT topic_id, SUM(focused_ms) AS ms FROM study_sessions WHERE state = 'finished' AND topic_id IN (${ph}) GROUP BY topic_id`, ...topicIds)) {
+      time.set(r.topic_id, r.ms);
+    }
   }
   for (const r of rows) {
+    const doneDate = r.topic_id ? (doneOn.get(r.topic_id) ?? null) : null;
     byPlan.get(r.plan_id)!.push({
       id: r.id,
       day: r.day,
+      plannedDay: r.planned_day,
       title: r.title,
       estMinutes: r.est_minutes,
       starred: Boolean(r.starred),
       topicId: r.topic_id,
-      done: r.topic_id ? done.has(r.topic_id) : false,
+      done: doneDate !== null,
+      doneDate,
       focusedMs: r.topic_id ? (time.get(r.topic_id) ?? 0) : 0,
     });
   }
   return byPlan;
 }
 
-function sprintRows(db: DB, planIds: string[]): SprintRow[] {
-  if (!planIds.length) return [];
-  return all<SprintRow>(
-    db,
-    `SELECT s.plan_id, s.number, s.room_id, r.name AS room_name, s.completed_at FROM plan_sprints s LEFT JOIN rooms r ON r.id = s.room_id
-      WHERE s.plan_id IN (${placeholders(planIds.length)})`,
-    ...planIds,
-  );
+const isBacklog = (plan: PlanRow, t: PlanTask, today: string) => !t.done && (t.day === null || dateOf(plan, t.day) < today);
+
+function buildDay(plan: PlanRow, day: number, tasks: PlanTask[], today: string): PlanDay {
+  const date = dateOf(plan, day);
+  if (date >= today) {
+    return { day, number: day + 1, date, status: date === today ? 'today' : 'upcoming', tasks: tasks.filter((t) => t.day === day) };
+  }
+  // A past day shows what was planned for it (or done on it), judged by whether it was done in time.
+  const list = tasks.filter((t) => t.day === day || t.plannedDay === day);
+  const onTime = list.filter((t) => t.doneDate !== null && t.doneDate <= date).length;
+  const status: DayStatus = !list.length ? 'rest' : onTime === list.length ? 'done' : onTime ? 'partial' : 'missed';
+  return { day, number: day + 1, date, status, tasks: list };
 }
 
-function buildSprint(plan: PlanRow, n: number, tasks: PlanTask[], row: SprintRow | undefined, today: string): PlanSprint {
-  const first = (n - 1) * plan.sprint_days;
+function buildSprint(plan: PlanRow, s: SprintSpan, tasks: PlanTask[], today: string): PlanSprint {
   const days: PlanDay[] = [];
-  for (let d = first; d < first + plan.sprint_days; d++) {
-    const date = addDays(plan.start_date, d);
-    const dayTasks = tasks.filter((t) => t.day === d);
-    days.push({ day: d, number: d + 1, date, status: dayStatus(date, today, dayTasks), tasks: dayTasks });
-  }
-  const sprintTasks = days.flatMap((d) => d.tasks);
+  for (let d = s.first; d <= s.last; d++) days.push(buildDay(plan, d, tasks, today));
+  const mine = tasks.filter((t) => {
+    const d = homeDay(t);
+    return d !== null && d >= s.first && d <= s.last;
+  });
   return {
-    number: n,
-    startDate: days[0].date,
-    endDate: days[days.length - 1].date,
-    roomId: row?.room_id ?? null,
-    roomName: row?.room_name ?? null,
-    completedAt: row?.completed_at ?? null,
-    done: sprintTasks.filter((t) => t.done).length,
-    total: sprintTasks.length,
+    number: s.number,
+    length: s.days,
+    startDate: dateOf(plan, s.first),
+    endDate: dateOf(plan, s.last),
+    roomId: s.room_id,
+    roomName: s.room_name,
+    completedAt: s.completed_at,
+    done: mine.filter((t) => t.done).length,
+    total: mine.length,
+    focusedMs: mine.reduce((sum, t) => sum + t.focusedMs, 0),
+    estMinutes: mine.reduce((sum, t) => sum + (t.estMinutes ?? 0), 0),
     days,
   };
 }
 
-function summarize(plan: PlanRow, tasks: PlanTask[], sprints: SprintRow[], today: string): PlanSummary {
-  const dayIndex = Math.round((Date.parse(today) - Date.parse(plan.start_date)) / 86_400_000);
+function summarize(plan: PlanRow, sprints: SprintSpan[], tasks: PlanTask[], today: string): PlanSummary {
+  const total = sprints.length ? sprints[sprints.length - 1].last + 1 : 0;
+  const todayIndex = Math.round((Date.parse(today) - Date.parse(plan.start_date)) / 86_400_000);
   return {
     id: plan.id,
     title: plan.title,
     startDate: plan.start_date,
-    endDate: addDays(plan.start_date, totalDays(plan) - 1),
+    endDate: dateOf(plan, Math.max(0, total - 1)),
     sprintDays: plan.sprint_days,
-    sprintCount: plan.sprint_count,
+    sprintCount: sprints.length,
     sprintsCompleted: sprints.filter((s) => s.completed_at).length,
-    currentSprint: dayIndex >= 0 && dayIndex < totalDays(plan) ? sprintOf(plan, dayIndex) : null,
+    currentSprint: sprintFor(sprints, todayIndex)?.number ?? null,
     done: tasks.filter((t) => t.done).length,
     total: tasks.length,
+    backlog: tasks.filter((t) => isBacklog(plan, t, today)).length,
     focusedMs: tasks.reduce((sum, t) => sum + t.focusedMs, 0),
     status: plan.status,
   };
@@ -144,163 +182,207 @@ function summarize(plan: PlanRow, tasks: PlanTask[], sprints: SprintRow[], today
 
 export function listPlans(db: DB, userId: string): PlanSummary[] {
   const plans = all<PlanRow>(db, 'SELECT * FROM plans WHERE owner_id = ? ORDER BY status, start_date DESC', userId);
-  const tasks = loadTasks(db, plans);
-  const sprints = sprintRows(db, plans.map((p) => p.id));
+  const ids = plans.map((p) => p.id);
+  const tasks = loadTasks(db, ids);
+  const sprints = spans(db, ids);
   const today = todayFor(db, userId);
-  return plans.map((p) => summarize(p, tasks.get(p.id)!, sprints.filter((s) => s.plan_id === p.id), today));
+  return plans.map((p) => summarize(p, sprints.get(p.id)!, tasks.get(p.id)!, today));
 }
 
 export function getPlan(db: DB, userId: string, planId: string): Plan {
   const plan = ownPlan(db, userId, planId);
-  const tasks = loadTasks(db, [plan]).get(plan.id)!;
-  const rows = sprintRows(db, [plan.id]);
+  const tasks = loadTasks(db, [plan.id]).get(plan.id)!;
+  const sprints = spans(db, [plan.id]).get(plan.id)!;
   const today = todayFor(db, userId);
   return {
-    ...summarize(plan, tasks, rows, today),
-    sprints: Array.from({ length: plan.sprint_count }, (_, i) => buildSprint(plan, i + 1, tasks, rows.find((r) => r.number === i + 1), today)),
+    ...summarize(plan, sprints, tasks, today),
+    sprints: sprints.map((s) => buildSprint(plan, s, tasks, today)),
+    backlogTasks: tasks.filter((t) => isBacklog(plan, t, today)).sort((a, b) => (homeDay(a) ?? Infinity) - (homeDay(b) ?? Infinity)),
   };
 }
 
-/** Sprints pulled into a room, for both members — this is what the two of you see there. */
+/** Open sprints pulled into a room, for both members — what the two of you see there. */
 export function roomSprints(db: DB, roomId: string): RoomSprint[] {
-  const rows = all<SprintRow & { owner_id: string; title: string }>(
+  const pulled = all<{ plan_id: string; number: number }>(
     db,
-    `SELECT s.plan_id, s.number, s.room_id, r.name AS room_name, s.completed_at, p.owner_id, p.title
-       FROM plan_sprints s JOIN plans p ON p.id = s.plan_id JOIN rooms r ON r.id = s.room_id
+    `SELECT s.plan_id, s.number FROM plan_sprints s JOIN plans p ON p.id = s.plan_id
       WHERE s.room_id = ? AND s.completed_at IS NULL AND p.status = 'active' ORDER BY p.created_at, s.number`,
     roomId,
   );
-  if (!rows.length) return [];
-  const plans = all<PlanRow>(db, `SELECT * FROM plans WHERE id IN (${placeholders(rows.length)})`, ...rows.map((r) => r.plan_id));
-  const tasks = loadTasks(db, plans);
-  return rows.map((row) => {
+  if (!pulled.length) return [];
+  const planIds = [...new Set(pulled.map((r) => r.plan_id))];
+  const plans = all<PlanRow>(db, `SELECT * FROM plans WHERE id IN (${placeholders(planIds.length)})`, ...planIds);
+  const tasks = loadTasks(db, planIds);
+  const sprints = spans(db, planIds);
+  return pulled.map((row) => {
     const plan = plans.find((p) => p.id === row.plan_id)!;
+    const span = sprints.get(plan.id)!.find((s) => s.number === row.number)!;
     // Day status follows the owner's own calendar day.
-    const today = todayFor(db, row.owner_id);
-    return { ...buildSprint(plan, row.number, tasks.get(plan.id)!, row, today), planId: plan.id, planTitle: row.title, ownerId: row.owner_id };
+    const built = buildSprint(plan, span, tasks.get(plan.id)!, todayFor(db, plan.owner_id));
+    return { ...built, planId: plan.id, planTitle: plan.title, ownerId: plan.owner_id };
   });
 }
 
-// ───────────── Changes ─────────────
+// ───────────── Plans and sprints ─────────────
 
-export function createPlan(db: DB, userId: string, input: { title: string; startDate: string; sprintDays: number; sprintCount: number }): string {
+export function createPlan(db: DB, userId: string, input: { title: string; startDate: string; sprintDays: number }): string {
   const id = newId();
   const now = Date.now();
-  run(
-    db,
-    'INSERT INTO plans (id, owner_id, title, start_date, sprint_days, sprint_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    id,
-    userId,
-    input.title,
-    input.startDate,
-    input.sprintDays,
-    input.sprintCount,
-    now,
-    now,
-  );
+  transaction(db, () => {
+    run(db, 'INSERT INTO plans (id, owner_id, title, start_date, sprint_days, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', id, userId, input.title, input.startDate, input.sprintDays, now, now);
+    run(db, 'INSERT INTO plan_sprints (plan_id, number, days) VALUES (?, 1, ?)', id, input.sprintDays);
+  });
   return id;
 }
 
-export function updatePlan(db: DB, userId: string, planId: string, input: { title?: string; sprintCount?: number; status?: 'active' | 'archived' }) {
+export function updatePlan(db: DB, userId: string, planId: string, input: { title?: string; status?: 'active' | 'archived' }) {
   const plan = ownPlan(db, userId, planId);
-  if (input.sprintCount !== undefined && input.sprintCount < plan.sprint_count) {
-    const last = get<{ d: number | null }>(db, "SELECT MAX(day) AS d FROM plan_tasks WHERE plan_id = ? AND status = 'active'", planId)!.d;
-    if (last !== null && sprintOf(plan, last) > input.sprintCount) throw badRequest(`Sprint ${sprintOf(plan, last)} still has tasks, so the goal needs at least that many sprints.`);
-  }
-  run(
+  run(db, 'UPDATE plans SET title = ?, status = ?, updated_at = ? WHERE id = ?', input.title ?? plan.title, input.status ?? plan.status, Date.now(), planId);
+}
+
+function ownSprint(db: DB, userId: string, planId: string, n: number): { plan: PlanRow; list: SprintSpan[]; sprint: SprintSpan } {
+  const plan = ownPlan(db, userId, planId);
+  const list = spans(db, [planId]).get(planId)!;
+  const sprint = list.find((s) => s.number === n);
+  if (!sprint) throw notFound('That sprint could not be found.');
+  return { plan, list, sprint };
+}
+
+/** Adds the next sprint after the last one (default length unless given). */
+export function addSprint(db: DB, userId: string, planId: string, days?: number): number {
+  const plan = ownPlan(db, userId, planId);
+  const n = get<{ n: number }>(db, 'SELECT COALESCE(MAX(number), 0) + 1 AS n FROM plan_sprints WHERE plan_id = ?', planId)!.n;
+  run(db, 'INSERT INTO plan_sprints (plan_id, number, days) VALUES (?, ?, ?)', planId, n, days ?? plan.sprint_days);
+  return n;
+}
+
+function tasksBetween(db: DB, planId: string, from: number, to: number): number {
+  return get<{ n: number }>(
     db,
-    'UPDATE plans SET title = ?, sprint_count = ?, status = ?, updated_at = ? WHERE id = ?',
-    input.title ?? plan.title,
-    input.sprintCount ?? plan.sprint_count,
-    input.status ?? plan.status,
-    Date.now(),
+    "SELECT COUNT(*) AS n FROM plan_tasks WHERE plan_id = ? AND status = 'active' AND (day BETWEEN ? AND ? OR planned_day BETWEEN ? AND ?)",
     planId,
-  );
+    from,
+    to,
+    from,
+    to,
+  )!.n;
 }
 
-function sprintRoom(db: DB, planId: string, n: number): string | null {
-  return get<{ room_id: string | null }>(db, 'SELECT room_id FROM plan_sprints WHERE plan_id = ? AND number = ?', planId, n)?.room_id ?? null;
+/**
+ * Changes a sprint's length. Later sprints (and their tasks) shift with it. A sprint that has already
+ * ended can't change, and days with tasks can't be cut off.
+ */
+export function resizeSprint(db: DB, userId: string, planId: string, n: number, days: number) {
+  const { plan, sprint } = ownSprint(db, userId, planId, n);
+  if (dateOf(plan, sprint.last) < todayFor(db, userId)) throw badRequest('This sprint has already ended, so its length stays as it was.');
+  const delta = days - sprint.days;
+  if (!delta) return;
+  if (delta < 0 && tasksBetween(db, planId, sprint.last + delta + 1, sprint.last)) {
+    throw badRequest(`Days ${sprint.last + delta + 2}–${sprint.last + 1} have tasks. Move them first, then shorten the sprint.`);
+  }
+  transaction(db, () => {
+    run(db, 'UPDATE plan_sprints SET days = ? WHERE plan_id = ? AND number = ?', days, planId, n);
+    run(db, 'UPDATE plan_tasks SET day = day + ? WHERE plan_id = ? AND day > ?', delta, planId, sprint.last);
+    run(db, 'UPDATE plan_tasks SET planned_day = planned_day + ? WHERE plan_id = ? AND planned_day > ?', delta, planId, sprint.last);
+  });
 }
 
-function topicRoom(db: DB, topicId: string): string {
-  return get<{ room_id: string }>(db, 'SELECT room_id FROM topics WHERE id = ?', topicId)!.room_id;
+/** Removes the last sprint, if it has no tasks and isn't in a room. */
+export function removeSprint(db: DB, userId: string, planId: string, n: number) {
+  const { list, sprint } = ownSprint(db, userId, planId, n);
+  if (list.length === 1) throw badRequest('A goal needs at least one sprint.');
+  if (sprint.number !== list[list.length - 1].number) throw badRequest('Only the last sprint can be removed.');
+  if (sprint.room_id) throw badRequest('Take this sprint out of its room first.');
+  if (tasksBetween(db, planId, sprint.first, sprint.last)) throw badRequest('This sprint has tasks. Move or remove them first.');
+  run(db, 'DELETE FROM plan_sprints WHERE plan_id = ? AND number = ?', planId, n);
 }
 
-/** Gives the task a topic in the room its sprint lives in (if the sprint is in a room). */
-function attachToRoom(db: DB, userId: string, plan: PlanRow, task: { id: string; day: number; title: string; est_minutes: number | null; topic_id: string | null }) {
-  const roomId = sprintRoom(db, plan.id, sprintOf(plan, task.day));
+/** Gives a scheduled task a topic in its sprint's room (moving or restoring an existing one). */
+function attachToRoom(db: DB, userId: string, list: SprintSpan[], task: { id: string; day: number | null; title: string; est_minutes: number | null; topic_id: string | null }) {
+  if (task.day === null) return;
+  const roomId = sprintFor(list, task.day)?.room_id;
   if (!roomId) return;
   if (task.topic_id) {
-    if (topicRoom(db, task.topic_id) !== roomId) throw badRequest('That sprint is in a different room from this task.');
+    const topic = get<{ room_id: string; status: string }>(db, 'SELECT room_id, status FROM topics WHERE id = ?', task.topic_id)!;
+    if (topic.room_id === roomId && topic.status === 'active') return;
+    run(db, "UPDATE topics SET room_id = ?, status = 'active', updated_at = ? WHERE id = ?", roomId, Date.now(), task.topic_id);
+    run(db, "INSERT INTO topic_events (id, topic_id, user_id, type, detail, created_at) VALUES (?, ?, ?, 'restored', '{}', ?)", newId(), task.topic_id, userId, Date.now());
     return;
   }
   const topicId = createTopic(db, userId, roomId, { title: task.title, estimatedMinutes: task.est_minutes });
   run(db, 'UPDATE plan_tasks SET topic_id = ? WHERE id = ?', topicId, task.id);
 }
 
-/** Pulls a sprint into a shared room: every task in it becomes a topic you can study there. */
+/** Pulls a sprint into a shared room: its scheduled tasks become topics you can study there. */
 export function pullSprint(db: DB, userId: string, planId: string, n: number, roomId: string): string {
-  const plan = ownPlan(db, userId, planId);
-  if (n < 1 || n > plan.sprint_count) throw notFound('That sprint could not be found.');
+  const { sprint } = ownSprint(db, userId, planId, n);
   const room = requireRoomMember(db, roomId, userId);
   if (room.status !== 'active') throw badRequest('That room is archived.');
-  const current = sprintRoom(db, planId, n);
-  if (current && current !== roomId) throw conflict('This sprint is already in another room.', 'SPRINT_IN_ROOM');
+  if (sprint.room_id && sprint.room_id !== roomId) throw conflict('This sprint is already in another room. Take it out of that room first.', 'SPRINT_IN_ROOM');
   transaction(db, () => {
-    run(
-      db,
-      `INSERT INTO plan_sprints (plan_id, number, room_id, pulled_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (plan_id, number) DO UPDATE SET room_id = excluded.room_id, pulled_at = COALESCE(plan_sprints.pulled_at, excluded.pulled_at)`,
-      planId,
-      n,
-      roomId,
-      Date.now(),
-    );
-    const first = (n - 1) * plan.sprint_days;
-    const tasks = all<TaskRow>(db, "SELECT * FROM plan_tasks WHERE plan_id = ? AND status = 'active' AND day BETWEEN ? AND ? ORDER BY day, position", planId, first, first + plan.sprint_days - 1);
-    for (const t of tasks) attachToRoom(db, userId, plan, t);
+    run(db, 'UPDATE plan_sprints SET room_id = ?, pulled_at = COALESCE(pulled_at, ?) WHERE plan_id = ? AND number = ?', roomId, Date.now(), planId, n);
+    const list = spans(db, [planId]).get(planId)!;
+    const tasks = all<TaskRow>(db, "SELECT * FROM plan_tasks WHERE plan_id = ? AND status = 'active' AND day BETWEEN ? AND ? ORDER BY day, position", planId, sprint.first, sprint.last);
+    for (const t of tasks) attachToRoom(db, userId, list, t);
   });
   return room.id;
 }
 
-/** "Review & complete": closes the sprint. It leaves the room view but its history stays. */
+/** Takes a sprint out of its room. Its topics are archived (history kept) and come back if it's pulled in again. */
+export function unpullSprint(db: DB, userId: string, planId: string, n: number): string | null {
+  const { sprint } = ownSprint(db, userId, planId, n);
+  if (!sprint.room_id) return null;
+  transaction(db, () => {
+    const topics = all<{ topic_id: string }>(
+      db,
+      `SELECT pt.topic_id FROM plan_tasks pt JOIN topics t ON t.id = pt.topic_id
+        WHERE pt.plan_id = ? AND pt.status = 'active' AND t.status = 'active' AND COALESCE(pt.day, pt.planned_day) BETWEEN ? AND ?`,
+      planId,
+      sprint.first,
+      sprint.last,
+    );
+    for (const t of topics) archiveTopic(db, userId, t.topic_id);
+    run(db, 'UPDATE plan_sprints SET room_id = NULL, pulled_at = NULL WHERE plan_id = ? AND number = ?', planId, n);
+  });
+  return sprint.room_id;
+}
+
+/** "Review & complete": closes the sprint. It leaves the room view; its history stays. */
 export function setSprintCompleted(db: DB, userId: string, planId: string, n: number, completed: boolean) {
-  const plan = ownPlan(db, userId, planId);
-  if (n < 1 || n > plan.sprint_count) throw notFound('That sprint could not be found.');
-  run(
-    db,
-    `INSERT INTO plan_sprints (plan_id, number, completed_at) VALUES (?, ?, ?)
-     ON CONFLICT (plan_id, number) DO UPDATE SET completed_at = excluded.completed_at`,
-    planId,
-    n,
-    completed ? Date.now() : null,
-  );
+  ownSprint(db, userId, planId, n);
+  run(db, 'UPDATE plan_sprints SET completed_at = ? WHERE plan_id = ? AND number = ?', completed ? Date.now() : null, planId, n);
 }
 
-function checkDay(plan: PlanRow, day: number) {
-  if (day < 0 || day >= totalDays(plan)) throw badRequest('That day is outside this goal.');
+// ───────────── Tasks ─────────────
+
+function checkDay(list: SprintSpan[], day: number | null) {
+  if (day !== null && !sprintFor(list, day)) throw badRequest('That day is outside this goal. Add a sprint first.');
 }
 
-export function addTask(db: DB, userId: string, planId: string, input: { day: number; title: string; estMinutes?: number | null }): string {
-  const plan = ownPlan(db, userId, planId);
-  checkDay(plan, input.day);
+const nextPosition = (db: DB, planId: string, day: number | null) =>
+  (get<{ p: number | null }>(db, 'SELECT MAX(position) AS p FROM plan_tasks WHERE plan_id = ? AND day IS ?', planId, day)!.p ?? 0) + 1;
+
+export function addTask(db: DB, userId: string, planId: string, input: { day: number | null; title: string; estMinutes?: number | null }): string {
+  ownPlan(db, userId, planId);
+  const list = spans(db, [planId]).get(planId)!;
+  checkDay(list, input.day);
   return transaction(db, () => {
     const id = newId();
     const now = Date.now();
-    const last = get<{ p: number | null }>(db, 'SELECT MAX(position) AS p FROM plan_tasks WHERE plan_id = ? AND day = ?', planId, input.day)!.p;
     run(
       db,
-      'INSERT INTO plan_tasks (id, plan_id, day, title, est_minutes, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO plan_tasks (id, plan_id, day, planned_day, title, est_minutes, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       id,
       planId,
       input.day,
+      input.day,
       input.title,
       input.estMinutes ?? null,
-      (last ?? 0) + 1,
+      nextPosition(db, planId, input.day),
       now,
       now,
     );
-    attachToRoom(db, userId, plan, { id, day: input.day, title: input.title, est_minutes: input.estMinutes ?? null, topic_id: null });
+    attachToRoom(db, userId, list, { id, day: input.day, title: input.title, est_minutes: input.estMinutes ?? null, topic_id: null });
     return id;
   });
 }
@@ -311,29 +393,36 @@ function ownTask(db: DB, userId: string, taskId: string): { task: TaskRow; plan:
   return { task, plan: ownPlan(db, userId, task.plan_id) };
 }
 
-export function updateTask(db: DB, userId: string, taskId: string, input: { day?: number; title?: string; estMinutes?: number | null; starred?: boolean }) {
+/**
+ * Edits a task or moves it (to a day, or to the backlog with `day: null`). Re-planning a task that
+ * isn't overdue moves its planned day too; scheduling one from the backlog keeps the day it was first
+ * planned for, so that day's history stays honest.
+ */
+export function updateTask(db: DB, userId: string, taskId: string, input: { day?: number | null; title?: string; estMinutes?: number | null; starred?: boolean }) {
   const { task, plan } = ownTask(db, userId, taskId);
-  const day = input.day ?? task.day;
-  checkDay(plan, day);
+  const list = spans(db, [plan.id]).get(plan.id)!;
+  const day = input.day !== undefined ? input.day : task.day;
+  checkDay(list, day);
+  const onSchedule = task.day !== null && dateOf(plan, task.day) >= todayFor(db, userId);
+  const plannedDay = day !== task.day && day !== null && (onSchedule || task.planned_day === null) ? day : task.planned_day;
   transaction(db, () => {
     const title = input.title ?? task.title;
     const est = input.estMinutes !== undefined ? input.estMinutes : task.est_minutes;
-    const position =
-      day === task.day ? task.position : (get<{ p: number | null }>(db, 'SELECT MAX(position) AS p FROM plan_tasks WHERE plan_id = ? AND day = ?', plan.id, day)!.p ?? 0) + 1;
     run(
       db,
-      'UPDATE plan_tasks SET day = ?, title = ?, est_minutes = ?, position = ?, starred = ?, updated_at = ? WHERE id = ?',
+      'UPDATE plan_tasks SET day = ?, planned_day = ?, title = ?, est_minutes = ?, position = ?, starred = ?, updated_at = ? WHERE id = ?',
       day,
+      plannedDay,
       title,
       est,
-      position,
+      day === task.day ? task.position : nextPosition(db, plan.id, day),
       input.starred === undefined ? task.starred : input.starred ? 1 : 0,
       Date.now(),
       taskId,
     );
     // Keep the room topic in step with the task.
     if (task.topic_id) run(db, 'UPDATE topics SET title = ?, estimated_minutes = ?, updated_at = ? WHERE id = ?', title, est, Date.now(), task.topic_id);
-    if (day !== task.day) attachToRoom(db, userId, plan, { ...task, day, title, est_minutes: est });
+    if (day !== task.day) attachToRoom(db, userId, list, { ...task, day, title, est_minutes: est });
   });
 }
 
@@ -341,51 +430,58 @@ export function updateTask(db: DB, userId: string, taskId: string, input: { day?
 export function removeTask(db: DB, userId: string, taskId: string) {
   const { task } = ownTask(db, userId, taskId);
   transaction(db, () => {
-    if (task.topic_id) archiveTopic(db, userId, task.topic_id);
+    if (task.topic_id && get(db, "SELECT 1 FROM topics WHERE id = ? AND status = 'active'", task.topic_id)) archiveTopic(db, userId, task.topic_id);
     run(db, "UPDATE plan_tasks SET status = 'archived', updated_at = ? WHERE id = ?", Date.now(), taskId);
   });
 }
 
 // ───────────── What to study next ─────────────
 
-interface OpenTask {
+interface VisibleTask {
   topic_id: string;
   title: string;
   day: number;
   position: number;
-  start_date: string;
+  date: string;
 }
 
-function openPlanTopics(db: DB, userId: string, roomId: string): OpenTask[] {
-  return all<OpenTask>(
+/** Your open plan tasks shown in this room: scheduled today or later, in an open sprint pulled into it. */
+function openRoomTasks(db: DB, userId: string, roomId: string): VisibleTask[] {
+  const today = todayFor(db, userId);
+  const rows = all<TaskRow & { start_date: string }>(
     db,
-    `SELECT t.topic_id, t.title, t.day, t.position, p.start_date FROM plan_tasks t
-       JOIN plans p ON p.id = t.plan_id
-       JOIN topics tp ON tp.id = t.topic_id
-       LEFT JOIN topic_progress pr ON pr.topic_id = t.topic_id AND pr.user_id = ?
-      WHERE p.owner_id = ? AND p.status = 'active' AND t.status = 'active' AND tp.room_id = ? AND tp.status = 'active'
-        AND (pr.status IS NULL OR pr.status != 'completed')
-      ORDER BY p.created_at, t.day, t.position`,
+    `SELECT pt.*, p.start_date FROM plan_tasks pt
+       JOIN plans p ON p.id = pt.plan_id
+       JOIN topics tp ON tp.id = pt.topic_id
+       LEFT JOIN topic_progress pr ON pr.topic_id = pt.topic_id AND pr.user_id = ?
+      WHERE p.owner_id = ? AND p.status = 'active' AND pt.status = 'active' AND pt.day IS NOT NULL
+        AND tp.room_id = ? AND tp.status = 'active' AND (pr.status IS NULL OR pr.status != 'completed')
+      ORDER BY p.created_at, pt.day, pt.position`,
     userId,
     userId,
     roomId,
   );
+  const lists = spans(db, [...new Set(rows.map((r) => r.plan_id))]);
+  return rows
+    .map((r) => ({ ...r, date: addDays(r.start_date, r.day!), sprint: sprintFor(lists.get(r.plan_id)!, r.day!) }))
+    .filter((r) => r.date >= today && r.sprint?.room_id === roomId && !r.sprint.completed_at)
+    .map((r) => ({ topic_id: r.topic_id!, title: r.title, day: r.day!, position: r.position, date: r.date }));
 }
 
-/** Today's first open task, else the oldest overdue one, else the next upcoming one. */
+/** Today's first open task in this room, else the next upcoming one. */
 export function nextPlanTopic(db: DB, userId: string, roomId: string): { id: string; title: string } | null {
   const today = todayFor(db, userId);
-  const open = openPlanTopics(db, userId, roomId).map((t) => ({ ...t, date: addDays(t.start_date, t.day) }));
-  const pick = open.find((t) => t.date === today) ?? open.find((t) => t.date < today) ?? open[0];
+  const open = openRoomTasks(db, userId, roomId);
+  const pick = open.find((t) => t.date === today) ?? open[0];
   return pick ? { id: pick.topic_id, title: pick.title } : null;
 }
 
 /** After finishing a plan task: the next open task that day, then the following days. */
 export function nextPlanTopicAfter(db: DB, userId: string, roomId: string, topicId: string): { id: string; title: string } | null | undefined {
-  const finished = get<{ plan_id: string; day: number; position: number }>(db, "SELECT plan_id, day, position FROM plan_tasks WHERE topic_id = ? AND status = 'active'", topicId);
+  const finished = get<{ day: number | null; position: number }>(db, "SELECT day, position FROM plan_tasks WHERE topic_id = ? AND status = 'active'", topicId);
   if (!finished) return undefined; // not a plan task
-  const open = openPlanTopics(db, userId, roomId).filter((t) => t.topic_id !== topicId);
-  const later = open.find((t) => t.day > finished.day || (t.day === finished.day && t.position > finished.position));
+  const open = openRoomTasks(db, userId, roomId).filter((t) => t.topic_id !== topicId);
+  const later = finished.day === null ? undefined : open.find((t) => t.day > finished.day! || (t.day === finished.day && t.position > finished.position));
   const pick = later ?? open[0];
   return pick ? { id: pick.topic_id, title: pick.title } : null;
 }
