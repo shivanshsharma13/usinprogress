@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { addDays, addMonths, endOfMonth, formatDate, startOfMonth, startOfWeek } from '@shared/dates';
-import type { PublicUser, RoomDetail, Task } from '@shared/types';
+import type { CalendarPlanItem, PublicUser, RoomDetail, SprintMark, Task } from '@shared/types';
+import { formatMinutes } from '@shared/timer';
 import { useQuery } from '@tanstack/react-query';
 import { useAction, useFriends, useMe, useRooms, useTasks } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { ErrorNote, Field, Menu, Modal, Spinner, Switch } from '../components/ui';
-import { ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
+import { CheckIcon, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
 
 type View = 'month' | 'week' | 'agenda';
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -45,7 +46,8 @@ export function CalendarPage() {
     const s = startOfWeek(startOfMonth(cursor));
     return { from: s, to: addDays(s, 41) };
   }, [view, cursor]);
-  const { data: tasks, isLoading, error, refetch } = useTasks(range.from, range.to);
+  const { data, isLoading, error, refetch } = useTasks(range.from, range.to);
+  const tasks = data?.tasks;
 
   const people = useMemo(() => {
     const map: Record<string, PublicUser> = {};
@@ -62,6 +64,12 @@ export function CalendarPage() {
   const byDate = new Map<string, Task[]>();
   // Range queries only return scheduled tasks, so every date is set.
   for (const t of tasks ?? []) byDate.set(t.date!, [...(byDate.get(t.date!) ?? []), t]);
+  // Goal tasks (yours, and your friend's pulled sprints) sit alongside calendar tasks.
+  const planByDate = new Map<string, CalendarPlanItem[]>();
+  for (const p of data?.planItems ?? []) planByDate.set(p.date, [...(planByDate.get(p.date) ?? []), p]);
+  const sprintMarks = data?.sprints ?? [];
+  const day = (d: string): DayItems => ({ tasks: byDate.get(d) ?? [], plan: planByDate.get(d) ?? [], sprintStarts: sprintMarks.filter((m) => m.startDate === d), sprints: sprintMarks.filter((m) => m.startDate <= d && m.endDate >= d) });
+  const busy = (d: string) => (byDate.get(d)?.length ?? 0) + (planByDate.get(d)?.length ?? 0) > 0;
 
   const shift = (dir: number) => {
     if (view === 'month') setCursor(addMonths(startOfMonth(cursor), dir));
@@ -129,16 +137,16 @@ export function CalendarPage() {
             <span className="dot" /> {p.id === me.id ? `You (${p.displayName})` : p.displayName}
           </span>
         ))}
-        <span className="muted">Line-through = done</span>
+        <span className="muted">○ goal task · line-through = done</span>
       </div>
 
       {error && <ErrorNote error={error} retry={refetch} />}
-      {isLoading && !tasks ? (
+      {isLoading && !data ? (
         <Spinner />
       ) : view === 'month' && !narrow ? (
-        <MonthGrid cursor={cursor} today={today} selected={selected} byDate={byDate} people={people} meId={me.id} onSelect={setSelected} onAdd={(d) => setEditing({ date: d })} onOpen={actions.edit} onDrop={(id, d) => update.mutate({ id, body: { date: d } })} />
+        <MonthGrid cursor={cursor} today={today} selected={selected} day={day} people={people} meId={me.id} onSelect={setSelected} onAdd={(d) => setEditing({ date: d })} onOpen={actions.edit} onDrop={(id, d) => update.mutate({ id, body: { date: d } })} />
       ) : view === 'month' && narrow ? (
-        <MobileMonth cursor={cursor} today={today} selected={selected} byDate={byDate} people={people} onSelect={setSelected} />
+        <MobileMonth cursor={cursor} today={today} selected={selected} day={day} people={people} onSelect={setSelected} />
       ) : view === 'week' && !narrow ? (
         <div className="week-grid">
           {Array.from({ length: 7 }, (_, i) => addDays(range.from, i)).map((d) => (
@@ -151,11 +159,21 @@ export function CalendarPage() {
                   <PlusIcon />
                 </button>
               </div>
+              {day(d).sprintStarts.map((m) => (
+                <span key={m.planId + m.number} className="sprint-start" style={personVars(people[m.ownerId]?.accent)}>
+                  ▸ {m.planTitle} · Sprint {m.number}
+                </span>
+              ))}
               {(byDate.get(d) ?? []).map((t) => (
                 <button key={t.id} className={`cal-pill${t.completed ? ' done' : ''}`} style={{ ...personVars(people[t.ownerId]?.accent), whiteSpace: 'normal', textAlign: 'left', border: 'none', cursor: 'pointer' }} onClick={() => actions.edit(t)}>
                   {t.startTime && <span className="num">{t.startTime} </span>}
                   {t.title}
                 </button>
+              ))}
+              {(planByDate.get(d) ?? []).map((p) => (
+                <span key={p.id} className={`cal-pill plan${p.done ? ' done' : ''}`} style={{ ...personVars(people[p.ownerId]?.accent), whiteSpace: 'normal' }} title={`${p.planTitle} · Sprint ${p.sprintNumber}`}>
+                  {p.done ? '✓' : '○'} {p.title}
+                </span>
               ))}
             </div>
           ))}
@@ -166,13 +184,13 @@ export function CalendarPage() {
       {(view === 'agenda' || (view === 'month') || (view === 'week' && narrow)) && (
         <div className="stack">
           {view === 'month' ? (
-            <DayAgenda date={selected} today={today} tasks={byDate.get(selected) ?? []} people={people} meId={me.id} actions={actions} onAdd={() => setEditing({ date: selected })} />
+            <DayAgenda date={selected} today={today} items={day(selected)} people={people} meId={me.id} actions={actions} onAdd={() => setEditing({ date: selected })} />
           ) : (
             Array.from({ length: view === 'week' ? 7 : 31 }, (_, i) => addDays(range.from, i))
-              .filter((d) => view === 'week' || (byDate.get(d) ?? []).length)
-              .map((d) => <DayAgenda key={d} date={d} today={today} tasks={byDate.get(d) ?? []} people={people} meId={me.id} actions={actions} onAdd={() => setEditing({ date: d })} compact />)
+              .filter((d) => view === 'week' || busy(d))
+              .map((d) => <DayAgenda key={d} date={d} today={today} items={day(d)} people={people} meId={me.id} actions={actions} onAdd={() => setEditing({ date: d })} compact />)
           )}
-          {view === 'agenda' && !(tasks ?? []).length && <p className="muted">Nothing planned in the next 30 days.</p>}
+          {view === 'agenda' && !(tasks ?? []).length && !(data?.planItems ?? []).length && <p className="muted">Nothing planned in the next 30 days.</p>}
         </div>
       )}
 
@@ -196,7 +214,7 @@ function MonthGrid({
   cursor,
   today,
   selected,
-  byDate,
+  day,
   people,
   meId,
   onSelect,
@@ -207,7 +225,7 @@ function MonthGrid({
   cursor: string;
   today: string;
   selected: string;
-  byDate: Map<string, Task[]>;
+  day: (date: string) => DayItems;
   people: Record<string, PublicUser>;
   meId: string;
   onSelect: (d: string) => void;
@@ -225,7 +243,8 @@ function MonthGrid({
         </div>
       ))}
       {Array.from({ length: 42 }, (_, i) => addDays(start, i)).map((d) => {
-        const items = byDate.get(d) ?? [];
+        const { tasks: items, plan, sprintStarts } = day(d);
+        const room = Math.max(0, 3 - items.length);
         return (
           <div
             key={d}
@@ -239,10 +258,15 @@ function MonthGrid({
             }}
             role="button"
             tabIndex={0}
-            aria-label={`${formatDate(d, { weekday: 'long', month: 'long', day: 'numeric' })}, ${items.length} items`}
+            aria-label={`${formatDate(d, { weekday: 'long', month: 'long', day: 'numeric' })}, ${items.length + plan.length} items`}
             onKeyDown={(e) => e.key === 'Enter' && onSelect(d)}
           >
             <span className="daynum">{Number(d.slice(8))}</span>
+            {sprintStarts.map((m) => (
+              <span key={m.planId + m.number} className="sprint-start" style={personVars(people[m.ownerId]?.accent)} title={`${m.planTitle} · Sprint ${m.number} starts`}>
+                ▸ Sprint {m.number}
+              </span>
+            ))}
             {items.slice(0, 3).map((t) => (
               <span
                 key={t.id}
@@ -259,7 +283,12 @@ function MonthGrid({
                 {t.title}
               </span>
             ))}
-            {items.length > 3 && <span className="tiny muted">+{items.length - 3} more</span>}
+            {plan.slice(0, room).map((p) => (
+              <span key={p.id} className={`cal-pill plan${p.done ? ' done' : ''}`} style={personVars(people[p.ownerId]?.accent)} title={`${p.planTitle} · Sprint ${p.sprintNumber}`}>
+                {p.done ? '✓' : '○'} {p.title}
+              </span>
+            ))}
+            {items.length + plan.length > 3 && <span className="tiny muted">+{items.length + plan.length - Math.min(3, items.length) - Math.min(room, plan.length)} more</span>}
           </div>
         );
       })}
@@ -267,7 +296,7 @@ function MonthGrid({
   );
 }
 
-function MobileMonth({ cursor, today, selected, byDate, people, onSelect }: { cursor: string; today: string; selected: string; byDate: Map<string, Task[]>; people: Record<string, PublicUser>; onSelect: (d: string) => void }) {
+function MobileMonth({ cursor, today, selected, day, people, onSelect }: { cursor: string; today: string; selected: string; day: (date: string) => DayItems; people: Record<string, PublicUser>; onSelect: (d: string) => void }) {
   const first = startOfMonth(cursor);
   const last = endOfMonth(cursor);
   const start = startOfWeek(first);
@@ -284,10 +313,10 @@ function MobileMonth({ cursor, today, selected, byDate, people, onSelect }: { cu
       {Array.from({ length: weeks }, (_, w) => (
         <div className="strip" key={w}>
           {Array.from({ length: 7 }, (_, i) => addDays(start, w * 7 + i)).map((d) => {
-            const items = byDate.get(d) ?? [];
-            const owners = [...new Set(items.map((t) => t.ownerId))];
+            const { tasks: items, plan } = day(d);
+            const owners = [...new Set([...items, ...plan].map((t) => t.ownerId))];
             return (
-              <button key={d} className={d === selected ? 'sel' : ''} style={{ opacity: d.slice(0, 7) === cursor.slice(0, 7) ? 1 : 0.4, color: d === today ? 'var(--me)' : undefined }} onClick={() => onSelect(d)} aria-label={`${d}, ${items.length} items`}>
+              <button key={d} className={d === selected ? 'sel' : ''} style={{ opacity: d.slice(0, 7) === cursor.slice(0, 7) ? 1 : 0.4, color: d === today ? 'var(--me)' : undefined }} onClick={() => onSelect(d)} aria-label={`${d}, ${items.length + plan.length} items`}>
                 <span className="num">{Number(d.slice(8))}</span>
                 <span className="dots">
                   {owners.slice(0, 2).map((o) => (
@@ -311,7 +340,15 @@ interface Actions {
   study: (t: Task) => void;
 }
 
-function DayAgenda({ date, today, tasks, people, meId, actions, onAdd, compact }: { date: string; today: string; tasks: Task[]; people: Record<string, PublicUser>; meId: string; actions: Actions; onAdd: () => void; compact?: boolean }) {
+interface DayItems {
+  tasks: Task[];
+  plan: CalendarPlanItem[];
+  sprintStarts: SprintMark[];
+  sprints: SprintMark[]; // sprints running on this day
+}
+
+function DayAgenda({ date, today, items, people, meId, actions, onAdd, compact }: { date: string; today: string; items: DayItems; people: Record<string, PublicUser>; meId: string; actions: Actions; onAdd: () => void; compact?: boolean }) {
+  const { tasks, plan, sprints } = items;
   return (
     <div className="stack" style={{ gap: 8 }}>
       <div className="row between">
@@ -325,7 +362,19 @@ function DayAgenda({ date, today, tasks, people, meId, actions, onAdd, compact }
           </button>
         )}
       </div>
-      {!tasks.length && <p className="small muted">Nothing planned.</p>}
+      {sprints.length > 0 && (
+        <div className="row wrap" style={{ gap: 6 }}>
+          {sprints.map((m) => (
+            <span key={m.planId + m.number} className="chip c" style={personVars(people[m.ownerId]?.accent)}>
+              {m.planTitle} · Sprint {m.number} · day {Math.round((Date.parse(date) - Date.parse(m.startDate)) / 86_400_000) + 1}
+            </span>
+          ))}
+        </div>
+      )}
+      {!tasks.length && !plan.length && <p className="small muted">Nothing planned.</p>}
+      {plan.map((p) => (
+        <PlanItemRow key={p.id} item={p} date={date} today={today} owner={people[p.ownerId]} mine={p.ownerId === meId} />
+      ))}
       {tasks.map((t) => {
         const mine = t.ownerId === meId;
         const owner = people[t.ownerId];
@@ -371,6 +420,47 @@ function DayAgenda({ date, today, tasks, people, meId, actions, onAdd, compact }
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** A goal task on the calendar. Yours can be studied (if its sprint is in a room); a friend's is view-only. */
+function PlanItemRow({ item: p, date, today, owner, mine }: { item: CalendarPlanItem; date: string; today: string; owner?: PublicUser; mine: boolean }) {
+  const navigate = useNavigate();
+  const missed = !p.done && date < today;
+  return (
+    <div className={`task-item${p.done ? ' done' : ''}`} style={personVars(owner?.accent)}>
+      <span className={`check-dot${p.done ? ' on' : ''}`} aria-label={p.done ? 'Done' : 'Not done'} style={{ marginTop: 2 }}>
+        <CheckIcon width={12} />
+      </span>
+      <div className="grow" style={{ minWidth: 0 }}>
+        <div className="bold title">{p.title}</div>
+        <div className="tiny muted">
+          {!mine && `${owner?.displayName ?? 'Friend'} · `}
+          {p.planTitle} · Sprint {p.sprintNumber}
+          {p.estMinutes ? ` · ~${formatMinutes(p.estMinutes)}` : ''}
+          {mine && !p.roomId ? ' · not in a room yet' : ''}
+          {missed && mine ? ' · in backlog' : ''}
+        </div>
+      </div>
+      <div className="row" style={{ gap: 4 }}>
+        {mine && p.topicId && p.roomId && !p.done && !missed && (
+          <button className="btn small" onClick={() => navigate(`/study?topic=${p.topicId}`)} aria-label={`Study ${p.title}`}>
+            <PlayIcon />
+          </button>
+        )}
+        {mine ? (
+          <Link className="btn small ghost" to={`/goals/${p.planId}`}>
+            Goal
+          </Link>
+        ) : (
+          p.roomId && (
+            <Link className="btn small ghost" to={`/rooms/${p.roomId}`}>
+              Room
+            </Link>
+          )
+        )}
+      </div>
     </div>
   );
 }

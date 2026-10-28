@@ -216,6 +216,33 @@ export interface Plan extends PlanSummary {
   backlogTasks: PlanTask[];
 }
 
+/** A goal task on a calendar day: yours, or your friend's from a sprint pulled into a shared room. */
+export interface CalendarPlanItem {
+  id: string; // plan task id
+  planId: string;
+  planTitle: string;
+  sprintNumber: number;
+  ownerId: string;
+  title: string;
+  date: string;
+  estMinutes: number | null;
+  done: boolean;
+  topicId: string | null;
+  roomId: string | null; // the room its sprint is pulled into, if any
+  roomName: string | null;
+}
+
+/** A sprint's span, for marking it on the calendar. */
+export interface SprintMark {
+  planId: string;
+  planTitle: string;
+  ownerId: string;
+  number: number;
+  startDate: string;
+  endDate: string;
+  roomName: string | null;
+}
+
 /** A pulled sprint as shown in a room, for either member. */
 export interface RoomSprint extends PlanSprint {
   planId: string;
@@ -278,5 +305,6 @@ export interface HomeData {
   plans: PlanSummary[];
   rooms: RoomSummary[];
   upcoming: Task[];
+  plannedTasks: CalendarPlanItem[]; // your open goal tasks from today on
   unread: number;
 }

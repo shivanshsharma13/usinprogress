@@ -10,11 +10,13 @@ import type {
   LiveStatus,
   Me,
   ProgressStats,
+  CalendarPlanItem,
   Plan,
   PlanSummary,
   PublicUser,
   RoomDetail,
   RoomSummary,
+  SprintMark,
   SessionRecord,
   Task,
   TopicHistoryEntry,
@@ -55,7 +57,11 @@ export const usePlans = () => useQuery({ queryKey: ['plans'], queryFn: async () 
 export const usePlan = (id: string | undefined) =>
   useQuery({ queryKey: ['plan', id], enabled: Boolean(id), queryFn: async () => (await api.get<{ plan: Plan }>(`/plans/${id}`)).plan });
 export const useTasks = (from: string, to: string) =>
-  useQuery({ queryKey: ['tasks', from, to], queryFn: async () => (await api.get<{ tasks: Task[] }>(`/tasks?from=${from}&to=${to}`)).tasks, placeholderData: (prev) => prev });
+  useQuery({
+    queryKey: ['tasks', from, to],
+    queryFn: () => api.get<{ tasks: Task[]; planItems: CalendarPlanItem[]; sprints: SprintMark[] }>(`/tasks?from=${from}&to=${to}`),
+    placeholderData: (prev) => prev,
+  });
 export const useActiveSession = (enabled = true) =>
   useQuery({ queryKey: ['session'], enabled, queryFn: async () => (await api.get<{ session: ActiveSession | null }>('/sessions/active')).session });
 export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: async () => (await api.get<{ sessions: SessionRecord[] }>('/sessions')).sessions });

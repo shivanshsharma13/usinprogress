@@ -87,7 +87,8 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
         ))}
       </nav>
 
-      <SessionWatcher hideMini={pathname === '/study'} />
+      {/* Home and the timer page already show the running session in full. */}
+      <SessionWatcher hideMini={pathname === '/study' || pathname === '/'} />
     </div>
   );
 }

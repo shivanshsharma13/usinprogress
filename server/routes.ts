@@ -303,7 +303,7 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
   // ───────────── Goals (plans → sprints → days → tasks) ─────────────
 
   // A plan change can show up in a room (pulled sprints), so friends refetch too. Events carry no data.
-  const notifyPlan = (req: Request) => notify(circleOf(db, req.userId), ['plans', 'room', 'rooms', 'session', 'progress']);
+  const notifyPlan = (req: Request) => notify(circleOf(db, req.userId), ['plans', 'room', 'rooms', 'session', 'progress', 'calendar']);
   const sprintNumber = (req: Request) => Number.parseInt(String(req.params.n), 10);
 
   r.get('/plans', (req, res) => res.json({ plans: plans.listPlans(db, req.userId) }));
@@ -388,7 +388,8 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
     const today = localDate(Date.now(), getUser(db, req.userId).timezone);
     const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from)) ? String(req.query.from) : addMonths(today, -1);
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to)) ? String(req.query.to) : addMonths(today, 2);
-    res.json({ tasks: tasks.listTasks(db, req.userId, from, to) });
+    const planned = plans.calendarPlanItems(db, req.userId, from, to, { friends: true });
+    res.json({ tasks: tasks.listTasks(db, req.userId, from, to), planItems: planned.items, sprints: planned.sprints });
   });
 
   r.post('/tasks', (req, res) => {

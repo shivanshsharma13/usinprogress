@@ -106,6 +106,7 @@ export const sessionFinishSchema = z.object({
 export const sessionUpdateSchema = z.object({
   note: text(1000).optional(),
   remindAfterHour: z.boolean().optional(),
+  targetMinutes: minutes.max(600).nullable().optional(),
 });
 
 export const sessionCorrectSchema = z.object({

@@ -106,13 +106,48 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
     };
   }, [Math.floor(elapsed / 1000), paused]);
 
+  const length = useAction((minutes: number | null) => api.patch(`/sessions/${session.id}`, { targetMinutes: minutes }), {
+    invalidate: [['session']],
+    onSuccess: (_r, minutes) => qc.setQueryData<any>(['session'], { ...session, targetMinutes: minutes }),
+  });
+
   const busy = pause.isPending || finish.isPending || discard.isPending;
+  const togglePause = () => !busy && pause.mutate(undefined);
+
+  // Space pauses/resumes (unless you're typing in the note).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (e.code !== 'Space' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return;
+      e.preventDefault();
+      togglePause();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  // A gentle note the moment the chosen session length is reached (once per session and length).
+  const reached = Boolean(target && elapsed >= target * 60_000);
+  useEffect(() => {
+    if (!reached || !target) return;
+    const key = `uip-reached-${session.id}-${target}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch {}
+    toast(`🌼 ${target} minutes done. Keep going, or finish when you're ready.`, 'notice', 8000);
+  }, [reached, target, session.id]);
+
   const progress = target ? Math.min(1, elapsed / (target * 60_000)) : (elapsed % 3_600_000) / 3_600_000;
-  const R = 46;
+  const R = 44;
   const C = 2 * Math.PI * R;
+  const tip = { x: 50 + R * Math.cos(2 * Math.PI * progress), y: 50 + R * Math.sin(2 * Math.PI * progress) };
+  const face = target ? formatCountdown(elapsed, target) : formatClock(elapsed);
+  // The little plant grows through the session (over an hour when there's no set length).
+  const growth = target ? progress * 100 : Math.min(100, (elapsed / 3_600_000) * 100);
 
   return (
-    <div className="stack-lg" style={{ maxWidth: 560, margin: '0 auto' }}>
+    <div className="stack-lg" style={{ maxWidth: 560, margin: '0 auto', width: '100%' }}>
       <Link to={`/rooms/${session.roomId}`} className="row small muted" style={{ textDecoration: 'none' }}>
         <ChevronLeft width={18} /> {session.roomName}
       </Link>
@@ -123,40 +158,76 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
         </div>
       )}
 
-      <div className="card stack" style={{ alignItems: 'center', textAlign: 'center', ...(me ? personVars(me.accent) : {}) }}>
+      <div className={`card stack focus-card${paused ? ' is-paused' : ''}${reached ? ' is-reached' : ''}`} style={{ alignItems: 'center', textAlign: 'center', ...(me ? personVars(me.accent) : {}) }}>
         <div className="row wrap" style={{ justifyContent: 'center' }}>
-          <span className="chip c">{paused ? 'Paused' : 'Focusing'}</span>
+          <span className="chip c">{paused ? 'Paused' : reached ? 'Target reached' : 'Focusing'}</span>
           {session.isRevision && <span className="chip outline">Revision</span>}
         </div>
-        <h1 style={{ fontSize: '1.5rem' }}>{session.topicTitle}</h1>
+        <h1 className="focus-title">{session.topicTitle}</h1>
 
         <div className="timer-ring">
+          <span className="halo" aria-hidden="true" />
+          <span className="drift-leaves" aria-hidden="true">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <svg key={i} viewBox="0 0 12 12" className={`drift-leaf l${i}`}>
+                <path d="M6 1C9 3 10 7 6 11 2 7 3 3 6 1Z" />
+              </svg>
+            ))}
+          </span>
           <svg viewBox="0 0 100 100" aria-hidden="true">
-            <circle cx="50" cy="50" r={R} fill="none" stroke="var(--mint)" strokeWidth="5" />
-            <circle cx="50" cy="50" r={R} fill="none" stroke="var(--me)" strokeWidth="5" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - progress)} style={{ transition: 'stroke-dashoffset 0.25s linear', opacity: paused ? 0.45 : 1 }} />
+            <defs>
+              <linearGradient id="ring-grad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" style={{ stopColor: 'var(--me)' }} />
+                <stop offset="1" style={{ stopColor: 'var(--leaf)' }} />
+              </linearGradient>
+            </defs>
+            <circle cx="50" cy="50" r={R} fill="none" stroke="var(--mint)" strokeWidth="4" />
+            <circle className="ring-progress" cx="50" cy="50" r={R} fill="none" stroke="url(#ring-grad)" strokeWidth="4" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - progress)} />
+            {progress > 0.002 && <circle className="ring-tip" cx={tip.x} cy={tip.y} r="2.6" />}
           </svg>
-          <div>
-            <div className={`timer-face${(target ? formatCountdown(elapsed, target) : formatClock(elapsed)).length > 6 ? ' long' : ''}`} role="timer" aria-live="off" aria-label={`${target ? 'Time left' : 'Focused time'} ${target ? formatCountdown(elapsed, target) : formatClock(elapsed)}`}>
-              {target ? formatCountdown(elapsed, target) : formatClock(elapsed)}
-            </div>
-            <div className="timer-sub muted num">
-              {target ? (elapsed > target * 60_000 ? `${target}m target reached · ${formatClock(elapsed)}` : `of ${target}m · ${formatClock(elapsed)} focused`) : 'focused this session'}
-            </div>
-          </div>
+          <button className="timer-button" onClick={togglePause} disabled={busy} aria-label={paused ? 'Resume timer' : 'Pause timer'}>
+            <span className={`timer-face${face.length > 6 ? ' long' : ''}`} role="timer" aria-live="off">
+              {face}
+            </span>
+            <span className="timer-sub muted num">
+              {target ? (reached ? `${formatClock(elapsed)} focused` : `of ${target}m · ${formatClock(elapsed)}`) : 'focused this session'}
+            </span>
+            <span className="timer-hint">{paused ? 'Tap to resume' : 'Tap to pause'}</span>
+          </button>
+        </div>
+
+        <div className="focus-plant" aria-hidden="true">
+          <Plant percent={growth} size={56} color="var(--me)" />
+        </div>
+
+        <div className="length-chips" role="group" aria-label="Session length">
+          {[25, 45, 60].map((m) => (
+            <button key={m} className={`chip-btn${target === m ? ' on' : ''}`} disabled={length.isPending} onClick={() => length.mutate(m)}>
+              {m}m
+            </button>
+          ))}
+          <button className={`chip-btn${!target ? ' on' : ''}`} disabled={length.isPending} onClick={() => length.mutate(null)} title="Just count up">
+            Open
+          </button>
+          {reached && target && (
+            <button className="chip-btn" disabled={length.isPending} onClick={() => length.mutate(target + 5)}>
+              +5 min
+            </button>
+          )}
         </div>
 
         <div className="timer-controls" style={{ width: '100%' }}>
-          <button className={`btn big wide ${paused ? 'primary' : ''}`} disabled={busy} onClick={() => pause.mutate(undefined)}>
+          <button className={`btn big wide ${paused ? 'primary' : ''}`} disabled={busy} onClick={togglePause}>
             {paused ? <PlayIcon /> : <PauseIcon />} {paused ? 'Resume' : 'Pause'}
           </button>
           <button className="btn big" disabled={busy} onClick={() => finish.mutate({})}>
-            <StopIcon /> Finish session
+            <StopIcon /> Finish<span className="hide-narrow">&nbsp;session</span>
           </button>
           <button className="btn big leaf" disabled={busy} onClick={() => finish.mutate({ completeTopic: true })}>
-            <CheckIcon /> Complete topic
+            <CheckIcon /> Complete<span className="hide-narrow">&nbsp;topic</span>
           </button>
         </div>
-        <p className="tiny muted">“Finish session” saves your time and keeps the topic open. “Complete topic” also ticks it off for you.</p>
+        <p className="tiny muted">Tap the clock or press Space to pause. “Finish session” keeps the topic open; “Complete topic” ticks it off.</p>
       </div>
 
       <div className="card stack">
@@ -164,7 +235,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
         <Field label="Private note (optional)" hint="Only you can see this.">
           <textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you cover?" maxLength={1000} />
         </Field>
-        <button className="btn ghost small danger" style={{ alignSelf: 'flex-start' }} onClick={() => setConfirmDiscard(true)}>
+        <button className="btn ghost small danger wrap" style={{ alignSelf: 'flex-start' }} onClick={() => setConfirmDiscard(true)}>
           Started by accident? Discard this session
         </button>
       </div>
@@ -338,8 +409,8 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
           <h2>Which room?</h2>
           {activeRooms.length ? (
             activeRooms.map((r) => (
-              <button key={r.id} className="btn block" style={{ justifyContent: 'space-between' }} onClick={() => setRoomChoice(r.id)}>
-                <span>{r.name}</span>
+              <button key={r.id} className="btn block pick-row" onClick={() => setRoomChoice(r.id)}>
+                <span className="bold">{r.name}</span>
                 <span className="small muted">{r.nextTopic ? `Next: ${r.nextTopic.title}` : 'All done'}</span>
               </button>
             ))

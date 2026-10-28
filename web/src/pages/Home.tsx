@@ -27,7 +27,14 @@ export function HomePage() {
 
   if (isLoading) return <Spinner />;
   if (error || !data) return <ErrorNote error={error} retry={refetch} />;
-  const { me, activeSession, primary, friends, today, plans, rooms, upcoming } = data;
+  const { me, activeSession, primary, friends, today, plans, rooms, upcoming, plannedTasks } = data;
+  // Goal tasks and calendar tasks together, soonest first.
+  const comingUp = [
+    ...plannedTasks.map((p) => ({ key: p.id, date: p.date, title: p.title, time: '', detail: `${p.planTitle} · Sprint ${p.sprintNumber}${p.estMinutes ? ` · ~${p.estMinutes}m` : ''}`, study: p.roomId && p.topicId && p.date === me.today ? p.topicId : null, goal: p.planId })),
+    ...upcoming.map((t) => ({ key: t.id, date: t.date!, title: t.title, time: t.startTime ?? '', detail: t.topicTitle ?? '', study: null, goal: null })),
+  ]
+    .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
+    .slice(0, 7);
   const friend = friends[0];
   const nothingYet = !rooms.length && !upcoming.length && !primary;
 
@@ -238,25 +245,36 @@ export function HomePage() {
                 Calendar
               </Link>
             </div>
-            {upcoming.length ? (
+            {comingUp.length ? (
               <div className="list">
-                {upcoming.map((t) => (
-                  <div key={t.id} className="list-item">
-                    <span className="dot" style={personVars(me.accent)} />
-                    <div className="grow">
+                {comingUp.map((t) => (
+                  <div key={t.key} className="list-item">
+                    <span className={`dot${t.goal ? ' ring' : ''}`} style={personVars(me.accent)} />
+                    <div className="grow" style={{ minWidth: 0 }}>
                       <div className="bold small">{t.title}</div>
                       <div className="tiny muted">
-                        {t.date === me.today ? 'Today' : formatDate(t.date!, { weekday: 'short', month: 'short', day: 'numeric' })}
-                        {t.startTime ? ` · ${t.startTime}` : ''}
-                        {t.topicTitle ? ` · ${t.topicTitle}` : ''}
+                        {t.date === me.today ? 'Today' : formatDate(t.date, { weekday: 'short', month: 'short', day: 'numeric' })}
+                        {t.time ? ` · ${t.time}` : ''}
+                        {t.detail ? ` · ${t.detail}` : ''}
                       </div>
                     </div>
+                    {t.study ? (
+                      <button className="btn small" onClick={() => navigate(`/study?topic=${t.study}`)} aria-label={`Study ${t.title}`}>
+                        <PlayIcon />
+                      </button>
+                    ) : (
+                      t.goal && (
+                        <Link className="btn small ghost" to={`/goals/${t.goal}`}>
+                          Goal
+                        </Link>
+                      )
+                    )}
                   </div>
                 ))}
               </div>
             ) : (
               <p className="small muted">
-                Nothing planned. <Link to="/calendar?new=1">Plan a study task</Link>
+                Nothing planned. Add tasks to a <Link to="/goals">goal</Link> or <Link to="/calendar?new=1">plan a task</Link>.
               </p>
             )}
           </div>

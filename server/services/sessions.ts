@@ -227,13 +227,15 @@ export function correctSession(db: DB, userId: string, sessionId: string, minute
   });
 }
 
-export function updateSessionSettings(db: DB, userId: string, sessionId: string, input: { note?: string; remindAfterHour?: boolean }) {
+/** Note, one-hour reminder, or session length (changeable mid-session; time already focused is untouched). */
+export function updateSessionSettings(db: DB, userId: string, sessionId: string, input: { note?: string; remindAfterHour?: boolean; targetMinutes?: number | null }) {
   const s = ownSession(db, userId, sessionId);
   run(
     db,
-    'UPDATE study_sessions SET note = ?, remind_after_hour = ? WHERE id = ?',
+    'UPDATE study_sessions SET note = ?, remind_after_hour = ?, target_minutes = ? WHERE id = ?',
     input.note ?? s.note,
     input.remindAfterHour === undefined ? s.remind_after_hour : input.remindAfterHour ? 1 : 0,
+    input.targetMinutes === undefined ? s.target_minutes : input.targetMinutes,
     sessionId,
   );
 }

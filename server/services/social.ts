@@ -19,7 +19,7 @@ import {
   type UserRow,
 } from './core.ts';
 import { listRooms } from './rooms.ts';
-import { listPlans } from './plans.ts';
+import { calendarPlanItems, listPlans } from './plans.ts';
 import { completedTasksOn, listTasks } from './tasks.ts';
 import { getActiveSession } from './sessions.ts';
 
@@ -265,6 +265,7 @@ export function homeData(db: DB, userId: string): HomeData {
     plans: plans.slice(0, 4),
     rooms,
     upcoming: tasks.filter((t) => t.date! >= today && !t.completed).slice(0, 5),
+    plannedTasks: calendarPlanItems(db, userId, today, addDays(today, 14), { friends: false }).items.filter((t) => !t.done).slice(0, 8),
     unread: unreadCount(db, userId),
   };
 }

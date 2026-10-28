@@ -10,8 +10,8 @@
 import { all, get, newId, placeholders, run, transaction, type DB } from '../db.ts';
 import { badRequest, conflict, notFound } from '../http.ts';
 import { addDays } from '../../shared/dates.ts';
-import type { DayStatus, Plan, PlanDay, PlanSprint, PlanSummary, PlanTask, RoomSprint } from '../../shared/types.ts';
-import { requireRoomMember, todayFor } from './core.ts';
+import type { CalendarPlanItem, DayStatus, Plan, PlanDay, PlanSprint, PlanSummary, PlanTask, RoomSprint, SprintMark } from '../../shared/types.ts';
+import { myRoomIds, requireRoomMember, todayFor } from './core.ts';
 import { archiveTopic, createTopic } from './rooms.ts';
 
 interface PlanRow {
@@ -221,6 +221,62 @@ export function roomSprints(db: DB, roomId: string): RoomSprint[] {
     const built = buildSprint(plan, span, tasks.get(plan.id)!, todayFor(db, plan.owner_id));
     return { ...built, planId: plan.id, planTitle: plan.title, ownerId: plan.owner_id };
   });
+}
+
+/**
+ * Goal tasks and sprints for a calendar range: all of yours that are scheduled, plus your friends'
+ * from open sprints they pulled into rooms you share (what they've chosen to show you).
+ */
+export function calendarPlanItems(db: DB, viewerId: string, from: string, to: string, opts: { friends: boolean }): { items: CalendarPlanItem[]; sprints: SprintMark[] } {
+  const own = all<PlanRow>(db, "SELECT * FROM plans WHERE owner_id = ? AND status = 'active'", viewerId);
+  const rooms = opts.friends ? myRoomIds(db, viewerId) : [];
+  const shared = rooms.length
+    ? all<{ plan_id: string; number: number }>(
+        db,
+        `SELECT s.plan_id, s.number FROM plan_sprints s JOIN plans p ON p.id = s.plan_id
+          WHERE s.room_id IN (${placeholders(rooms.length)}) AND s.completed_at IS NULL AND p.status = 'active' AND p.owner_id != ?`,
+        ...rooms,
+        viewerId,
+      )
+    : [];
+  const friendIds = [...new Set(shared.map((s) => s.plan_id))];
+  const plans = [...own, ...(friendIds.length ? all<PlanRow>(db, `SELECT * FROM plans WHERE id IN (${placeholders(friendIds.length)})`, ...friendIds) : [])];
+  const ids = plans.map((p) => p.id);
+  const tasks = loadTasks(db, ids);
+  const sprints = spans(db, ids);
+  const items: CalendarPlanItem[] = [];
+  const marks: SprintMark[] = [];
+  for (const plan of plans) {
+    const visible = (s: SprintSpan) => plan.owner_id === viewerId || shared.some((x) => x.plan_id === plan.id && x.number === s.number);
+    const list = sprints.get(plan.id)!;
+    for (const s of list) {
+      const startDate = dateOf(plan, s.first);
+      const endDate = dateOf(plan, s.last);
+      if (visible(s) && startDate <= to && endDate >= from) marks.push({ planId: plan.id, planTitle: plan.title, ownerId: plan.owner_id, number: s.number, startDate, endDate, roomName: s.room_name });
+    }
+    for (const t of tasks.get(plan.id)!) {
+      if (t.day === null) continue;
+      const date = dateOf(plan, t.day);
+      const s = sprintFor(list, t.day);
+      if (date < from || date > to || !s || !visible(s)) continue;
+      items.push({
+        id: t.id,
+        planId: plan.id,
+        planTitle: plan.title,
+        sprintNumber: s.number,
+        ownerId: plan.owner_id,
+        title: t.title,
+        date,
+        estMinutes: t.estMinutes,
+        done: t.done,
+        topicId: plan.owner_id === viewerId ? t.topicId : null,
+        roomId: s.room_id,
+        roomName: s.room_name,
+      });
+    }
+  }
+  items.sort((a, b) => a.date.localeCompare(b.date));
+  return { items, sprints: marks };
 }
 
 // ───────────── Plans and sprints ─────────────

@@ -178,6 +178,17 @@ Non-members get 404 for rooms and topics (existence isn't revealed). Friends see
 turn it off), today/week totals, your topics and pulled sprints in rooms you share, and calendar items you mark
 *Show on my friend's calendar*. They never see your session list, session notes or task notes. Cross-site state-changing requests are rejected; sign-in/up are rate-limited.
 
+**Calendar and Home.** The calendar shows your own calendar tasks and friends' shared ones, plus every
+scheduled goal task (yours, and your friend's from sprints they pulled into a room you share) with a marker
+where each sprint starts; the day view shows which sprint day it is. Goal tasks can be studied straight from
+the calendar once their sprint is in a room. Home's "Coming up" mixes goal tasks and calendar tasks for the
+next two weeks, soonest first. Backlog tasks are never shown as upcoming.
+
+**Timer.** Tap the clock (or press Space) to pause/resume. The session length can be changed mid-session
+(25 / 45 / 60 / open, and +5 once reached); it only changes the countdown, never the recorded time. While
+focusing, a slow breathing halo, drifting leaves and a growing plant keep the screen calm; everything stops
+when paused and is switched off for people who prefer reduced motion.
+
 **Realtime.** After each write, the server sends `invalidate` events (e.g. `rooms`, `plans`, `session`) to
 the affected people (the actor, their friends, the room's members). Clients refetch those queries. On
 reconnect the client refetches everything, and a small indicator shows "Reconnecting…" while offline.

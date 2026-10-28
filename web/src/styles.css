@@ -175,6 +175,8 @@ p { margin: 0; }
 .btn.icon { padding: 0; width: 42px; }
 .btn.icon.small { width: 34px; }
 .btn.block { width: 100%; }
+@media (max-width: 420px) { .hide-narrow { display: none; } }
+.btn.wrap { white-space: normal; text-align: left; height: auto; }
 .btn svg { width: 18px; height: 18px; }
 
 .chip {
@@ -192,6 +194,7 @@ p { margin: 0; }
 }
 .chip-btn.on { background: var(--me-soft); border-color: var(--me); }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--leaf)); display: inline-block; flex-shrink: 0; }
+.dot.ring { background: transparent; box-shadow: inset 0 0 0 2px var(--c, var(--leaf)); }
 .dot.live { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 60%, transparent); animation: pulse 2s infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 50%, transparent); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .dot.live { animation: none; } * { transition: none !important; } }
@@ -258,17 +261,63 @@ textarea.input { min-height: 80px; resize: vertical; }
 /* ── Timer ── */
 .timer-face {
   font-variant-numeric: tabular-nums; font-size: clamp(3.2rem, 2rem + 6vw, 5.4rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1;
-  text-align: center;
+  text-align: center; display: block;
 }
-.timer-ring { position: relative; width: min(300px, 78vw); aspect-ratio: 1; margin: 8px auto; display: grid; place-items: center; container-type: inline-size; }
-/* Text inside the ring is sized from the ring's own width so it always stays inside the circle. */
-.timer-ring > div { position: relative; width: 74%; text-align: center; }
-.timer-ring .timer-face { font-size: 20cqw; }
-.timer-ring .timer-face.long { font-size: 13cqw; }
-.timer-ring .timer-sub { font-size: max(0.75rem, 4.2cqw); margin-top: 6px; line-height: 1.3; }
-.timer-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.focus-title { font-size: clamp(1.15rem, 1rem + 1vw, 1.5rem); overflow-wrap: anywhere; }
+.timer-ring { position: relative; width: min(300px, 74vw); aspect-ratio: 1; margin: 8px auto 0; display: grid; place-items: center; container-type: inline-size; }
+.timer-ring > svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+/* Everything inside the ring is sized from the ring's own width so it always stays inside the circle. */
+.timer-button {
+  position: relative; z-index: 1; width: 70%; aspect-ratio: 1; border-radius: 50%; border: none; background: transparent; color: inherit;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; padding: 0;
+}
+.timer-button:focus-visible { outline: 3px solid color-mix(in srgb, var(--me) 45%, transparent); outline-offset: 4px; }
+.timer-ring .timer-face { font-size: 19cqw; transition: opacity 0.4s; }
+.timer-ring .timer-face.long { font-size: 12.5cqw; }
+.timer-ring .timer-sub { font-size: max(0.72rem, 4cqw); margin-top: 6px; line-height: 1.3; }
+.timer-hint { font-size: max(0.68rem, 3.4cqw); color: var(--text-2); opacity: 0; transition: opacity 0.3s; margin-top: 4px; }
+.timer-button:hover .timer-hint, .is-paused .timer-hint { opacity: 1; }
+.ring-progress { transition: stroke-dashoffset 0.6s ease; }
+.ring-tip { fill: var(--leaf); filter: drop-shadow(0 0 3px var(--leaf)); animation: tip-glow 2.4s ease-in-out infinite; }
+/* A slow "breathing" halo: ~5.5s in, 5.5s out. */
+.halo {
+  position: absolute; inset: 8%; border-radius: 50%; z-index: 0;
+  background: radial-gradient(circle, color-mix(in srgb, var(--me) 22%, transparent) 0%, color-mix(in srgb, var(--leaf) 10%, transparent) 55%, transparent 72%);
+  animation: breathe 11s ease-in-out infinite;
+}
+.drift-leaves { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: 50%; }
+.drift-leaf { position: absolute; bottom: 10%; width: 12px; height: 12px; fill: var(--leaf); opacity: 0; animation: drift 9s ease-in-out infinite; }
+.drift-leaf.l0 { left: 22%; animation-delay: 0s; }
+.drift-leaf.l1 { left: 70%; animation-delay: 1.8s; width: 9px; height: 9px; }
+.drift-leaf.l2 { left: 40%; animation-delay: 3.6s; fill: var(--me); }
+.drift-leaf.l3 { left: 58%; animation-delay: 5.4s; width: 10px; height: 10px; }
+.drift-leaf.l4 { left: 30%; animation-delay: 7.2s; fill: var(--me); width: 8px; height: 8px; }
+.focus-plant { margin-top: -6px; transform-origin: 50% 100%; animation: sway 6s ease-in-out infinite; }
+.is-paused .halo, .is-paused .drift-leaf, .is-paused .ring-tip, .is-paused .focus-plant { animation-play-state: paused; }
+.drift-leaves { transition: opacity 0.6s; }
+.is-paused .drift-leaves { opacity: 0; }
+.is-paused .timer-face { opacity: 0.55; animation: soft-blink 2.8s ease-in-out infinite; }
+.is-reached .ring-progress { stroke: var(--leaf); }
+.length-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.length-chips .chip-btn { min-height: 36px; padding: 6px 14px; }
 .timer-controls { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
 .timer-controls .wide { grid-column: 1 / -1; }
+.timer-controls .btn { min-width: 0; white-space: normal; padding-inline: 12px; }
+@media (max-width: 420px) { .timer-controls .btn.big { font-size: 0.98rem; min-height: 52px; } }
+@keyframes breathe { 0%, 100% { transform: scale(0.92); opacity: 0.55; } 50% { transform: scale(1.04); opacity: 1; } }
+@keyframes drift {
+  0% { transform: translate(0, 0) rotate(0deg); opacity: 0; }
+  15% { opacity: 0.75; }
+  60% { transform: translate(14px, -120px) rotate(70deg); opacity: 0.5; }
+  100% { transform: translate(-6px, -200px) rotate(140deg); opacity: 0; }
+}
+@keyframes sway { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+@keyframes tip-glow { 0%, 100% { r: 2.4; opacity: 0.85; } 50% { r: 3.2; opacity: 1; } }
+@keyframes soft-blink { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.75; } }
+@media (prefers-reduced-motion: reduce) {
+  .halo, .drift-leaf, .ring-tip, .focus-plant, .is-paused .timer-face { animation: none !important; }
+  .drift-leaf { display: none; }
+}
 .mini-timer {
   position: fixed; right: 20px; bottom: 20px; z-index: 25; display: flex; align-items: center; gap: 12px; padding: 10px 14px 10px 16px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.08); text-decoration: none;
@@ -312,6 +361,8 @@ textarea.input { min-height: 80px; resize: vertical; }
 .daynum { font-size: 0.8rem; font-weight: 800; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; }
 .cal-pill { font-size: 0.75rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: var(--c-soft); border-left: 3px solid var(--c); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-pill.done { text-decoration: line-through; opacity: 0.65; }
+.cal-pill.plan { background: transparent; border: 1px dashed var(--c); border-left: 3px solid var(--c); }
+.sprint-start { font-size: 0.7rem; font-weight: 800; color: var(--c); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .strip button { border: none; background: transparent; padding: 6px 0; border-radius: 12px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; font-weight: 700; }
 .strip button.sel { background: var(--me-soft); }
@@ -360,7 +411,13 @@ textarea.input { min-height: 80px; resize: vertical; }
 .goal-children { margin-left: 18px; padding-left: 14px; border-left: 2px dashed var(--sage); display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 
 /* ── Misc ── */
-.tabs { display: inline-flex; background: var(--mint); padding: 4px; border-radius: 12px; gap: 2px; }
+.tabs { display: inline-flex; background: var(--mint); padding: 4px; border-radius: 12px; gap: 2px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { white-space: nowrap; flex-shrink: 0; }
+/* Long labels inside buttons wrap instead of pushing the page sideways. */
+.pick-row { justify-content: space-between; flex-wrap: wrap; white-space: normal; text-align: left; height: auto; padding-block: 10px; }
+.pick-row > span { min-width: 0; overflow-wrap: anywhere; }
+.sprint-toggle { padding: 4px 6px; min-height: 0; white-space: normal; text-align: left; flex: 1 1 240px; min-width: 0; flex-wrap: wrap; justify-content: flex-start; }
 .tabs button { border: none; background: transparent; padding: 7px 14px; border-radius: 9px; font-weight: 700; cursor: pointer; color: var(--text-2); min-height: 36px; }
 .tabs button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 .avatar { flex-shrink: 0; border-radius: 50%; background: var(--c-soft); display: grid; place-items: center; overflow: hidden; }

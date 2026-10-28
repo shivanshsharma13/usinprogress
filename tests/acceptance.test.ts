@@ -412,6 +412,44 @@ test('pulled sprints: study in the room, backlog stays out until you schedule it
 
 // ───────────── Calendar ─────────────
 
+test('the calendar and home show goal tasks; a friend sees only sprints pulled into a shared room', async () => {
+  const planId = (await A.post('/plans', { title: 'Calendar plan', startDate: today, sprintDays: 3 })).body.id;
+  await A.post(`/plans/${planId}/tasks`, { day: 0, title: 'Heaps today', estMinutes: 30 });
+  await A.post(`/plans/${planId}/tasks`, { day: 2, title: 'Tries later', estMinutes: 40 });
+  await A.post(`/plans/${planId}/tasks`, { day: null, title: 'Parked idea' });
+  const range = `from=${today}&to=${addDays(today, 7)}`;
+
+  let mine = (await A.get(`/tasks?${range}`)).body;
+  const titles = mine.planItems.filter((i: any) => i.planId === planId).map((i: any) => [i.title, i.date]);
+  assert.deepEqual(titles, [['Heaps today', today], ['Tries later', addDays(today, 2)]]); // backlog isn't on the calendar
+  assert.ok(mine.sprints.some((s: any) => s.planId === planId && s.number === 1 && s.startDate === today));
+  const home = (await A.get('/home')).body;
+  assert.ok(home.plannedTasks.some((t: any) => t.title === 'Heaps today'));
+
+  // Not pulled into a room yet: the friend sees nothing.
+  let theirs = (await B.get(`/tasks?${range}`)).body;
+  assert.ok(!theirs.planItems.some((i: any) => i.planId === planId));
+  await A.post(`/plans/${planId}/sprints/1/pull`, { roomId });
+  theirs = (await B.get(`/tasks?${range}`)).body;
+  const seen = theirs.planItems.filter((i: any) => i.planId === planId);
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].ownerId, a.id);
+  assert.equal(seen[0].topicId, null); // nothing to act on
+  assert.equal(seen[0].roomId, roomId);
+  assert.equal((await C.get(`/tasks?${range}`)).body.planItems.length, 0);
+
+  // Finishing it updates the calendar and drops it from "Coming up".
+  mine = (await A.get(`/tasks?${range}`)).body;
+  const heaps = mine.planItems.find((i: any) => i.title === 'Heaps today');
+  const s = (await A.post('/sessions', { topicId: heaps.topicId })).body.session;
+  // The session length can change mid-session.
+  assert.equal((await A.patch(`/sessions/${s.id}`, { targetMinutes: 25 })).status, 200);
+  assert.equal((await A.get('/sessions/active')).body.session.targetMinutes, 25);
+  await A.post(`/sessions/${s.id}/finish`, { completeTopic: true });
+  assert.equal((await A.get(`/tasks?${range}`)).body.planItems.find((i: any) => i.id === heaps.id).done, true);
+  assert.ok(!(await A.get('/home')).body.plannedTasks.some((t: any) => t.id === heaps.id));
+});
+
 test('calendar: shared items are visible to the partner, private ones and notes are not; moving keeps sessions', async () => {
   const shared = (await A.post('/tasks', { title: 'Graphs practice', date: addDays(today, 1), roomId, topicId: topics[3], shared: true, note: 'my private note' })).body.task;
   const privateTask = (await A.post('/tasks', { title: 'Dentist', date: addDays(today, 1) })).body.task;

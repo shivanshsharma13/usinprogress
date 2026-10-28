@@ -131,7 +131,7 @@ function SprintCard({ plan, sprint, isLast, today, defaultOpen }: { plan: Plan; 
   return (
     <div className="card stack" style={{ gap: 10 }}>
       <div className="row between wrap">
-        <button className="row btn ghost" style={{ padding: '4px 6px', minHeight: 0 }} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <button className="row btn ghost sprint-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
           {open ? <ChevronDown /> : <ChevronRight />}
           <h2>Sprint {sprint.number}</h2>
           <span className="small muted">
