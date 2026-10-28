@@ -1,7 +1,7 @@
 // Users, access checks, live status and activity — the pieces every other service relies on.
 // Every check here is a backend authorization boundary; the client never decides access.
 import { all, get, newId, placeholders, run, type DB } from '../db.ts';
-import { notFound } from '../http.ts';
+import { forbidden, notFound } from '../http.ts';
 import { focusedMs } from '../../shared/timer.ts';
 import { localDate } from '../../shared/dates.ts';
 import type { Activity, LiveStatus, Me, PublicUser } from '../../shared/types.ts';
@@ -147,6 +147,18 @@ export function requireTopicAccess(db: DB, topicId: string, userId: string): { t
   if (!topic) throw notFound('That topic could not be found.');
   const room = requireRoomMember(db, topic.room_id, userId);
   return { topic, room };
+}
+
+/**
+ * Topic access for changes: each topic belongs to the person who added it. Room partners can see
+ * it and its progress, but only the owner can edit, complete, reorder or study it.
+ */
+export function requireOwnTopic(db: DB, topicId: string, userId: string): { topic: TopicRow; room: RoomRow } {
+  const access = requireTopicAccess(db, topicId, userId);
+  if (access.topic.created_by !== userId) {
+    throw forbidden("This is your friend's topic. You can follow their progress, but only they can change or study it.");
+  }
+  return access;
 }
 
 // ───────────── Sessions & live status ─────────────

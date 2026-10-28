@@ -260,7 +260,12 @@ textarea.input { min-height: 80px; resize: vertical; }
   font-variant-numeric: tabular-nums; font-size: clamp(3.2rem, 2rem + 6vw, 5.4rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1;
   text-align: center;
 }
-.timer-ring { position: relative; width: min(300px, 78vw); aspect-ratio: 1; margin: 8px auto; display: grid; place-items: center; }
+.timer-ring { position: relative; width: min(300px, 78vw); aspect-ratio: 1; margin: 8px auto; display: grid; place-items: center; container-type: inline-size; }
+/* Text inside the ring is sized from the ring's own width so it always stays inside the circle. */
+.timer-ring > div { position: relative; width: 74%; text-align: center; }
+.timer-ring .timer-face { font-size: 20cqw; }
+.timer-ring .timer-face.long { font-size: 13cqw; }
+.timer-ring .timer-sub { font-size: max(0.75rem, 4.2cqw); margin-top: 6px; line-height: 1.3; }
 .timer-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
 .timer-controls { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
 .timer-controls .wide { grid-column: 1 / -1; }

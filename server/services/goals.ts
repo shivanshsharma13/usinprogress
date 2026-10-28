@@ -204,8 +204,8 @@ function validateLinks(db: DB, userId: string, goalId: string, startDate: string
   for (const r of roomIds) if (!myRooms.has(r)) throw badRequest('You can only link rooms you belong to.');
   const topicRooms = new Map<string, string>();
   for (const t of topicIds) {
-    const row = get<{ room_id: string }>(db, 'SELECT room_id FROM topics WHERE id = ?', t);
-    if (!row || !myRooms.has(row.room_id)) throw badRequest('You can only link topics from your rooms.');
+    const row = get<{ room_id: string; created_by: string }>(db, 'SELECT room_id, created_by FROM topics WHERE id = ?', t);
+    if (!row || !myRooms.has(row.room_id) || row.created_by !== userId) throw badRequest('You can only link your own topics.');
     topicRooms.set(t, row.room_id);
   }
 

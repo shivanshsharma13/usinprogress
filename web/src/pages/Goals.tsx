@@ -258,7 +258,12 @@ function GoalModal({ goal, parent, goals, today, onClose }: { goal: Goal | null;
   const roomDetails = useQueries({
     queries: (rooms ?? []).map((r) => ({ queryKey: ['room', r.id], queryFn: () => api.get<RoomDetail>(`/rooms/${r.id}`) })),
   });
-  const topicsByRoom = useMemo(() => Object.fromEntries(roomDetails.filter((q) => q.data).map((q) => [q.data!.id, q.data!.topics])), [roomDetails]);
+  const { data: me } = useMe();
+  // Only your own topics can count toward your goals.
+  const topicsByRoom = useMemo(
+    () => Object.fromEntries(roomDetails.filter((q) => q.data).map((q) => [q.data!.id, q.data!.topics.filter((t) => t.createdBy === me?.id)])),
+    [roomDetails, me?.id],
+  );
   const [pickTopicsIn, setPickTopicsIn] = useState<string | null>(null);
 
   // A goal can't be its own ancestor.
@@ -395,7 +400,7 @@ function GoalModal({ goal, parent, goals, today, onClose }: { goal: Goal | null;
               <div key={r.id} className="stack" style={{ gap: 4 }}>
                 <div className="row between">
                   <label className="check">
-                    <input type="checkbox" checked={f.roomIds.includes(r.id)} onChange={() => toggle('roomIds', r.id)} /> {r.name} <span className="muted small">(all topics)</span>
+                    <input type="checkbox" checked={f.roomIds.includes(r.id)} onChange={() => toggle('roomIds', r.id)} /> {r.name} <span className="muted small">(all your topics)</span>
                   </label>
                   {!f.roomIds.includes(r.id) && (
                     <button type="button" className="btn ghost small" onClick={() => setPickTopicsIn(pickTopicsIn === r.id ? null : r.id)}>

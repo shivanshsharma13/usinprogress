@@ -107,8 +107,10 @@ time zone.
   allows one live relationship per pair in either direction. Only the recipient can accept/reject.
 - **rooms** + **room_members** — a trigger enforces at most two members; rooms are only created with an
   accepted friend, inserting both members in one transaction.
-- **topics** — estimate and session target stored separately; topics are archived, never deleted.
-- **topic_progress** — one row per topic **per member**: `not_started / in_progress / completed / revising`.
+- **topics** — each topic belongs to the person who added it (`created_by`). In a shared room both people
+  see both lists, but only the owner can edit, reorder, archive, complete or study a topic. Estimate and
+  session target are stored separately; topics are archived, never deleted.
+- **topic_progress** — the owner's status for the topic: `not_started / in_progress / completed / revising`.
 - **topic_completions** — the single source of truth for completed topic work. A partial unique index
   allows only one non-revoked *first* completion per topic and member. Mistakes are *revoked*, not deleted;
   revisions are recorded as separate `revision` rows.
@@ -152,6 +154,11 @@ tasks and finished sessions:
   is an ancestor of the other. Otherwise the server rejects the link (`DOUBLE_COUNT`) and suggests linking the
   parent or child instead.
 - Unlinked goals receive nothing automatically. Your friend's work never counts toward your goals.
+
+**Topic ownership.** A room is a shared space with two personal lists — an engineer's DSA topics next to a
+doctor's biochemistry topics. `requireOwnTopic` in `services/core.ts` rejects any change, completion or study
+session on someone else's topic with 403, and tasks and goals can only reference your own topics. Room
+progress is shown per person ("6 of 10 done") and never combined.
 
 **Privacy.** Every route requires a session; every service checks ownership or membership on the server.
 Non-members get 404 for rooms and topics (existence isn't revealed). Friends see: live status (unless you

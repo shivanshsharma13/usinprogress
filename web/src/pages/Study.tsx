@@ -136,10 +136,10 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
             <circle cx="50" cy="50" r={R} fill="none" stroke="var(--me)" strokeWidth="5" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - progress)} style={{ transition: 'stroke-dashoffset 0.25s linear', opacity: paused ? 0.45 : 1 }} />
           </svg>
           <div>
-            <div className="timer-face" role="timer" aria-live="off" aria-label={`${target ? 'Time left' : 'Focused time'} ${target ? formatCountdown(elapsed, target) : formatClock(elapsed)}`}>
+            <div className={`timer-face${(target ? formatCountdown(elapsed, target) : formatClock(elapsed)).length > 6 ? ' long' : ''}`} role="timer" aria-live="off" aria-label={`${target ? 'Time left' : 'Focused time'} ${target ? formatCountdown(elapsed, target) : formatClock(elapsed)}`}>
               {target ? formatCountdown(elapsed, target) : formatClock(elapsed)}
             </div>
-            <div className="small muted num" style={{ marginTop: 8 }}>
+            <div className="timer-sub muted num">
               {target ? (elapsed > target * 60_000 ? `${target}m target reached · ${formatClock(elapsed)}` : `of ${target}m · ${formatClock(elapsed)} focused`) : 'focused this session'}
             </div>
           </div>
@@ -273,7 +273,10 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
   const { data: room, isLoading: roomLoading } = useRoom(roomId ?? undefined);
   const qc = useQueryClient();
 
-  const selected: Topic | undefined = useMemo(() => room?.topics.find((t) => t.id === topicId) ?? undefined, [room, topicId]);
+  // Only your own topics can be studied; your friend's list is view-only.
+  const myTopics = useMemo(() => (room?.topics ?? []).filter((t) => t.createdBy === me?.id), [room, me?.id]);
+  const selected: Topic | undefined = useMemo(() => myTopics.find((t) => t.id === topicId), [myTopics, topicId]);
+  const partnersTopic = Boolean(topicId && room && !selected && room.topics.some((t) => t.id === topicId));
   const [targetText, setTargetText] = useState('');
   const [remind, setRemind] = useState(false);
   useEffect(() => {
@@ -346,6 +349,8 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
 
       {roomId && roomLoading && <Spinner />}
 
+      {partnersTopic && <div className="banner">That's your friend's topic — you can follow their progress, but only they can study it. Pick one of yours below.</div>}
+
       {room && selected && !outcome?.result.nextTopic && (
         <div className="card stack" style={personVars(me.accent)}>
           <div className="row between top">
@@ -379,19 +384,19 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
       {room && (
         <div className="card stack">
           <div className="row between">
-            <h3>{selected ? 'Or choose another topic' : `Topics in ${room.name}`}</h3>
+            <h3>{selected ? 'Or choose another topic' : `Your topics in ${room.name}`}</h3>
             {!lookup.data && (
               <button className="btn ghost small" onClick={() => setRoomChoice(null)}>
                 Change room
               </button>
             )}
           </div>
-          {room.topics.length === 0 && (
+          {myTopics.length === 0 && (
             <p className="small muted">
-              No topics yet. <Link to={`/rooms/${room.id}`}>Add one in the room</Link>.
+              You have no topics here yet. <Link to={`/rooms/${room.id}`}>Add one in the room</Link>.
             </p>
           )}
-          {room.topics.map((t, i) => {
+          {myTopics.map((t, i) => {
             const p = t.progress[me.id];
             const done = p?.status === 'completed';
             return (

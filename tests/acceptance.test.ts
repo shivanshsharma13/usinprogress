@@ -11,7 +11,8 @@ let C: Client; // a stranger
 let a: any, b: any, c: any;
 let roomId: string;
 let room2Id: string;
-const topics: string[] = [];
+const topics: string[] = []; // A's topics
+const bTopics: string[] = []; // B's topics
 
 const today = new Date().toISOString().slice(0, 10); // users are in UTC
 
@@ -106,23 +107,37 @@ test('only accepted friends can create private rooms; rooms have exactly two mem
   assert.throws(() => srv.db.prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)').run(roomId, c.id, Date.now()), /ROOM_FULL/);
 });
 
-test('both members add, edit and reorder topics', async () => {
-  for (const [who, title, est] of [
-    [A, 'Arrays', 120],
-    [B, 'Binary Search', 180],
-    [A, 'Linked Lists', 120],
-    [B, 'Trees', 300],
+test('each member adds, edits and reorders their own topics; the partner can only see them', async () => {
+  for (const [title, est] of [
+    ['Arrays', 120],
+    ['Binary Search', 180],
+    ['Linked Lists', 120],
+    ['Trees', 300],
   ] as const) {
-    const res = await who.post(`/rooms/${roomId}/topics`, { title, estimatedMinutes: est, sessionTargetMinutes: 45 });
+    const res = await A.post(`/rooms/${roomId}/topics`, { title, estimatedMinutes: est, sessionTargetMinutes: 45 });
     assert.equal(res.status, 201);
     topics.push(res.body.id);
   }
-  assert.equal((await B.patch(`/topics/${topics[0]}`, { title: 'Arrays & Strings' })).status, 200);
+  for (const title of ['Enzyme kinetics', 'Carbohydrate metabolism']) bTopics.push((await B.post(`/rooms/${roomId}/topics`, { title })).body.id);
+
+  assert.equal((await A.patch(`/topics/${topics[0]}`, { title: 'Arrays & Strings' })).status, 200);
   assert.equal((await A.put(`/rooms/${roomId}/topics/order`, { topicIds: [topics[0], topics[1], topics[3], topics[2]] })).status, 200);
   const room = (await B.get(`/rooms/${roomId}`)).body;
-  assert.deepEqual(room.topics.map((t: any) => t.title), ['Arrays & Strings', 'Binary Search', 'Trees', 'Linked Lists']);
-  assert.equal(room.topics[0].estimatedMinutes, 120);
+  const aTitles = room.topics.filter((t: any) => t.createdBy === a.id).map((t: any) => t.title);
+  assert.deepEqual(aTitles, ['Arrays & Strings', 'Binary Search', 'Trees', 'Linked Lists']);
+  assert.equal(room.topics.find((t: any) => t.id === topics[0]).estimatedMinutes, 120);
   await A.put(`/rooms/${roomId}/topics/order`, { topicIds: topics });
+
+  // The partner can see A's topics but cannot edit, reorder, archive, complete or study them.
+  assert.equal((await B.patch(`/topics/${topics[0]}`, { title: 'Hijacked' })).status, 403);
+  assert.equal((await B.put(`/rooms/${roomId}/topics/order`, { topicIds: topics })).status, 400);
+  assert.equal((await B.del(`/topics/${topics[0]}`)).status, 403);
+  assert.equal((await B.post(`/topics/${topics[0]}/complete`)).status, 403);
+  assert.equal((await B.post(`/topics/${topics[0]}/reopen`, { mode: 'revise' })).status, 403);
+  assert.equal((await B.post('/sessions', { topicId: topics[0] })).status, 403);
+  assert.equal((await A.post('/sessions', { topicId: bTopics[0] })).status, 403);
+  assert.equal((await B.post('/tasks', { title: 'x', date: today, topicId: topics[0] })).status, 400);
+  assert.equal((await A.get(`/rooms/${roomId}`)).body.topics.find((t: any) => t.id === topics[0]).title, 'Arrays & Strings');
 });
 
 // ───────────── Timer ─────────────
@@ -184,15 +199,16 @@ test('completing a topic saves the session, marks it complete and selects the ne
   assert.equal(done.body.nextTopic.id, topics[1]);
   assert.equal((await A.get('/sessions/active')).body.session, null);
 
-  // Progress is independent: B still has it open.
+  // The partner sees A's progress; each member's totals count only their own topics.
   const room = (await B.get(`/rooms/${roomId}`)).body;
-  const t0 = room.topics[0];
+  const t0 = room.topics.find((t: any) => t.id === topics[0]);
   assert.equal(t0.progress[a.id].status, 'completed');
-  assert.equal(t0.progress[b.id].status, 'not_started');
+  assert.equal(t0.progress[b.id], undefined);
   assert.equal(t0.progress[a.id].sessions, 1);
   const [mine, partner] = room.members;
   assert.equal(mine.user.id, b.id);
   assert.equal(mine.completed, 0);
+  assert.equal(mine.total, 2);
   assert.equal(partner.completed, 1);
   assert.equal(partner.total, 4);
 
@@ -212,7 +228,7 @@ test('finishing a session without completing keeps the topic incomplete, and ret
   await sleep(60);
   const retry = await A.post(`/sessions/${s.id}/finish`, {});
   assert.equal(retry.body.session.focusedMs, ms);
-  const t1 = (await A.get(`/rooms/${roomId}`)).body.topics[1];
+  const t1 = (await A.get(`/rooms/${roomId}`)).body.topics.find((t: any) => t.id === topics[1]);
   assert.equal(t1.progress[a.id].status, 'in_progress');
   assert.equal(t1.progress[a.id].focusedMs, ms);
 });
@@ -253,7 +269,7 @@ test('very long sessions must be confirmed or corrected, with an audit trail', a
 });
 
 test('reconnecting replays nothing: realtime events only invalidate, state comes from the server', async () => {
-  const s = (await B.post('/sessions', { topicId: topics[0] })).body.session;
+  const s = (await B.post('/sessions', { topicId: bTopics[0] })).body.session;
   // Simulate several reconnects that each re-read state.
   for (let i = 0; i < 3; i++) assert.equal((await B.get('/sessions/active')).body.session.id, s.id);
   await B.post(`/sessions/${s.id}/finish`, { completeTopic: true });
@@ -303,7 +319,7 @@ test('completed work propagates weekly → monthly → yearly exactly once; unli
   assert.equal(goals.find((g: any) => g.id === weekly.body.id).progress.percent, 28);
 
   // Partner's completions never count toward my goals.
-  await B.post(`/topics/${topics[2]}/complete`);
+  await B.post(`/topics/${bTopics[1]}/complete`);
   assert.equal((await progress())[weekly.body.id], 7);
 
   // Undoing a mistaken completion removes it everywhere; revision keeps it.
@@ -375,7 +391,8 @@ test('calendar: shared items are visible to the partner, private ones and notes 
 
 test('archiving a topic keeps its history and sessions', async () => {
   const before = (await A.get('/sessions')).body.sessions.filter((s: any) => s.topicId === topics[3]).length;
-  assert.equal((await B.del(`/topics/${topics[3]}`)).status, 200);
+  assert.equal((await B.del(`/topics/${topics[3]}`)).status, 403);
+  assert.equal((await A.del(`/topics/${topics[3]}`)).status, 200);
   const room = (await A.get(`/rooms/${roomId}`)).body;
   assert.ok(!room.topics.some((t: any) => t.id === topics[3]));
   assert.ok(room.archivedTopics.some((t: any) => t.id === topics[3]));
@@ -403,7 +420,7 @@ test('encouragement reaches the friend in real time; strangers cannot send it', 
 
 test('privacy: hidden status, friend profile access, and profile edits are owner-only', async () => {
   await B.patch('/me', { shareStatus: false });
-  const s = (await B.post('/sessions', { topicId: topics[1] })).body.session;
+  const s = (await B.post('/sessions', { topicId: bTopics[1] })).body.session;
   const status = (await A.get('/friends')).body.friends[0].status;
   assert.equal(status.state, 'hidden');
   assert.equal(status.topicTitle, undefined);

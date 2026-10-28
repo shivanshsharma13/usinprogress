@@ -491,7 +491,7 @@ function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null
           <Field label="Topic (optional)" hint="You can start studying it right from the calendar." full>
             <select className="input" value={f.topicId} onChange={(e) => set({ topicId: e.target.value })}>
               <option value="">None</option>
-              {(room.data?.topics ?? []).map((t) => (
+              {(room.data?.topics ?? []).filter((t) => t.createdBy === meId).map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.title}
                 </option>

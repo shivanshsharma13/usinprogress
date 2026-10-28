@@ -10,6 +10,7 @@ import {
   liveStatus,
   listActivity,
   recordActivity,
+  requireOwnTopic,
   requireRoomMember,
   requireTopicAccess,
   roomMemberIds,
@@ -108,11 +109,11 @@ function loadTopics(db: DB, roomIds: string[], includeArchived: boolean): Topic[
   const progressMap = new Map(progress.map((p) => [key(p.topic_id, p.user_id), p]));
   const firstMap = new Map(firsts.map((f) => [key(f.topic_id, f.user_id), f.completed_at]));
   const timeMap = new Map(time.map((t) => [key(t.topic_id, t.user_id), t]));
-  const members = new Map(roomIds.map((r) => [r, roomMemberIds(db, r)]));
 
   return topics.map((t) => {
+    // Progress is tracked for the topic's owner only.
     const prog: Record<string, TopicMemberProgress> = {};
-    for (const uid of members.get(t.room_id) ?? []) {
+    for (const uid of [t.created_by]) {
       const p = progressMap.get(key(t.id, uid));
       const tm = timeMap.get(key(t.id, uid));
       prog[uid] = {
@@ -151,7 +152,8 @@ function summarize(db: DB, viewerId: string, room: RoomRow, topics: Topic[]): Ro
   memberIds.sort((a, b) => (a === viewerId ? -1 : b === viewerId ? 1 : 0));
   const users = getUsers(db, memberIds);
   const active = topics.filter((t) => t.status === 'active');
-  const next = active.find((t) => !isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising');
+  const mine = active.filter((t) => t.createdBy === viewerId);
+  const next = mine.find((t) => !isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising');
   return {
     id: room.id,
     name: room.name,
@@ -164,8 +166,8 @@ function summarize(db: DB, viewerId: string, room: RoomRow, topics: Topic[]): Ro
     createdAt: room.created_at,
     members: memberIds.map((uid) => ({
       user: toPublicUser(users.get(uid)!),
-      completed: active.filter((t) => isDone(t.progress[uid])).length,
-      total: active.length,
+      completed: active.filter((t) => t.createdBy === uid && isDone(t.progress[uid])).length,
+      total: active.filter((t) => t.createdBy === uid).length,
       focusedMs: topics.reduce((sum, t) => sum + (t.progress[uid]?.focusedMs ?? 0), 0),
       status: liveStatus(db, viewerId, uid),
     })),
@@ -248,7 +250,7 @@ export function createTopic(
       now,
       now,
     );
-    for (const uid of roomMemberIds(db, roomId)) ensureProgress(db, id, uid);
+    ensureProgress(db, id, userId);
     topicEvent(db, id, userId, 'created', { title: input.title });
     return id;
   });
@@ -260,7 +262,7 @@ export function updateTopic(
   topicId: string,
   input: Partial<{ title: string; description: string; category: string; estimatedMinutes: number | null; sessionTargetMinutes: number | null; deadline: string | null; status: 'active' | 'archived' }>,
 ) {
-  const { topic } = requireTopicAccess(db, topicId, userId);
+  const { topic } = requireOwnTopic(db, topicId, userId);
   const changes: Record<string, unknown> = {};
   const next = {
     title: input.title ?? topic.title,
@@ -294,7 +296,7 @@ export function updateTopic(
 
 /** Archiving keeps every session, completion and event — topics are never hard-deleted. */
 export function archiveTopic(db: DB, userId: string, topicId: string) {
-  const { topic } = requireTopicAccess(db, topicId, userId);
+  const { topic } = requireOwnTopic(db, topicId, userId);
   const active = get(db, "SELECT 1 FROM study_sessions WHERE topic_id = ? AND state IN ('running', 'paused')", topicId);
   if (active) throw conflict('Someone is studying this topic right now. Try again after their session.');
   if (topic.status !== 'archived') updateTopic(db, userId, topicId, { status: 'archived' });
@@ -302,7 +304,10 @@ export function archiveTopic(db: DB, userId: string, topicId: string) {
 
 export function reorderTopics(db: DB, userId: string, roomId: string, topicIds: string[]) {
   requireRoomMember(db, roomId, userId);
-  const existing = new Set(all<{ id: string }>(db, "SELECT id FROM topics WHERE room_id = ? AND status = 'active'", roomId).map((r) => r.id));
+  // Each person orders only their own topics.
+  const existing = new Set(
+    all<{ id: string }>(db, "SELECT id FROM topics WHERE room_id = ? AND created_by = ? AND status = 'active'", roomId, userId).map((r) => r.id),
+  );
   if (topicIds.length !== existing.size || !topicIds.every((id) => existing.has(id))) {
     throw badRequest('The topic list changed. Please refresh and try again.', 'STALE_ORDER');
   }
@@ -316,7 +321,7 @@ export function reorderTopics(db: DB, userId: string, roomId: string, topicIds: 
  * changes nothing, so retries after a dropped connection never double count.
  */
 export function completeTopic(db: DB, userId: string, topicId: string): { alreadyCompleted: boolean } {
-  const { topic, room } = requireTopicAccess(db, topicId, userId);
+  const { topic, room } = requireOwnTopic(db, topicId, userId);
   if (topic.status !== 'active') throw badRequest('This topic is archived.');
   return transaction(db, () => {
     ensureProgress(db, topicId, userId);
@@ -348,7 +353,7 @@ export function completeTopic(db: DB, userId: string, topicId: string): { alread
  *  - 'undo':   it was marked complete by mistake; the completion is revoked (kept for audit).
  */
 export function reopenTopic(db: DB, userId: string, topicId: string, mode: 'revise' | 'undo') {
-  requireTopicAccess(db, topicId, userId);
+  requireOwnTopic(db, topicId, userId);
   transaction(db, () => {
     ensureProgress(db, topicId, userId);
     const now = Date.now();
@@ -368,15 +373,16 @@ export function reopenTopic(db: DB, userId: string, topicId: string, mode: 'revi
   });
 }
 
-/** Next topic for this user after `afterTopicId` (wrapping around) that they have not completed. */
+/** Next of the user's own topics after `afterTopicId` (wrapping around) that they have not completed. */
 export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afterTopicId?: string): { id: string; title: string } | null {
   const topics = all<{ id: string; title: string; status: string | null }>(
     db,
     `SELECT t.id, t.title, p.status FROM topics t
        LEFT JOIN topic_progress p ON p.topic_id = t.id AND p.user_id = ?
-      WHERE t.room_id = ? AND t.status = 'active' ORDER BY t.position, t.created_at`,
+      WHERE t.room_id = ? AND t.created_by = ? AND t.status = 'active' ORDER BY t.position, t.created_at`,
     userId,
     roomId,
+    userId,
   );
   const start = afterTopicId ? topics.findIndex((t) => t.id === afterTopicId) + 1 : 0;
   const ordered = [...topics.slice(start), ...topics.slice(0, start)];

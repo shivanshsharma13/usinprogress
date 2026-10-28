@@ -97,8 +97,9 @@ function validateRefs(db: DB, userId: string, refs: { goalId?: string | null; ro
     if (!g) throw badRequest('That goal could not be found.');
   }
   if (refs.topicId) {
-    const t = get<{ room_id: string }>(db, 'SELECT room_id FROM topics WHERE id = ?', refs.topicId);
+    const t = get<{ room_id: string; created_by: string }>(db, 'SELECT room_id, created_by FROM topics WHERE id = ?', refs.topicId);
     if (!t) throw badRequest('That topic could not be found.');
+    if (t.created_by !== userId) throw badRequest('You can only plan your own topics.');
     if (roomId && roomId !== t.room_id) throw badRequest('That topic is not in the selected room.');
     roomId = t.room_id;
   }

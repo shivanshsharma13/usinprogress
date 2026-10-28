@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { daysBetween, formatDate } from '@shared/dates';
 import { formatMinutes } from '@shared/timer';
-import type { PublicUser, RoomDetail, Topic, TopicMemberProgress } from '@shared/types';
+import type { MemberProgress, RoomDetail, Topic, TopicMemberProgress } from '@shared/types';
 import { useAction, useMe, useRoom, useTopicHistory } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
@@ -12,42 +12,19 @@ import { ActivityFeed } from '../components/Encourage';
 import { Plant } from '../components/Plant';
 import { CheckIcon, ChevronLeft, PlayIcon, PlusIcon } from '../components/icons';
 
+// Each person owns the topics they add. Both lists are visible side by side, but only the owner
+// can study, complete or change their own topics (enforced by the server too).
 export function RoomPage() {
   const { id } = useParams();
   const { data: me } = useMe();
   const { data: room, isLoading, error, refetch } = useRoom(id);
-  const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
-  const [editTopic, setEditTopic] = useState<Topic | null>(null);
-  const [historyFor, setHistoryFor] = useState<Topic | null>(null);
-  const [adding, setAdding] = useState(false);
-
-  const inv = [['room', id!], ['rooms'], ['goals'], ['progress'], ['session']];
-  const complete = useAction((topicId: string) => api.post(`/topics/${topicId}/complete`), { invalidate: inv, success: 'Topic complete 🌼' });
-  const reopen = useAction(({ topicId, mode }: { topicId: string; mode: 'revise' | 'undo' }) => api.post(`/topics/${topicId}/reopen`, { mode }), {
-    invalidate: inv,
-    success: (r) => (r ? 'Updated' : undefined),
-  });
-  const archive = useAction((topicId: string) => api.del(`/topics/${topicId}`), { invalidate: inv, success: 'Topic archived — its history is kept' });
-  const restore = useAction((topicId: string) => api.patch(`/topics/${topicId}`, { status: 'active' }), { invalidate: inv, success: 'Topic restored' });
-  const reorder = useAction((topicIds: string[]) => api.put(`/rooms/${id}/topics/order`, { topicIds }), { invalidate: inv });
 
   if (isLoading || !me) return <Spinner />;
   if (error || !room) return <ErrorNote error={error} retry={refetch} />;
 
-  const [mine, partner] = room.members;
-  const partnerUser = partner?.user;
   const daysLeft = daysBetween(me.today, room.endDate);
-  const allDone = room.topics.length > 0 && room.topics.every((t) => isDone(t.progress[me.id]) && t.progress[me.id]?.status !== 'revising');
-  const users: Record<string, PublicUser> = Object.fromEntries(room.members.map((m) => [m.user.id, m.user]));
-
-  const move = (index: number, delta: number) => {
-    const ids = room.topics.map((t) => t.id);
-    const target = index + delta;
-    if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target], ids[index]];
-    reorder.mutate(ids);
-  };
+  const myArchived = room.archivedTopics.filter((t) => t.createdBy === me.id);
 
   return (
     <div className="stack-lg">
@@ -56,217 +33,191 @@ export function RoomPage() {
       </Link>
 
       <div className="page-head" style={{ marginBottom: 0 }}>
-        <div className="row" style={personVars(room.color)}>
-          <Plant percent={mine && mine.total ? (mine.completed / mine.total) * 100 : 0} size={60} color="var(--c)" />
-          <div>
-            <h1>{room.name}</h1>
-            <p className="muted small">
-              {formatDate(room.startDate)} – {formatDate(room.endDate, { month: 'short', day: 'numeric', year: 'numeric' })}
-              {room.status === 'archived' ? ' · Archived' : daysLeft >= 0 ? ` · ${daysLeft} days left` : ' · Finished'}
-            </p>
-            {room.description && <p className="small">{room.description}</p>}
-          </div>
+        <div>
+          <h1>{room.name}</h1>
+          <p className="muted small">
+            {formatDate(room.startDate)} – {formatDate(room.endDate, { month: 'short', day: 'numeric', year: 'numeric' })}
+            {room.status === 'archived' ? ' · Archived' : daysLeft >= 0 ? ` · ${daysLeft} days left` : ' · Finished'}
+          </p>
+          {room.description && <p className="small">{room.description}</p>}
         </div>
-        <div className="row wrap">
-          <button className="btn" onClick={() => setEditing(true)}>
-            Edit room
-          </button>
-          {room.nextTopic && room.status === 'active' && (
-            <button className="btn primary" onClick={() => navigate(`/study?topic=${room.nextTopic!.id}`)}>
-              <PlayIcon /> Start studying
-            </button>
-          )}
-        </div>
+        <button className="btn" onClick={() => setEditing(true)}>
+          Edit room
+        </button>
       </div>
 
-      {/* Each person's progress, kept separate and never combined into one number */}
-      <div className="grid-2">
+      <div className="grid-2" style={{ alignItems: 'start' }}>
         {room.members.map((m) => (
-          <div key={m.user.id} className="card tint stack" style={{ ...personVars(m.user.accent), gap: 8 }}>
-            <div className="row">
-              <Avatar user={m.user} size={36} />
-              <div className="grow">
-                <div className="row" style={{ gap: 6 }}>
-                  <b>{m.user.id === me.id ? 'You' : m.user.displayName}</b>
-                  <LiveDot status={m.status} accent={m.user.accent} />
-                </div>
-                <div className="tiny">
-                  {m.user.id === me.id ? (m.status.state === 'idle' ? 'Not studying' : m.status.state === 'paused' ? 'Paused' : `Studying ${m.status.topicTitle ?? ''}`) : <StatusLine status={m.status} name={m.user.displayName} />}
-                </div>
-              </div>
-            </div>
-            <div className="num bold">
-              {m.completed} of {m.total} topics completed
-            </div>
-            <ProgressBar value={m.completed} max={m.total} accent={m.user.accent} label={`${m.user.displayName} progress`} />
-            <div className="small muted">{fmt(m.focusedMs)} focused in this room</div>
-          </div>
+          <PersonColumn key={m.user.id} room={room} member={m} isMe={m.user.id === me.id} />
         ))}
       </div>
 
-      <div className="home-grid">
-        <div className="stack">
-          <div className="row between">
-            <h2>Topics</h2>
-            {room.status === 'active' && (
-              <button className="btn small" onClick={() => setAdding((a) => !a)}>
-                <PlusIcon /> Add topic
-              </button>
-            )}
-          </div>
+      {myArchived.length > 0 && <ArchivedTopics roomId={room.id} topics={myArchived} />}
 
-          {(adding || room.topics.length === 0) && room.status === 'active' && (
-            <AddTopic roomId={room.id} firstTime={room.topics.length === 0} onDone={() => setAdding(false)} />
-          )}
-
-          {allDone && (
-            <div className="card tint center stack" style={{ alignItems: 'center', ...personVars(me.accent) }}>
-              <Plant percent={100} size={72} color="var(--c)" />
-              <h3>You've completed every topic in this room 🌸</h3>
-              <p className="small muted">Add more topics, or reopen one to revise it.</p>
-              <button className="btn" onClick={() => setAdding(true)}>
-                <PlusIcon /> Add more topics
-              </button>
-            </div>
-          )}
-
-          {room.topics.map((t, i) => {
-            const my = t.progress[me.id];
-            const theirs = partnerUser ? t.progress[partnerUser.id] : undefined;
-            const done = isDone(my) && my?.status !== 'revising';
-            return (
-              <div key={t.id} className="topic-row">
-                <span className={`idx${done ? ' done' : ''}`} aria-hidden="true">
-                  {done ? <CheckIcon width={16} /> : i + 1}
-                </span>
-                <div style={{ minWidth: 0 }}>
-                  <div className="bold">{t.title}</div>
-                  <div className="tiny muted">
-                    {[t.category, t.estimatedMinutes ? `Est. ${formatMinutes(t.estimatedMinutes)}` : '', t.sessionTargetMinutes ? `${t.sessionTargetMinutes}m sessions` : '', t.deadline ? `Due ${formatDate(t.deadline)}` : '']
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </div>
-                  <div className="member-status">
-                    {my && <MemberStatus user={users[me.id]} you progress={my} />}
-                    {theirs && partnerUser && <MemberStatus user={partnerUser} progress={theirs} />}
-                  </div>
-                </div>
-                <div className="row actions" style={{ gap: 6 }}>
-                  {room.status === 'active' && (
-                    <button className="btn small" onClick={() => navigate(`/study?topic=${t.id}`)} aria-label={`Study ${t.title}`}>
-                      <PlayIcon /> {done ? 'Revise' : 'Study'}
-                    </button>
-                  )}
-                  {!done && room.status === 'active' && (
-                    <button className="btn small" disabled={complete.isPending} onClick={() => complete.mutate(t.id)} aria-label={`Mark ${t.title} complete`}>
-                      <CheckIcon /> Done
-                    </button>
-                  )}
-                  <Menu
-                    label={`More actions for ${t.title}`}
-                    items={[
-                      { label: 'Edit topic', onClick: () => setEditTopic(t) },
-                      { label: 'Move up', onClick: () => move(i, -1), hidden: i === 0 },
-                      { label: 'Move down', onClick: () => move(i, 1), hidden: i === room.topics.length - 1 },
-                      { label: 'History', onClick: () => setHistoryFor(t) },
-                      { label: 'Reopen to revise', onClick: () => reopen.mutate({ topicId: t.id, mode: 'revise' }), hidden: my?.status !== 'completed' },
-                      {
-                        label: 'Undo my completion',
-                        onClick: () => confirm('Undo your completion? It will stop counting toward your goals. The record is kept in history.') && reopen.mutate({ topicId: t.id, mode: 'undo' }),
-                        hidden: !my || (my.status !== 'completed' && my.status !== 'revising'),
-                      },
-                      { label: 'Archive topic', danger: true, onClick: () => confirm(`Archive “${t.title}”? Study sessions and history are kept.`) && archive.mutate(t.id) },
-                    ]}
-                  />
-                </div>
-              </div>
-            );
-          })}
-
-          {room.archivedTopics.length > 0 && (
-            <details>
-              <summary className="small muted">Archived topics ({room.archivedTopics.length})</summary>
-              <div className="stack" style={{ marginTop: 10 }}>
-                {room.archivedTopics.map((t) => (
-                  <div key={t.id} className="row card soft">
-                    <span className="grow">{t.title}</span>
-                    <button className="btn small ghost" onClick={() => setHistoryFor(t)}>
-                      History
-                    </button>
-                    <button className="btn small" onClick={() => restore.mutate(t.id)}>
-                      Restore
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+      <details className="card">
+        <summary>Room activity</summary>
+        <div style={{ marginTop: 12 }}>
+          <ActivityFeed items={room.activity} meId={me.id} empty="Completed topics will show up here." />
         </div>
-
-        <div className="stack-lg">
-          {room.linkedGoals.length > 0 && (
-            <div className="card">
-              <div className="card-head">
-                <h3>Counts toward</h3>
-              </div>
-              <div className="row wrap">
-                {room.linkedGoals.map((g) => (
-                  <Link key={g.id} to="/goals" className="chip c" style={personVars(users[g.ownerId]?.accent)}>
-                    {g.title}
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="card">
-            <div className="card-head">
-              <h3>Room activity</h3>
-            </div>
-            <ActivityFeed items={room.activity} meId={me.id} empty="Completed topics will show up here." />
-          </div>
-        </div>
-      </div>
+      </details>
 
       {editing && <EditRoomModal room={room} onClose={() => setEditing(false)} />}
-      {editTopic && <TopicModal roomId={room.id} topic={editTopic} onClose={() => setEditTopic(null)} />}
-      {historyFor && <HistoryModal topic={historyFor} users={users} onClose={() => setHistoryFor(null)} />}
     </div>
   );
 }
 
-function isDone(p: TopicMemberProgress | undefined) {
-  return Boolean(p && (p.status === 'completed' || p.firstCompletedAt));
+function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: MemberProgress; isMe: boolean }) {
+  const navigate = useNavigate();
+  const [adding, setAdding] = useState(false);
+  const topics = room.topics.filter((t) => t.createdBy === member.user.id);
+  const name = isMe ? 'You' : member.user.displayName;
+  const active = room.status === 'active';
+  const allDone = topics.length > 0 && member.completed === topics.length;
+
+  return (
+    <section className="stack" style={personVars(member.user.accent)} aria-label={isMe ? 'Your topics' : `${member.user.displayName}'s topics`}>
+      <div className="card tint stack" style={{ gap: 8 }}>
+        <div className="row">
+          <Avatar user={member.user} size={40} />
+          <div className="grow" style={{ minWidth: 0 }}>
+            <div className="row" style={{ gap: 6 }}>
+              <h2>{isMe ? 'Your topics' : `${member.user.displayName}'s topics`}</h2>
+              <LiveDot status={member.status} accent={member.user.accent} />
+            </div>
+            <div className="tiny">
+              {isMe ? (member.status.state === 'idle' ? 'Not studying right now' : member.status.state === 'paused' ? 'Paused' : `Studying ${member.status.topicTitle ?? ''}`) : <StatusLine status={member.status} name={member.user.displayName} />}
+            </div>
+          </div>
+          <Plant percent={member.total ? (member.completed / member.total) * 100 : 0} size={44} color="var(--c)" />
+        </div>
+        <ProgressBar value={member.completed} max={member.total} accent={member.user.accent} label={`${name}: ${member.completed} of ${member.total}`} />
+        <div className="row between small">
+          <span className="bold num">
+            {member.completed} of {member.total} done
+          </span>
+          <span className="muted num">{fmt(member.focusedMs)} focused</span>
+        </div>
+        {isMe && active && room.nextTopic && (
+          <button className="btn primary" onClick={() => navigate(`/study?topic=${room.nextTopic!.id}`)}>
+            <PlayIcon /> Study next: {room.nextTopic.title}
+          </button>
+        )}
+      </div>
+
+      {topics.map((t, i) => (
+        <TopicRow key={t.id} topic={t} index={i} ownerId={member.user.id} isMe={isMe} active={active} siblings={topics} />
+      ))}
+
+      {isMe && active && (adding || topics.length === 0 ? <AddTopic roomId={room.id} firstTime={topics.length === 0} onDone={() => setAdding(false)} /> : (
+        <button className="btn" onClick={() => setAdding(true)}>
+          <PlusIcon /> Add a topic
+        </button>
+      ))}
+
+      {isMe && allDone && <p className="small muted center">Everything here is done 🌸 Add more, or revise one.</p>}
+      {!isMe && topics.length === 0 && <p className="small muted">{member.user.displayName} hasn't added any topics yet.</p>}
+    </section>
+  );
 }
 
-function MemberStatus({ user, progress, you }: { user: PublicUser; progress: TopicMemberProgress; you?: boolean }) {
-  const name = you ? 'You' : user.displayName;
-  const label =
-    progress.status === 'completed'
-      ? `${name}: done${progress.completedAt ? ` ${formatDate(new Date(progress.completedAt).toISOString().slice(0, 10))}` : ''}`
-      : progress.status === 'revising'
-        ? `${name}: revising`
-        : progress.status === 'in_progress'
-          ? `${name}: in progress`
-          : `${name}: not started`;
+function statusText(p: TopicMemberProgress | undefined) {
+  if (!p) return 'Not started';
+  const time = p.focusedMs > 0 ? ` · ${fmt(p.focusedMs)}` : '';
+  if (p.status === 'completed') return `Done ${p.completedAt ? formatDate(new Date(p.completedAt).toISOString().slice(0, 10)) : ''}${time}`;
+  if (p.status === 'revising') return `Revising${time}`;
+  if (p.status === 'in_progress') return `In progress${time}`;
+  return 'Not started';
+}
+
+function TopicRow({ topic: t, index, ownerId, isMe, active, siblings }: { topic: Topic; index: number; ownerId: string; isMe: boolean; active: boolean; siblings: Topic[] }) {
+  const navigate = useNavigate();
+  const [editing, setEditing] = useState(false);
+  const [history, setHistory] = useState(false);
+  const p = t.progress[ownerId];
+  const done = p?.status === 'completed';
+
+  const inv = [['room', t.roomId], ['rooms'], ['goals'], ['progress'], ['session']];
+  const complete = useAction(() => api.post(`/topics/${t.id}/complete`), { invalidate: inv, success: 'Topic complete 🌼' });
+  const reopen = useAction((mode: 'revise' | 'undo') => api.post(`/topics/${t.id}/reopen`, { mode }), { invalidate: inv });
+  const archive = useAction(() => api.del(`/topics/${t.id}`), { invalidate: inv, success: 'Topic archived — its history is kept' });
+  const reorder = useAction((topicIds: string[]) => api.put(`/rooms/${t.roomId}/topics/order`, { topicIds }), { invalidate: inv });
+  const move = (delta: number) => {
+    const ids = siblings.map((s) => s.id);
+    [ids[index], ids[index + delta]] = [ids[index + delta], ids[index]];
+    reorder.mutate(ids);
+  };
+
+  const meta = [t.category, t.estimatedMinutes ? `~${formatMinutes(t.estimatedMinutes)}` : '', t.deadline ? `due ${formatDate(t.deadline)}` : ''].filter(Boolean).join(' · ');
+
   return (
-    <span className="chip c" style={personVars(user.accent)} title={`${progress.sessions} sessions`}>
-      {progress.status === 'completed' ? '✓ ' : ''}
-      {label}
-      {progress.focusedMs > 0 && <span className="muted num"> · {fmt(progress.focusedMs)}</span>}
-    </span>
+    <div className="topic-row">
+      <span className={`idx${done ? ' done' : ''}`} aria-hidden="true">
+        {done ? <CheckIcon width={16} /> : index + 1}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div className="bold">{t.title}</div>
+        <div className="tiny muted">
+          {statusText(p)}
+          {meta && ` · ${meta}`}
+        </div>
+      </div>
+      {isMe && active && (
+        <div className="row actions" style={{ gap: 6 }}>
+          <button className="btn small" onClick={() => navigate(`/study?topic=${t.id}`)} aria-label={`Study ${t.title}`}>
+            <PlayIcon /> {done ? 'Revise' : 'Study'}
+          </button>
+          {!done && (
+            <button className="btn small" disabled={complete.isPending} onClick={() => complete.mutate(undefined)} aria-label={`Mark ${t.title} done`}>
+              <CheckIcon /> Done
+            </button>
+          )}
+          <Menu
+            label={`More actions for ${t.title}`}
+            items={[
+              { label: 'Edit', onClick: () => setEditing(true) },
+              { label: 'Move up', onClick: () => move(-1), hidden: index === 0 },
+              { label: 'Move down', onClick: () => move(1), hidden: index === siblings.length - 1 },
+              { label: 'History', onClick: () => setHistory(true) },
+              { label: 'Undo “done”', onClick: () => confirm('Undo this completion? It will stop counting toward your goals. The record stays in history.') && reopen.mutate('undo'), hidden: !done },
+              { label: 'Archive', danger: true, onClick: () => confirm(`Archive “${t.title}”? Its study time and history are kept.`) && archive.mutate(undefined) },
+            ]}
+          />
+        </div>
+      )}
+      {editing && <TopicModal topic={t} onClose={() => setEditing(false)} />}
+      {history && <HistoryModal topic={t} onClose={() => setHistory(false)} />}
+    </div>
+  );
+}
+
+function ArchivedTopics({ roomId, topics }: { roomId: string; topics: Topic[] }) {
+  const restore = useAction((topicId: string) => api.patch(`/topics/${topicId}`, { status: 'active' }), { invalidate: [['room', roomId], ['rooms']], success: 'Topic restored' });
+  return (
+    <details>
+      <summary className="small muted">Your archived topics ({topics.length})</summary>
+      <div className="stack" style={{ marginTop: 10 }}>
+        {topics.map((t) => (
+          <div key={t.id} className="row card soft">
+            <span className="grow">{t.title}</span>
+            <button className="btn small" onClick={() => restore.mutate(t.id)}>
+              Restore
+            </button>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
 function AddTopic({ roomId, firstTime, onDone }: { roomId: string; firstTime: boolean; onDone: () => void }) {
   const [title, setTitle] = useState('');
   const [more, setMore] = useState(false);
-  const [details, setDetails] = useState({ category: '', estimatedHours: '', target: '', deadline: '', description: '' });
+  const [details, setDetails] = useState({ category: '', estimatedHours: '', target: '', deadline: '' });
   const add = useAction(
     () =>
       api.post(`/rooms/${roomId}/topics`, {
         title,
         category: details.category || undefined,
-        description: details.description || undefined,
         estimatedMinutes: details.estimatedHours ? Math.round(Number(details.estimatedHours) * 60) : null,
         sessionTargetMinutes: details.target ? Number(details.target) : null,
         deadline: details.deadline || null,
@@ -275,7 +226,7 @@ function AddTopic({ roomId, firstTime, onDone }: { roomId: string; firstTime: bo
       invalidate: [['room', roomId], ['rooms']],
       onSuccess: () => {
         setTitle('');
-        setDetails({ category: '', estimatedHours: '', target: '', deadline: '', description: '' });
+        setDetails({ category: '', estimatedHours: '', target: '', deadline: '' });
       },
     },
   );
@@ -287,52 +238,44 @@ function AddTopic({ roomId, firstTime, onDone }: { roomId: string; firstTime: bo
         if (title.trim()) add.mutate(undefined);
       }}
     >
-      {firstTime && (
-        <div className="stack" style={{ gap: 4 }}>
-          <h3>Add your first topic</h3>
-          <p className="small muted">
-            A topic is one thing to learn, like “Binary Search” or “Enzyme kinetics”. You'll each tick it off on your own. Add a few, then press Study.
-          </p>
-        </div>
-      )}
+      {firstTime && <p className="small muted">Add the things you want to learn here, like “Binary Search” or “Enzyme kinetics”. Your friend will see your list, but only you can work on it.</p>}
       <div className="row">
-        <input className="input grow" placeholder="Topic title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} aria-label="Topic title" />
+        <input className="input grow" placeholder="Topic title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} aria-label="Topic title" autoFocus={!firstTime} />
         <button className="btn primary" disabled={!title.trim() || add.isPending}>
           Add
         </button>
       </div>
-      <button type="button" className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setMore((m) => !m)}>
-        {more ? 'Fewer details' : 'More details (optional)'}
-      </button>
+      <div className="row between">
+        <button type="button" className="btn ghost small" onClick={() => setMore((m) => !m)}>
+          {more ? 'Fewer details' : 'More details (optional)'}
+        </button>
+        {!firstTime && (
+          <button type="button" className="btn ghost small" onClick={onDone}>
+            Close
+          </button>
+        )}
+      </div>
       {more && (
         <div className="form-grid">
-          <Field label="Subject or category">
+          <Field label="Subject">
             <input className="input" value={details.category} onChange={(e) => setDetails({ ...details, category: e.target.value })} placeholder="e.g. Searching" />
           </Field>
-          <Field label="Estimated time to finish (hours)" hint="Your guess for the whole topic.">
+          <Field label="Estimated hours to finish">
             <input className="input" type="number" min="0" step="0.5" inputMode="decimal" value={details.estimatedHours} onChange={(e) => setDetails({ ...details, estimatedHours: e.target.value })} />
           </Field>
-          <Field label="Focus session length (minutes)" hint="e.g. 45 — one sitting.">
+          <Field label="Session length (minutes)" hint="e.g. 45 — one sitting.">
             <input className="input" type="number" min="1" max="600" inputMode="numeric" value={details.target} onChange={(e) => setDetails({ ...details, target: e.target.value })} />
           </Field>
           <Field label="Deadline">
             <input className="input" type="date" value={details.deadline} onChange={(e) => setDetails({ ...details, deadline: e.target.value })} />
           </Field>
-          <Field label="Notes" full>
-            <textarea className="input" value={details.description} onChange={(e) => setDetails({ ...details, description: e.target.value })} />
-          </Field>
         </div>
-      )}
-      {!firstTime && (
-        <button type="button" className="btn ghost small" style={{ alignSelf: 'flex-end' }} onClick={onDone}>
-          Close
-        </button>
       )}
     </form>
   );
 }
 
-function TopicModal({ roomId, topic, onClose }: { roomId: string; topic: Topic; onClose: () => void }) {
+function TopicModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
   const [f, setF] = useState({
     title: topic.title,
     description: topic.description,
@@ -353,7 +296,7 @@ function TopicModal({ roomId, topic, onClose }: { roomId: string; topic: Topic; 
         deadline: f.deadline || null,
       }),
     {
-      invalidate: [['room', roomId], ['rooms']],
+      invalidate: [['room', topic.roomId], ['rooms']],
       success: 'Topic saved',
       onSuccess: onClose,
       onError: (e: ApiError) => {
@@ -381,16 +324,16 @@ function TopicModal({ roomId, topic, onClose }: { roomId: string; topic: Topic; 
         <Field label="Title" full>
           <input className="input" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} maxLength={140} />
         </Field>
-        <Field label="Subject or category">
+        <Field label="Subject">
           <input className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} />
         </Field>
         <Field label="Deadline">
           <input className="input" type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} />
         </Field>
-        <Field label="Estimated time to finish (hours)" hint="Your estimate is kept separately from actual time.">
+        <Field label="Estimated hours to finish" hint="Kept separate from your actual time.">
           <input className="input" type="number" min="0" step="0.5" value={f.estimatedHours} onChange={(e) => setF({ ...f, estimatedHours: e.target.value })} />
         </Field>
-        <Field label="Focus session length (minutes)">
+        <Field label="Session length (minutes)">
           <input className="input" type="number" min="1" max="600" value={f.target} onChange={(e) => setF({ ...f, target: e.target.value })} />
         </Field>
         <Field label="Notes" full>
@@ -403,58 +346,50 @@ function TopicModal({ roomId, topic, onClose }: { roomId: string; topic: Topic; 
 }
 
 const EVENT_LABEL: Record<string, string> = {
-  created: 'added this topic',
-  edited: 'edited this topic',
-  completed: 'completed it',
-  revision_completed: 'finished a revision',
-  reopened_for_revision: 'reopened it to revise',
-  completion_undone: 'undid a completion',
-  archived: 'archived it',
-  restored: 'restored it',
+  created: 'Added',
+  edited: 'Edited',
+  completed: 'Completed',
+  revision_completed: 'Finished a revision',
+  reopened_for_revision: 'Reopened to revise',
+  completion_undone: 'Undid a completion',
+  archived: 'Archived',
+  restored: 'Restored',
 };
 
-function HistoryModal({ topic, users, onClose }: { topic: Topic; users: Record<string, PublicUser>; onClose: () => void }) {
+function HistoryModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
   const { data, isLoading } = useTopicHistory(topic.id);
+  const p = topic.progress[topic.createdBy];
   return (
-    <Modal title={`History · ${topic.title}`} onClose={onClose}>
-      <p className="small muted" style={{ marginBottom: 12 }}>
-        Added {relativeTime(topic.createdAt)}
-        {topic.estimatedMinutes ? ` · Estimated ${formatMinutes(topic.estimatedMinutes)}` : ''}
-      </p>
-      <div className="grid-2" style={{ marginBottom: 16 }}>
-        {Object.entries(topic.progress).map(([uid, p]) => (
-          <div key={uid} className="card tint" style={personVars(users[uid]?.accent)}>
-            <b>{users[uid]?.displayName}</b>
-            <div className="small">Actual focused time: {fmt(p.focusedMs)}</div>
-            <div className="small">Sessions: {p.sessions}</div>
-            <div className="small">Status: {p.status.replace('_', ' ')}</div>
-            {p.firstCompletedAt && <div className="small">First completed {new Date(p.firstCompletedAt).toLocaleDateString()}</div>}
-          </div>
-        ))}
+    <Modal title={topic.title} onClose={onClose}>
+      <div className="row wrap" style={{ gap: 20, marginBottom: 16 }}>
+        <div>
+          <div className="tiny muted">Estimated</div>
+          <b>{topic.estimatedMinutes ? formatMinutes(topic.estimatedMinutes) : '—'}</b>
+        </div>
+        <div>
+          <div className="tiny muted">Actual focused time</div>
+          <b>{fmt(p?.focusedMs ?? 0)}</b>
+        </div>
+        <div>
+          <div className="tiny muted">Sessions</div>
+          <b>{p?.sessions ?? 0}</b>
+        </div>
       </div>
       {isLoading ? (
         <Spinner />
       ) : (
         <div className="list">
-          {data?.events.map((e) => (
-            <div key={e.id} className="list-item small">
-              <span className="dot" style={personVars(users[e.userId]?.accent)} />
-              <span className="grow">
-                <b>{users[e.userId]?.displayName ?? 'Someone'}</b> {EVENT_LABEL[e.type] ?? e.type}
-              </span>
-              <span className="tiny muted">{new Date(e.createdAt).toLocaleString()}</span>
-            </div>
-          ))}
-          {data?.sessions.map((s, i) => (
-            <div key={i} className="list-item small">
-              <span className="dot" style={personVars(users[s.userId]?.accent)} />
-              <span className="grow">
-                <b>{users[s.userId]?.displayName}</b> studied {fmt(s.focusedMs)}
-                {s.isRevision ? ' (revision)' : ''}
-              </span>
-              <span className="tiny muted">{new Date(s.startedAt).toLocaleString()}</span>
-            </div>
-          ))}
+          {[
+            ...(data?.events ?? []).map((e) => ({ key: e.id, at: e.createdAt, text: EVENT_LABEL[e.type] ?? e.type })),
+            ...(data?.sessions ?? []).map((s, i) => ({ key: `s${i}`, at: s.startedAt, text: `Studied ${fmt(s.focusedMs)}${s.isRevision ? ' (revision)' : ''}` })),
+          ]
+            .sort((a, b) => b.at - a.at)
+            .map((row) => (
+              <div key={row.key} className="list-item small">
+                <span className="grow">{row.text}</span>
+                <span className="tiny muted">{relativeTime(row.at)}</span>
+              </div>
+            ))}
           {!data?.events.length && !data?.sessions.length && <Empty title="No history yet" />}
         </div>
       )}
@@ -524,3 +459,4 @@ function EditRoomModal({ room, onClose }: { room: RoomDetail; onClose: () => voi
     </Modal>
   );
 }
+

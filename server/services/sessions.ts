@@ -5,7 +5,7 @@ import { badRequest, conflict, notFound } from '../http.ts';
 import { focusedMs, LONG_SESSION_MS } from '../../shared/timer.ts';
 import { localDate } from '../../shared/dates.ts';
 import type { ActiveSession, SessionRecord } from '../../shared/types.ts';
-import { activeSessionRow, getUser, pausesFor, requireTopicAccess, type SessionRow } from './core.ts';
+import { activeSessionRow, getUser, pausesFor, requireOwnTopic, type SessionRow } from './core.ts';
 import { completeTopic, ensureProgress, nextIncompleteTopic } from './rooms.ts';
 
 export function toActiveSession(db: DB, s: SessionRow): ActiveSession {
@@ -42,7 +42,7 @@ export function startSession(
   userId: string,
   input: { topicId: string; targetMinutes?: number | null; remindAfterHour?: boolean; taskId?: string | null },
 ): ActiveSession {
-  const { topic, room } = requireTopicAccess(db, input.topicId, userId);
+  const { topic, room } = requireOwnTopic(db, input.topicId, userId);
   if (topic.status !== 'active') throw badRequest('This topic is archived.');
   if (room.status !== 'active') throw badRequest('This room is archived.');
   if (input.taskId) {
