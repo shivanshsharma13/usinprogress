@@ -159,6 +159,17 @@ export interface GoalProgress {
   target: number | null;
   percent: number | null; // capped at 100 for display; null when not measurable
   items: number; // distinct completed work items counted
+  /** Tasks in this goal and its sub-goals. */
+  tasks: { done: number; total: number };
+}
+
+/** A study task listed inside a goal. */
+export interface GoalTask {
+  id: string;
+  title: string;
+  date: string | null;
+  quantity: number;
+  completed: boolean;
 }
 
 export interface Goal {
@@ -178,6 +189,7 @@ export interface Goal {
   doneAt: number | null;
   links: { roomId?: string; topicId?: string; label: string }[];
   progress: GoalProgress;
+  tasks: GoalTask[]; // this goal's own checklist
   childIds: string[];
 }
 
@@ -186,7 +198,7 @@ export interface Task {
   ownerId: string;
   title: string;
   description: string;
-  date: string;
+  date: string | null; // null = not scheduled on the calendar
   startTime: string | null;
   durationMinutes: number | null;
   goalId: string | null;

@@ -246,7 +246,7 @@ export function HomePage() {
                     <div className="grow">
                       <div className="bold small">{t.title}</div>
                       <div className="tiny muted">
-                        {t.date === me.today ? 'Today' : formatDate(t.date, { weekday: 'short', month: 'short', day: 'numeric' })}
+                        {t.date === me.today ? 'Today' : formatDate(t.date!, { weekday: 'short', month: 'short', day: 'numeric' })}
                         {t.startTime ? ` · ${t.startTime}` : ''}
                         {t.topicTitle ? ` · ${t.topicTitle}` : ''}
                       </div>

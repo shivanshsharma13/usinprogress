@@ -361,6 +361,52 @@ test('time and completion goals use their own units; private goals stay private'
   assert.equal((await C.get(`/goals/shared/${a.id}`)).status, 403);
 });
 
+test('goals hold a checklist of study tasks; ticking them drives progress, and unscheduled tasks stay off the calendar', async () => {
+  const year = today.slice(0, 4);
+  const goal = (await A.post('/goals', { title: 'Finish graph basics', period: 'custom', startDate: today, deadline: addDays(today, 30), measure: 'completion', visibility: 'friends' })).body.id;
+  const parent = (await A.post('/goals', { title: 'Graphs this year', period: 'yearly', startDate: `${year}-01-01`, deadline: `${year}-12-31`, measure: 'completion' })).body.id;
+  await A.patch(`/goals/${goal}`, { parentId: parent });
+  const ids: string[] = [];
+  for (const title of ['BFS', 'DFS', 'Topological sort']) {
+    const res = await A.post('/tasks', { title, goalId: goal });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.task.date, null);
+    ids.push(res.body.task.id);
+  }
+  const scheduled = (await A.post('/tasks', { title: 'Dijkstra', goalId: goal, date: addDays(today, 2) })).body.task;
+
+  const find = async (id: string) => (await A.get('/goals')).body.goals.find((g: any) => g.id === id);
+  let g = await find(goal);
+  assert.deepEqual(g.tasks.map((t: any) => t.title), ['BFS', 'DFS', 'Topological sort', 'Dijkstra']);
+  assert.equal(g.progress.percent, 0);
+
+  await A.patch(`/tasks/${ids[0]}`, { completed: true });
+  await A.patch(`/tasks/${ids[1]}`, { completed: true });
+  g = await find(goal);
+  assert.deepEqual(g.progress.tasks, { done: 2, total: 4 });
+  assert.equal(g.progress.percent, 50);
+  // The parent goal sees its sub-goal's checklist too.
+  assert.deepEqual((await find(parent)).progress.tasks, { done: 2, total: 4 });
+
+  // Only the dated task shows on the calendar.
+  const cal = (await A.get(`/tasks?from=${addDays(today, -40)}&to=${addDays(today, 40)}`)).body.tasks.map((t: any) => t.id);
+  assert.ok(cal.includes(scheduled.id));
+  assert.ok(!ids.some((id) => cal.includes(id)));
+
+  // Removing a task drops it from the checklist; marking the goal done shows 100%.
+  await A.del(`/tasks/${ids[2]}`);
+  g = await find(goal);
+  assert.equal(g.tasks.length, 3);
+  assert.equal(g.progress.percent, 67);
+  await A.patch(`/goals/${goal}`, { status: 'done' });
+  assert.equal((await find(goal)).progress.percent, 100);
+
+  // The friend sees the shared goal's checklist but can't tick it.
+  const shared = (await B.get(`/goals/shared/${a.id}`)).body.goals.find((x: any) => x.id === goal);
+  assert.equal(shared.tasks.length, 3);
+  assert.equal((await B.patch(`/tasks/${ids[1]}`, { completed: false })).status, 404);
+});
+
 // ───────────── Calendar ─────────────
 
 test('calendar: shared items are visible to the partner, private ones and notes are not; moving keeps sessions', async () => {

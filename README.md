@@ -121,7 +121,7 @@ time zone.
 - **session_corrections** — every change to a recorded duration, with old and new values.
 - **goals** + **goal_links** — period, dates, measure (`count`/`time`/`completion`), optional target/unit,
   optional parent; links to whole rooms or individual topics.
-- **tasks** + **task_events** — calendar items (date, optional time/duration, optional goal/room/topic,
+- **tasks** + **task_events** — study tasks, either inside a goal's checklist or on the calendar (optional date, optional time/duration, optional goal/room/topic,
   quantity, shared flag, private note). Moves are logged; removal archives.
 - **activities** — reactions, messages, completions, room/friend events, with read state.
 
@@ -149,7 +149,9 @@ tasks and finished sessions:
 - Count goals: each completed topic = 1; each completed task assigned to the goal = its quantity (it also
   counts for that goal's ancestors, once).
 - Time goals: minutes of finished sessions on covered topics/rooms.
-- Completion goals: done/not done, set explicitly by the owner.
+- Task-checklist goals (`completion`): each goal holds its own list of things to study. Progress is the share
+  of tasks done across the goal and its sub-goals; a goal with no tasks is done/not done when you mark it.
+  Tasks don't need a date — give one and they also appear on the calendar.
 - **Allocation rule:** a room or topic can only be linked to two of your goals with overlapping dates if one
   is an ancestor of the other. Otherwise the server rejects the link (`DOUBLE_COUNT`) and suggests linking the
   parent or child instead.

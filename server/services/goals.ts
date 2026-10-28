@@ -16,10 +16,13 @@
 //    toward the goal they are explicitly assigned to, and that goal's ancestors).
 //  * time goals: minutes of finished focus sessions on covered topics/rooms (or started from a
 //    task assigned to the goal).
-//  * completion goals: 1 when the owner marks the goal done, otherwise 0.
+//  * completion goals ("task checklist"): the share of tasks in the goal and its sub-goals that are
+//    done; a goal without tasks is simply done/not done when the owner marks it. Marking the goal
+//    done always shows 100%.
+//  * Every goal also reports its checklist (done / total tasks) alongside its main measure.
 import { all, get, newId, placeholders, run, transaction, type DB } from '../db.ts';
 import { badRequest, forbidden, notFound } from '../http.ts';
-import type { Goal, GoalProgress } from '../../shared/types.ts';
+import type { Goal, GoalProgress, GoalTask } from '../../shared/types.ts';
 import { areFriends, myRoomIds, recordActivity } from './core.ts';
 
 interface GoalRow {
@@ -80,7 +83,24 @@ function ancestors(goals: GoalRow[], id: string): string[] {
 }
 
 /** Computes progress for every goal of one owner in a few queries. */
-function computeProgress(db: DB, ownerId: string, goals: GoalRow[], links: LinkRow[]): Map<string, GoalProgress> {
+interface GoalTaskRow {
+  id: string;
+  goal_id: string;
+  title: string;
+  date: string | null;
+  quantity: number;
+  completed_at: number | null;
+}
+
+function goalTasks(db: DB, ownerId: string): GoalTaskRow[] {
+  return all<GoalTaskRow>(
+    db,
+    "SELECT id, goal_id, title, date, quantity, completed_at FROM tasks WHERE owner_id = ? AND goal_id IS NOT NULL AND status = 'active' ORDER BY created_at",
+    ownerId,
+  );
+}
+
+function computeProgress(db: DB, ownerId: string, goals: GoalRow[], links: LinkRow[], checklist: GoalTaskRow[]): Map<string, GoalProgress> {
   const completions = all<{ topic_id: string; room_id: string; local_date: string }>(
     db,
     `SELECT c.topic_id, t.room_id, c.local_date FROM topic_completions c JOIN topics t ON t.id = c.topic_id
@@ -112,10 +132,18 @@ function computeProgress(db: DB, ownerId: string, goals: GoalRow[], links: LinkR
     }
     const inWindow = (d: string | null) => Boolean(d) && d! >= goal.start_date && d! <= goal.deadline;
     const covers = (topicId: string, roomId: string) => topics.has(topicId) || rooms.has(roomId);
+    const subtreeTasks = checklist.filter((t) => subtree.has(t.goal_id));
+    const tasksSummary = { done: subtreeTasks.filter((t) => t.completed_at !== null).length, total: subtreeTasks.length };
 
     if (goal.measure === 'completion') {
-      const done = goal.status === 'done' ? 1 : 0;
-      result.set(goal.id, { value: done, target: 1, percent: done * 100, items: done });
+      const markedDone = goal.status === 'done';
+      if (tasksSummary.total) {
+        const percent = markedDone ? 100 : Math.round((tasksSummary.done / tasksSummary.total) * 100);
+        result.set(goal.id, { value: tasksSummary.done, target: tasksSummary.total, percent, items: tasksSummary.done, tasks: tasksSummary });
+      } else {
+        const done = markedDone ? 1 : 0;
+        result.set(goal.id, { value: done, target: 1, percent: done * 100, items: done, tasks: tasksSummary });
+      }
       continue;
     }
     if (goal.measure === 'count') {
@@ -127,6 +155,7 @@ function computeProgress(db: DB, ownerId: string, goals: GoalRow[], links: LinkR
         target: goal.target,
         percent: goal.target ? Math.min(100, Math.round((value / goal.target) * 100)) : null,
         items: topicItems.size + taskItems.length,
+        tasks: tasksSummary,
       });
       continue;
     }
@@ -138,6 +167,7 @@ function computeProgress(db: DB, ownerId: string, goals: GoalRow[], links: LinkR
       target: goal.target,
       percent: goal.target ? Math.min(100, Math.round((minutes / goal.target) * 100)) : null,
       items: eligible.length,
+      tasks: tasksSummary,
     });
   }
   return result;
@@ -145,7 +175,9 @@ function computeProgress(db: DB, ownerId: string, goals: GoalRow[], links: LinkR
 
 function toGoals(db: DB, ownerId: string, rows: GoalRow[], allOwnerGoals: GoalRow[]): Goal[] {
   const links = linksFor(db, allOwnerGoals.map((g) => g.id));
-  const progress = computeProgress(db, ownerId, allOwnerGoals, links);
+  const checklist = goalTasks(db, ownerId);
+  const progress = computeProgress(db, ownerId, allOwnerGoals, links, checklist);
+  const taskDto = (t: GoalTaskRow): GoalTask => ({ id: t.id, title: t.title, date: t.date, quantity: t.quantity, completed: t.completed_at !== null });
   return rows.map((g) => ({
     id: g.id,
     ownerId: g.owner_id,
@@ -163,6 +195,7 @@ function toGoals(db: DB, ownerId: string, rows: GoalRow[], allOwnerGoals: GoalRo
     doneAt: g.done_at,
     links: links.filter((l) => l.goal_id === g.id).map((l) => ({ roomId: l.room_id ?? undefined, topicId: l.topic_id ?? undefined, label: l.label ?? '' })),
     progress: progress.get(g.id)!,
+    tasks: checklist.filter((t) => t.goal_id === g.id).map(taskDto),
     childIds: allOwnerGoals.filter((c) => c.parent_id === g.id).map((c) => c.id),
   }));
 }

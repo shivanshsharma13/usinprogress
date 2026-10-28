@@ -326,10 +326,9 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
 
   // ───────────── Tasks / calendar ─────────────
 
-  const notifyTask = (req: Request, taskId: string, wasShared: boolean) => {
-    const shared = wasShared || tasks.isTaskShared(db, taskId);
-    notify(shared ? circleOf(db, req.userId) : [req.userId], ['calendar', 'goals', 'session', 'progress']);
-  };
+  // Friends are always told to refetch: a task may sit inside a goal they can see. The event
+  // carries no task data, so private tasks stay private.
+  const notifyTask = (req: Request) => notify(circleOf(db, req.userId), ['calendar', 'goals', 'session', 'progress']);
 
   r.get('/tasks', (req, res) => {
     const today = localDate(Date.now(), getUser(db, req.userId).timezone);
@@ -340,23 +339,21 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
 
   r.post('/tasks', (req, res) => {
     const id = tasks.createTask(db, req.userId, parse(v.taskCreateSchema, req.body));
-    notifyTask(req, id, false);
+    notifyTask(req);
     res.status(201).json({ task: tasks.getTask(db, req.userId, id) });
   });
 
   r.patch('/tasks/:id', (req, res) => {
     const id = String(req.params.id);
-    const wasShared = tasks.isTaskShared(db, id);
     tasks.updateTask(db, req.userId, id, parse(v.taskUpdateSchema, req.body));
-    notifyTask(req, id, wasShared);
+    notifyTask(req);
     res.json({ task: tasks.getTask(db, req.userId, id) });
   });
 
   r.delete('/tasks/:id', (req, res) => {
     const id = String(req.params.id);
-    const wasShared = tasks.isTaskShared(db, id);
     tasks.archiveTask(db, req.userId, id);
-    notifyTask(req, id, wasShared);
+    notifyTask(req);
     res.json({ ok: true });
   });
 

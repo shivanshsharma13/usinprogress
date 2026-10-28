@@ -10,7 +10,7 @@ interface TaskRow {
   owner_id: string;
   title: string;
   description: string;
-  date: string;
+  date: string | null;
   start_time: string | null;
   duration_minutes: number | null;
   goal_id: string | null;
@@ -117,7 +117,7 @@ export function createTask(
   input: {
     title: string;
     description?: string;
-    date: string;
+    date?: string | null;
     startTime?: string | null;
     durationMinutes?: number | null;
     goalId?: string | null;
@@ -140,7 +140,7 @@ export function createTask(
       userId,
       input.title,
       input.description ?? '',
-      input.date,
+      input.date ?? null,
       input.startTime ?? null,
       input.durationMinutes ?? null,
       input.goalId ?? null,
@@ -164,7 +164,7 @@ export function updateTask(
   input: Partial<{
     title: string;
     description: string;
-    date: string;
+    date: string | null;
     startTime: string | null;
     durationMinutes: number | null;
     goalId: string | null;
@@ -198,14 +198,14 @@ export function updateTask(
       completedDate = null;
       event(db, taskId, userId, 'uncompleted');
     }
-    if (input.date && input.date !== t.date) event(db, taskId, userId, 'moved', { from: t.date, to: input.date });
+    if (input.date !== undefined && input.date !== t.date) event(db, taskId, userId, 'moved', { from: t.date, to: input.date });
     run(
       db,
       `UPDATE tasks SET title = ?, description = ?, date = ?, start_time = ?, duration_minutes = ?, goal_id = ?, room_id = ?, topic_id = ?, quantity = ?,
               shared = ?, note = ?, completed_at = ?, completed_date = ?, status = ?, updated_at = ? WHERE id = ?`,
       input.title ?? t.title,
       input.description ?? t.description,
-      input.date ?? t.date,
+      input.date !== undefined ? input.date : t.date,
       input.startTime !== undefined ? input.startTime : t.start_time,
       input.durationMinutes !== undefined ? input.durationMinutes : t.duration_minutes,
       refs.goalId,
@@ -232,8 +232,4 @@ export function archiveTask(db: DB, userId: string, taskId: string) {
 
 export function completedTasksOn(db: DB, userId: string, date: string): number {
   return get<{ n: number }>(db, "SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND completed_date = ? AND status = 'active'", userId, date)!.n;
-}
-
-export function isTaskShared(db: DB, taskId: string): boolean {
-  return Boolean(get(db, 'SELECT 1 FROM tasks WHERE id = ? AND shared = 1', taskId));
 }

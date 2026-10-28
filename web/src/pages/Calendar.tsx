@@ -60,7 +60,8 @@ export function CalendarPage() {
 
   if (!me) return <Spinner />;
   const byDate = new Map<string, Task[]>();
-  for (const t of tasks ?? []) byDate.set(t.date, [...(byDate.get(t.date) ?? []), t]);
+  // Range queries only return scheduled tasks, so every date is set.
+  for (const t of tasks ?? []) byDate.set(t.date!, [...(byDate.get(t.date!) ?? []), t]);
 
   const shift = (dir: number) => {
     if (view === 'month') setCursor(addMonths(startOfMonth(cursor), dir));
@@ -178,7 +179,7 @@ export function CalendarPage() {
       {editing && (
         <TaskModal
           task={'id' in editing ? editing : null}
-          date={'id' in editing ? editing.date : editing.date}
+          date={('id' in editing ? editing.date : editing.date) ?? today}
           meId={me.id}
           ownerName={'id' in editing ? people[editing.ownerId]?.displayName : undefined}
           onClose={() => {
@@ -362,7 +363,7 @@ function DayAgenda({ date, today, tasks, people, meId, actions, onAdd, compact }
                 <Menu
                   items={[
                     { label: 'Edit / move', onClick: () => actions.edit(t) },
-                    { label: 'Move to tomorrow', onClick: () => actions.move(t, addDays(t.date, 1)) },
+                    { label: 'Move to tomorrow', onClick: () => actions.move(t, addDays(t.date!, 1)) },
                     { label: 'Remove', danger: true, onClick: () => actions.remove(t) },
                   ]}
                 />
@@ -429,7 +430,7 @@ function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null
       <Modal title={task.title} onClose={onClose}>
         <div className="stack small">
           <p>
-            <b>{ownerName}</b> planned this for {formatDate(task.date, { weekday: 'long', month: 'long', day: 'numeric' })}
+            <b>{ownerName}</b> planned this for {formatDate(task.date!, { weekday: 'long', month: 'long', day: 'numeric' })}
             {task.startTime ? ` at ${task.startTime}` : ''}.
           </p>
           {task.topicTitle && <p>Topic: {task.topicTitle}</p>}

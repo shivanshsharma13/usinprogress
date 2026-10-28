@@ -104,6 +104,11 @@ createTask(db, asha, { title: 'Mock interview prep', date: addDays(today, 2), st
 createTask(db, mira, { title: 'Carbohydrate metabolism — first pass', date: today, roomId: room, topicId: bioTopics[1], shared: true, startTime: '18:30' });
 createTask(db, mira, { title: 'Revise enzyme kinetics', date: addDays(today, 1), roomId: room, topicId: bioTopics[0], shared: true });
 
+// A goal's checklist: things to study, ticked off as they're done (no date needed).
+for (const title of ['Revise biochemistry units 1–3', 'Physiology: cardiovascular system', 'Pharmacology flashcards']) {
+  createTask(db, mira, { title, goalId: miraYear });
+}
+
 encourage(db, mira, { recipientId: asha, reaction: 'proud' });
 
 console.log(`Seeded two friends. Sign in as "asha" or "mira" with password "${PASSWORD}" (development only).`);

@@ -136,7 +136,7 @@ export const goalUpdateSchema = goalCreateSchema.partial().extend({
 export const taskCreateSchema = z.object({
   title,
   description: text(1000).optional(),
-  date,
+  date: date.nullable().optional(), // omitted for unscheduled goal tasks
   startTime: time.nullable().optional(),
   durationMinutes: minutes.max(24 * 60).nullable().optional(),
   goalId: z.string().nullable().optional(),

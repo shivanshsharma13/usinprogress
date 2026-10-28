@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { addDays, endOfMonth, formatDate, startOfMonth, startOfWeek } from '@shared/dates';
-import type { Goal, RoomDetail } from '@shared/types';
+import type { Goal, GoalTask, RoomDetail } from '@shared/types';
 import { useAction, useFriends, useGoals, useMe, useRooms, useSharedGoals } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { useQueries } from '@tanstack/react-query';
@@ -9,7 +9,7 @@ import { personVars } from '../lib/theme';
 import { Empty, ErrorNote, Field, Menu, Modal, ProgressBar, Spinner } from '../components/ui';
 import { goalValueText, PERIOD_LABEL } from '../components/GoalBits';
 import { Plant } from '../components/Plant';
-import { ChevronDown, ChevronRight, PlusIcon } from '../components/icons';
+import { ChevronDown, ChevronRight, PlusIcon, XIcon } from '../components/icons';
 
 export function GoalsPage() {
   const { data: me } = useMe();
@@ -166,7 +166,7 @@ function GoalNode({
               {goalValueText(goal)}
               {p.percent != null && <span className="muted"> · {p.percent}%</span>}
             </span>
-            {goal.measure === 'completion' && goal.status === 'active' && (
+            {goal.measure === 'completion' && goal.status === 'active' && (!p.tasks.total || p.tasks.done === p.tasks.total) && (
               <button className="btn small" onClick={() => update.mutate({ status: 'done' })}>
                 Mark done
               </button>
@@ -182,9 +182,7 @@ function GoalNode({
               ))}
             </div>
           )}
-          {goal.status === 'active' && goal.measure !== 'completion' && !goal.links.length && !children.length && (
-            <p className="tiny muted">Not linked to any room or topic yet — only tasks you assign to this goal will count. Edit to link a room.</p>
-          )}
+          {goal.status !== 'archived' && <GoalTasks goal={goal} editable />}
         </div>
       </div>
       {open && children.length > 0 && (
@@ -193,6 +191,80 @@ function GoalNode({
             <GoalNode key={c.id} goal={c} byId={byId} accent={accent} today={today} depth={depth + 1} onEdit={onEdit} onAddChild={onAddChild} />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The goal's checklist of things to study. Ticking a task updates this goal and every goal above it.
+ * Tasks only appear on the calendar if they're given a date.
+ */
+function GoalTasks({ goal, editable }: { goal: Goal; editable?: boolean }) {
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState('');
+  const [qty, setQty] = useState('1');
+  const counts = goal.measure === 'count';
+  const inv = [['goals'], ['tasks'], ['home'], ['progress']];
+  const add = useAction(
+    () => api.post('/tasks', { title, goalId: goal.id, date: date || null, quantity: counts ? Math.max(1, Number(qty) || 1) : 1 }),
+    {
+      invalidate: inv,
+      onSuccess: () => {
+        setTitle('');
+        setDate('');
+        setQty('1');
+      },
+    },
+  );
+  const toggle = useAction((t: GoalTask) => api.patch(`/tasks/${t.id}`, { completed: !t.completed }), { invalidate: inv });
+  const remove = useAction((t: GoalTask) => api.del(`/tasks/${t.id}`), { invalidate: inv });
+  const done = goal.tasks.filter((t) => t.completed).length;
+
+  return (
+    <div className="goal-tasks">
+      {goal.tasks.length > 0 && (
+        <div className="row between">
+          <span className="section-label">To study</span>
+          <span className="tiny muted num">
+            {done} of {goal.tasks.length} done
+          </span>
+        </div>
+      )}
+      {goal.tasks.map((t) => (
+        <div key={t.id} className={`goal-task${t.completed ? ' done' : ''}`}>
+          {editable ? (
+            <input type="checkbox" checked={t.completed} disabled={toggle.isPending} onChange={() => toggle.mutate(t)} aria-label={`Mark “${t.title}” ${t.completed ? 'not done' : 'done'}`} />
+          ) : (
+            <span aria-hidden="true">{t.completed ? '✓' : '○'}</span>
+          )}
+          <span className="grow title">{t.title}</span>
+          {counts && t.quantity !== 1 && <span className="chip outline">×{t.quantity}</span>}
+          {t.date && <span className="chip outline">{formatDate(t.date)}</span>}
+          {editable && (
+            <button className="btn ghost icon small" aria-label={`Remove “${t.title}”`} onClick={() => remove.mutate(t)}>
+              <XIcon />
+            </button>
+          )}
+        </div>
+      ))}
+      {editable && (
+        <form
+          className="goal-task-add"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (title.trim()) add.mutate(undefined);
+          }}
+        >
+          <input className="input grow" placeholder="Add something to study…" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} aria-label={`New task for ${goal.title}`} />
+          {counts && (
+            <input className="input" style={{ width: 72 }} type="number" min="1" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} aria-label={`How many ${goal.unit || 'units'}`} title={`How many ${goal.unit || 'units'} this task counts for`} />
+          )}
+          <input className="input" style={{ width: 150 }} type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date (optional)" title="Optional — puts it on your calendar" />
+          <button className="btn" disabled={!title.trim() || add.isPending}>
+            <PlusIcon /> Add
+          </button>
+        </form>
       )}
     </div>
   );
@@ -217,6 +289,7 @@ function PartnerGoals({ userId, name, accent }: { userId: string; name: string; 
               </div>
               {g.progress.percent != null && <ProgressBar value={g.progress.percent} max={100} accent={accent} />}
               <div className="small num">{goalValueText(g)}</div>
+              {g.tasks.length > 0 && <GoalTasks goal={g} />}
             </div>
           ))}
         </div>
@@ -244,7 +317,7 @@ function GoalModal({ goal, parent, goals, today, onClose }: { goal: Goal | null;
     description: goal?.description ?? '',
     period: initialPeriod,
     ...(goal ? { startDate: goal.startDate, deadline: goal.deadline } : defaultDates(initialPeriod, today)),
-    measure: goal?.measure ?? parent?.measure ?? ('count' as Goal['measure']),
+    measure: goal?.measure ?? parent?.measure ?? ('completion' as Goal['measure']),
     target: goal?.target != null ? String(goal.target) : '',
     unit: goal?.unit ?? parent?.unit ?? '',
     parentId: goal?.parentId ?? parent?.id ?? '',
@@ -353,9 +426,9 @@ function GoalModal({ goal, parent, goals, today, onClose }: { goal: Goal | null;
           <div className="choice-grid">
             {(
               [
+                ['completion', 'Task checklist', 'Done when its tasks are done'],
                 ['count', 'A number', 'Questions, chapters, topics…'],
                 ['time', 'Focused time', 'Minutes from study sessions'],
-                ['completion', 'Done / not done', 'For qualitative goals'],
               ] as const
             ).map(([k, t, d]) => (
               <button type="button" key={k} className={`choice${f.measure === k ? ' on' : ''}`} onClick={() => set({ measure: k })}>

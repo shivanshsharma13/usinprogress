@@ -4,7 +4,10 @@ import { ProgressBar } from './ui';
 
 export function goalValueText(g: Goal): string {
   const p = g.progress;
-  if (g.measure === 'completion') return g.status === 'done' ? 'Done ✨' : 'Not done yet';
+  if (g.measure === 'completion') {
+    if (g.status === 'done') return 'Done ✨';
+    return p.tasks.total ? `${p.tasks.done} of ${p.tasks.total} tasks done` : 'Not done yet';
+  }
   if (g.measure === 'time') {
     const h = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
     return p.target ? `${h(p.value)} of ${h(p.target)}` : `${h(p.value)} focused`;

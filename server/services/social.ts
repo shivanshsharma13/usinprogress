@@ -235,7 +235,8 @@ export function homeData(db: DB, userId: string): HomeData {
   const today = me.today;
   const rooms = listRooms(db, userId).filter((r) => r.status === 'active');
   const tasks = listTasks(db, userId, addDays(today, -1), addDays(today, 14), { includeFriends: false });
-  const todaysOpen = tasks.filter((t) => t.date <= today && !t.completed && (t.date === today || t.topicId));
+  // Tasks from a date range always have a date.
+  const todaysOpen = tasks.filter((t) => t.date! <= today && !t.completed && (t.date === today || t.topicId));
   const goals = listMyGoals(db, userId).filter((g) => g.status === 'active');
   const currentGoals = goals.filter((g) => g.startDate <= today && g.deadline >= today);
 
@@ -264,7 +265,7 @@ export function homeData(db: DB, userId: string): HomeData {
     today: { focusedMs: focusedToday(db, userId), completedTopics: completedToday, completedTasks: completedTasksOn(db, userId, today) },
     goals: (currentGoals.length ? currentGoals : goals).slice(0, 4),
     rooms,
-    upcoming: tasks.filter((t) => t.date >= today && !t.completed).slice(0, 5),
+    upcoming: tasks.filter((t) => t.date! >= today && !t.completed).slice(0, 5),
     unread: unreadCount(db, userId),
   };
 }

@@ -25,10 +25,19 @@ function migrate(db: DB) {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
-    transaction(db, () => {
-      db.exec(sql);
-      run(db, 'INSERT INTO _migrations (name, applied_at) VALUES (?, ?)', file, Date.now());
-    });
+    // Table rebuilds need foreign keys off (it can't be changed inside a transaction), and are
+    // verified with foreign_key_check before committing.
+    const rebuild = sql.startsWith('-- migrate:foreign-keys-off');
+    if (rebuild) db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      transaction(db, () => {
+        db.exec(sql);
+        if (rebuild && all(db, 'PRAGMA foreign_key_check').length) throw new Error(`Foreign key check failed after ${file}`);
+        run(db, 'INSERT INTO _migrations (name, applied_at) VALUES (?, ?)', file, Date.now());
+      });
+    } finally {
+      if (rebuild) db.exec('PRAGMA foreign_keys = ON');
+    }
   }
 }
 
