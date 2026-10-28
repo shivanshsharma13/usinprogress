@@ -16,14 +16,46 @@ out of the room until you schedule it again ("Do today" or pick a day). Past day
 
 ---
 
-## Quick start
+## How it's built
 
-Requirements: **Node.js 22.13+** (built and tested on Node 24). For local development no database server is
-needed: data is kept in a local PGlite database (real Postgres running in-process) in `./data/pglite`.
+There is **no app server**. The site is static files (React + Vite) hosted on **GitHub Pages**, and the browser
+talks directly to **Supabase**:
+
+| Piece | What it does |
+| --- | --- |
+| **Supabase Auth** | Email + password accounts. A trigger creates each person's `profiles` row (username, name, theme) from the sign-up form. |
+| **Row-level security** | Decides what each signed-in person can *read*: their own data, their friends' public profile and live status, rooms they belong to, sprints pulled into those rooms. Anonymous visitors can read nothing. |
+| **Database functions** | Every *write* (`start_session`, `complete_topic`, `pull_sprint`, `send_friend_request`, …) is a `SECURITY DEFINER` function that checks `auth.uid()` and runs in one transaction. Tables have no write policies, so these functions are the only way in. |
+| **Realtime** | Pushes changes so both people see each other's progress live. |
+
+The public URL and anon key are in the browser bundle by design; they grant nothing beyond what the rules
+above allow. `web/src/data/backend.ts` maps the screens' calls (`/rooms/…`, `/sessions/…`) onto those
+reads and functions, so the UI code doesn't know or care where the data lives.
+
+```
+supabase/migrations/   schema + RLS (…_schema.sql) and every write function (…_functions.sql)
+shared/                timer math, dates, goal-plan views (planView.ts), validation, types
+web/src/data/          the data layer (backend.ts) and error mapping
+web/src/lib/           Supabase client, realtime, queries, theme
+web/src/pages, components   the UI
+tests/                 acceptance tests, run against a local Supabase
+scripts/seed-local.ts  demo data for local development
+```
+
+## Run it locally
+
+Requirements: Node.js 22.13+ and Docker (for a local copy of Supabase).
 
 ```bash
 npm install
 ```
+
+```bash
+npm run db:start
+```
+
+Copy the `API_URL` and `ANON_KEY` it prints into `.env.local` as `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_ANON_KEY` (see `.env.example`), then load demo data and start the site:
 
 ```bash
 npm run seed
@@ -33,46 +65,22 @@ npm run seed
 npm run dev
 ```
 
-Open the URL Vite prints (normally http://localhost:5173 — it picks the next free port if that one is
-busy). The seed creates two demo friends, **asha** (engineer, blue) and **mira** (doctor, pink), both with
-the password `garden-demo-1`. These are development-only accounts; delete `./data` to start fresh. (The seed
-refuses to write into a real Postgres such as Supabase unless you set `SEED_ALLOW_REMOTE=true`.)
+Demo accounts (local only): `asha@example.com` and `mira@example.com`, password `correct horse battery`.
+`npm run db:reset` wipes the local database back to the schema.
 
-To try both sides at once, sign in as `asha` in one browser and `mira` in a private window.
+## Put it online (Supabase + GitHub Pages)
 
-### Storing data in Supabase
-
-1. In your Supabase project, open **Connect** and copy the **Session pooler** connection string
-   (`postgresql://postgres.<ref>:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres`).
-2. Copy `.env.example` to `.env` and set `DATABASE_URL` to that string, with your database password filled in.
-   Keep `.env` private; it's git-ignored.
-3. Start the app (`npm run dev` or `npm start`). On first start it creates all tables itself (see
-   `server/migrations/001_schema.sql`); the startup log says `data: Postgres (DATABASE_URL)`.
-
-The browser never talks to Supabase directly: only the app's server does, with the connection string. The
-schema turns on row-level security (with no policies) for every table, so Supabase's public API keys can't read
-or change any of it. TLS is always on for hosted databases; set `DATABASE_SSL_CA` to Supabase's CA certificate
-to also verify the server's identity.
-
-**Run the app server close to the database.** Each request makes a few dozen small queries, so the network
-distance between the app server and Supabase matters: within the same cloud region a query takes ~1 ms and
-pages are instant, but from another continent (~200 ms per query) the Home screen takes several seconds. Host
-the server in the same region as your Supabase project, and for day-to-day development leave `DATABASE_URL`
-empty to use the local PGlite database.
-
-### Production build
-
-```bash
-npm run build
-```
-
-```bash
-npm start
-```
-
-`npm start` serves the API and the built frontend from one process on `PORT` (default 3000). Copy
-`.env.example` to `.env` to configure it. Behind HTTPS set `COOKIE_SECURE=true`; behind a reverse proxy set
-`TRUST_PROXY=true`.
+1. **Database.** Apply `supabase/migrations/*.sql` to your Supabase project, in order (SQL editor, or
+   `npx supabase link` + `npx supabase db push`).
+2. **Auth settings** (Supabase dashboard → Authentication):
+   - *Sign In / Providers → Email*: turn **off** "Confirm email" (or keep it on and set the Site URL below,
+     so confirmation links open the site).
+   - *URL Configuration → Site URL*: `https://<user>.github.io/<repo>/`.
+3. **GitHub repository variables** (Settings → Secrets and variables → Actions → Variables):
+   `VITE_SUPABASE_URL` = `https://<project-ref>.supabase.co`, `VITE_SUPABASE_ANON_KEY` = the project's anon /
+   publishable key (Project Settings → API).
+4. **Pages**: Settings → Pages → Source: *GitHub Actions*. Every push to `main` runs
+   `.github/workflows/pages.yml`, which builds and publishes the site.
 
 ### Tests
 
@@ -80,100 +88,44 @@ npm start
 npm test
 ```
 
-Runs the acceptance suite (`tests/acceptance.test.ts`) against a real HTTP server with an in-memory Postgres
-(PGlite), plus unit tests for the timer math. To run the same suite against a real, **empty** Postgres server,
-set `TEST_DATABASE_URL`. `npm run lint` checks the server for forgotten `await`s.
-
----
-
-## Stack, and why
-
-| Layer | Choice | Reason |
-| --- | --- | --- |
-| Server | Node 24 + Express 5, TypeScript run directly by Node (type stripping) | One small process; no build step for the server |
-| Database | **Postgres** — Supabase in production (`DATABASE_URL`), PGlite (Postgres in-process) for development and tests | One SQL dialect everywhere; transactions, partial unique indexes and triggers enforce the rules |
-| Auth | Username + password, **scrypt** hashes, random session tokens in HttpOnly SameSite cookies (only SHA-256 of the token is stored) | Real accounts without fake email addresses or third-party services |
-| Realtime | Server-Sent Events | One-way "something changed" pushes; clients refetch from the database, so the server stays the only source of truth and reconnects can't duplicate anything |
-| Frontend | React 18 + Vite + TanStack Query + React Router | Simple data fetching with cache invalidation driven by realtime events |
-| Validation | Zod schemas in `shared/`, used by both server (enforced) and client (friendly early errors) | |
-
-No microservices, no external infrastructure.
-
-## Project layout
-
-```
-server/
-  index.ts            process entry (env, listen, shutdown)
-  app.ts              Express app factory (used by tests too)
-  db.ts               Postgres (pg / PGlite), migrations, transaction helper
-  migrations/         SQL schema (001_init.sql)
-  auth.ts             password hashing, sessions, same-origin + rate-limit guards
-  realtime.ts         SSE hub
-  routes.ts           thin HTTP layer → services, plus realtime fan-out
-  services/
-    core.ts           users, friendship/room access checks, live status, activity feed
-    rooms.ts          rooms, topics, independent per-member progress, completion/reopen
-    sessions.ts       the timer service (start/pause/resume/finish/discard/correct)
-    plans.ts          goals as plans: sprints, days, tasks; pulling a sprint into a room
-    tasks.ts          calendar tasks
-    social.ts         friend requests, friends, encouragement, progress stats, home summary
-  seed.ts             development data
-shared/
-  timer.ts            focused-time math (used by server and client)
-  dates.ts            calendar-date helpers (time-zone aware)
-  theme.ts            identity colours, reactions
-  validation.ts       request schemas
-  types.ts            API response types
-web/                  React app (pages/, components/, lib/)
-tests/                acceptance + unit tests
-```
+Resets the local Supabase and runs the acceptance suite (`tests/acceptance.test.ts`) plus timer unit tests.
+Each simulated person is a separate Supabase client with its own session, driving the real data layer, so
+the tests exercise sign-in, RLS, the database functions and Realtime exactly as the site does.
+`npm run build` also type-checks and runs a promise-safety lint (no forgotten `await`s in the data layer).
 
 ## Data model
 
-All timestamps are integer milliseconds (server clock). Calendar dates are `YYYY-MM-DD` in the owner's
+All timestamps are integer milliseconds (database clock). Calendar dates are `YYYY-MM-DD` in the owner's
 time zone.
 
-- **users** — profile, identity accent, theme, time zone, share-status preference. *No password column.*
-- **auth_credentials** / **auth_sessions** — scrypt hash; hashed session tokens. Only `auth.ts` touches these.
-- **friendships** — requester, recipient, `pending/accepted/rejected/cancelled`. A partial unique index
-  allows one live relationship per pair in either direction. Only the recipient can accept/reject.
-- **rooms** + **room_members** — a trigger enforces at most two members; rooms are only created with an
-  accepted friend, inserting both members in one transaction.
-- **topics** — each topic belongs to the person who added it (`created_by`). In a shared room both people
-  see both lists, but only the owner can edit, reorder, archive, complete or study a topic. Estimate and
-  session target are stored separately; topics are archived, never deleted.
-- **topic_progress** — the owner's status for the topic: `not_started / in_progress / completed / revising`.
-- **topic_completions** — the single source of truth for completed topic work. A partial unique index
-  allows only one non-revoked *first* completion per topic and member. Mistakes are *revoked*, not deleted;
-  revisions are recorded as separate `revision` rows.
-- **topic_events** — audit trail (created, edited, completed, reopened, archived…).
-- **study_sessions** + **session_pauses** — start/end timestamps and every pause interval. A partial unique
-  index allows only one running/paused session per user. `measured_ms` (what the clock said) is kept
-  alongside `focused_ms` (what counts).
-- **session_corrections** — every change to a recorded duration, with old and new values.
-- **plans** — a goal: owner, title, start date, default sprint length. Days aren't stored; day N is the
-  start date + N.
-- **plan_sprints** — one row per sprint, numbered, each with its own length (`days`); the room it's pulled
-  into and when it was reviewed. Sprints run back to back.
-- **plan_tasks** — `day` (NULL = parked in the backlog), `planned_day` (the day it was planned for, kept
-  when it slips), estimate, ☆ star and, once its sprint is in a room, the `topic_id` it's studied as.
-  Removing a task archives its topic, so study history stays.
-- `goals` / `topics.goal_id` from an earlier version are no longer used.
-- **tasks** + **task_events** — calendar items: date, optional time/duration, optional room/topic, shared
-  flag, private note. Moves are logged; removal archives.
+- **auth.users** (Supabase) — email and bcrypt password hash; never exposed to the app's tables.
+- **profiles** — username (unique, lowercase), display name, profile type, accent, avatar, theme, time zone,
+  share-status. Readable by signed-in people (it holds nothing private); editable only by its owner, and only
+  those columns.
+- **friendships** — one live pending/accepted relationship per pair; only the recipient can answer.
+- **rooms** + **room_members** — exactly two members (trigger); created only between accepted friends.
+- **topics** — owned by the person who added them (`created_by`); the partner can see but not change them.
+- **topic_progress**, **topic_completions** (single source of truth for finished work, revoked not deleted),
+  **topic_events** (audit trail).
+- **study_sessions** (+ **session_pauses**, **session_corrections**) — owner-only; one active session per person
+  (partial unique index); `measured_ms` kept beside `focused_ms`.
+- **presence** — one row per person, touched on study/progress changes, so friends get Realtime updates.
+- **plans**, **plan_sprints** (each with its own length), **plan_tasks** (`day` NULL = backlog, `planned_day`
+  keeps history, `topic_id` once pulled into a room).
+- **tasks** (calendar) + **task_notes** (owner-only) + **task_events**.
 - **activities** — reactions, messages, completions, room/friend events, with read state.
 
 ## How the important rules are implemented
 
 **Timer.** Start writes a session row with a server timestamp; pause/resume write pause intervals; finish
 writes the end. Displayed time is always `focusedMs(session, now)` from `shared/timer.ts` (wall time minus
-pauses) — never a running JavaScript counter — and the client corrects for clock skew using the
-`X-Server-Now` header. Refresh, closing the tab or a dropped connection just re-reads the session.
+pauses) — never a running JavaScript counter — and the client corrects for clock skew against the
+database clock (`server_now()`). Refresh, closing the tab or a dropped connection just re-reads the session.
 Pause/resume/finish are idempotent; a retried start returns the same session; a second concurrent start is
 refused by the unique index. Sessions longer than 4 hours must be confirmed or corrected before they count.
 Accidental sessions can be discarded (kept for audit, counts zero).
 
-**Completing a topic.** One transaction: end the session (if running) and save its focused time, insert the
+**Completing a topic.** One database function (`complete_topic` / `finish_session`), one transaction: end the session (if running) and save its focused time, insert the
 completion, mark *your* progress complete, then return the next incomplete topic in room order (wrapping
 around). The next topic is selected but its timer is **not** started. Completing twice is a no-op.
 
@@ -191,15 +143,15 @@ last, empty sprint can be removed. Taking a sprint out of a room archives its to
 ones; finishing a task moves on to the next one that day, then the following days.
 
 **Topic ownership.** A room is a shared space with two personal lists — an engineer's DSA topics next to a
-doctor's biochemistry topics. `requireOwnTopic` in `services/core.ts` rejects any change, completion or study
-session on someone else's topic with 403. Goals are private to you; your friend only sees the sprints you
+doctor's biochemistry topics. `require_own_topic()` in the database refuses any change, completion or study
+session on someone else's topic. Goals are private to you; your friend only sees the sprints you
 pull into your shared room, read-only. Room
 progress is shown per person ("6 of 10 done") and never combined.
 
-**Privacy.** Every route requires a session; every service checks ownership or membership on the server.
-Non-members get 404 for rooms and topics (existence isn't revealed). Friends see: live status (unless you
+**Privacy.** Row-level security decides what each signed-in person can read; every write is a database
+function that checks `auth.uid()`. Non-members simply don't see rooms and topics (existence isn't revealed). Friends see: live status (unless you
 turn it off), today/week totals, your topics and pulled sprints in rooms you share, and calendar items you mark
-*Show on my friend's calendar*. They never see your session list, session notes or task notes. Cross-site state-changing requests are rejected; sign-in/up are rate-limited.
+*Show on my friend's calendar*. They never see your session list, session notes or task notes (notes live in owner-only tables).
 
 **Calendar and Home.** The calendar shows your own calendar tasks and friends' shared ones, plus every
 scheduled goal task (yours, and your friend's from sprints they pulled into a room you share) with a marker
@@ -212,36 +164,31 @@ next two weeks, soonest first. Backlog tasks are never shown as upcoming.
 focusing, a slow breathing halo, drifting leaves and a growing plant keep the screen calm; everything stops
 when paused and is switched off for people who prefer reduced motion.
 
-**Realtime.** After each write, the server sends `invalidate` events (e.g. `rooms`, `plans`, `session`) to
-the affected people (the actor, their friends, the room's members). Clients refetch those queries. On
-reconnect the client refetches everything, and a small indicator shows "Reconnecting…" while offline.
+**Realtime.** The app subscribes to Supabase Realtime changes on the shared tables; Realtime applies RLS,
+so each person only hears about rows they may read. A tiny `presence` row per person (touched by the timer
+functions) tells friends to refresh live status without exposing session rows. A change only tells the app
+which screens to refetch from the database. On reconnect it refetches everything; a small indicator shows
+"Reconnecting…" while offline.
 
 ## What was verified
 
-- `npm run typecheck`, `npm run lint` and `npm run build` succeed.
-- `npm test` — 23 tests pass, both on PGlite and on a real Postgres 15 server through the `pg` driver (the path
-  Supabase uses), covering every acceptance criterion in the spec that can be checked through the
-  API: two accounts and sign-in, search/request/accept with duplicate and wrong-recipient guards, rooms only
-  between friends and only two members, independent topic progress, live partner status over SSE, pause
-  excluding paused time, refresh recovery, complete → next topic not started, finish without completion,
-  idempotent retries, long-session confirmation with audited corrections, goal plans with day statuses,
-  adding/resizing/removing sprints, the backlog (stays out of the room, scheduling keeps day history),
-  pulling and removing sprints from rooms, partner read-only, next task in day order, shared vs
-  private calendar items and notes, moving tasks keeping sessions, archiving keeping history, encouragement in
-  real time, hidden status, owner-only profile edits, and accurate failure responses.
-- Manually in a browser: sign-in, home, starting/pausing/resuming the timer, reload recovery, completing a
-  topic with the next topic shown, a realtime toast and live status from the other account, mobile layout
-  (bottom navigation, compact calendar) and dark mode.
+- `npm run typecheck`, `npm run lint` and `npm run build` succeed (including the GitHub Pages sub-path build).
+- `npm test` — 23 tests pass against a local Supabase (Auth, PostgREST, Realtime, Postgres 17), covering every
+  acceptance criterion that can be checked from the browser's side: accounts and sign-in (passwords only in
+  Supabase Auth, bcrypt), friend requests with duplicate and wrong-recipient guards, two-member rooms only
+  between friends, topic ownership, the timer (pause excluded, refresh recovery, retries, long sessions with
+  audited corrections), complete → next topic not started, goal plans (dynamic sprints, day statuses, backlog,
+  pulling and removing sprints), calendar and Home, privacy (hidden status, private notes and session history,
+  owner-only edits), Realtime delivery to the partner, and **direct table writes being refused by the database**.
+- In a browser against local Supabase: sign-in, Home, live status of the partner arriving via Realtime, start →
+  complete topic with the next topic lined up, and the goal page.
+- On the hosted project: schema installed (19 tables with RLS, functions, sign-up trigger, Realtime); anonymous
+  access refused for every table and function except the username-availability check.
 
 ## Known limitations
 
-- Single server process: the live-update hub is in memory and transactions are serialised per process, so run
-  one instance (plenty for this app). Scaling out would need a pub/sub channel such as Postgres LISTEN/NOTIFY.
-- Moving from the earlier SQLite version: existing SQLite data isn't copied over automatically; the Postgres
-  database starts empty.
 - The one-hour reminder works while the app is open in a tab (in-app toast, plus a browser notification if
   you allow it). There are no closed-browser push notifications.
 - Avatars are built-in study-buddy characters with accessories; image upload isn't implemented.
-- There is no password reset flow (there's no email). If someone forgets their password, an admin has to reset
-  it in the database.
-- `npm start` sets `NODE_ENV` inline, which works in macOS/Linux shells; on Windows set it separately.
+- Password reset isn't built into the UI yet; Supabase can send reset emails if you add a page for it.
+- Accounts from the earlier server version don't carry over (they had no email); sign up again.

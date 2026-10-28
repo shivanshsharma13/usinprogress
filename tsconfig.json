@@ -29,7 +29,6 @@
     }
   },
   "include": [
-    "server",
     "shared",
     "web",
     "tests",

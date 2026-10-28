@@ -93,8 +93,8 @@ export function useAction<TVars, TResult = any>(
   return useMutation({
     mutationFn: fn,
     onSuccess: (r, v) => {
-      for (const k of opts.invalidate ?? [['home']]) qc.invalidateQueries({ queryKey: k });
-      qc.invalidateQueries({ queryKey: ['home'] });
+      for (const k of opts.invalidate ?? [['home']]) void qc.invalidateQueries({ queryKey: k });
+      void qc.invalidateQueries({ queryKey: ['home'] });
       const msg = typeof opts.success === 'function' ? opts.success(r) : opts.success;
       if (msg) toast(msg, 'success');
       opts.onSuccess?.(r, v);

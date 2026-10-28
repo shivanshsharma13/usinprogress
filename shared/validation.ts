@@ -27,7 +27,10 @@ const avatar = z.object({
   mood: z.enum(['happy', 'calm', 'sleepy']).optional(),
 });
 
+const email = z.string().trim().toLowerCase().email('Please enter a valid email address').max(254);
+
 export const signUpSchema = z.object({
+  email,
   username: usernameSchema,
   password: passwordSchema,
   displayName: z.string().trim().min(1, 'Please tell us your name').max(40),
@@ -39,8 +42,8 @@ export const signUpSchema = z.object({
 });
 
 export const signInSchema = z.object({
-  username: usernameSchema,
-  password: z.string().min(1).max(200),
+  email,
+  password: z.string().min(1, 'Please enter your password').max(200),
 });
 
 export const profileUpdateSchema = z.object({

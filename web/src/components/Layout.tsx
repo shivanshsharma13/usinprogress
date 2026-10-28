@@ -11,6 +11,9 @@ import { applyScheme } from '../lib/theme';
 import { Avatar, useNow } from './ui';
 import { CalendarIcon, ChartIcon, FriendsIcon, GoalIcon, HomeIcon, MoonIcon, PauseIcon, PlayIcon, RoomIcon, SunIcon } from './icons';
 
+// Served under a sub-path on GitHub Pages, so public files are addressed from the base URL.
+const LOGO = `${import.meta.env.BASE_URL}favicon.svg`;
+
 const NAV = [
   { to: '/', label: 'Home', icon: HomeIcon, end: true },
   { to: '/goals', label: 'Goals', icon: GoalIcon },
@@ -21,7 +24,7 @@ const NAV = [
 
 export function Layout({ me, children }: { me: Me; children: ReactNode }) {
   const qc = useQueryClient();
-  const conn = useRealtime(qc, true);
+  const conn = useRealtime(qc, me.id);
   const { data: activity } = useActivity();
   const unread = activity?.unread ?? 0;
   const { pathname } = useLocation();
@@ -34,7 +37,7 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
     <div className="shell">
       <aside className="sidebar" aria-label="Main navigation">
         <Link to="/" className="brand" style={{ textDecoration: 'none' }}>
-          <img src="/favicon.svg" width={30} height={30} alt="" />
+          <img src={LOGO} width={30} height={30} alt="" />
           <span>Us in Progress</span>
         </Link>
         {NAV.map((n) => (
@@ -61,7 +64,7 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
       <div className="grow" style={{ minWidth: 0 }}>
         <header className="topbar">
           <Link to="/" className="row" style={{ textDecoration: 'none', fontWeight: 800 }}>
-            <img src="/favicon.svg" width={26} height={26} alt="" />
+            <img src={LOGO} width={26} height={26} alt="" />
             Us in Progress
           </Link>
           <div className="row" style={{ gap: 4 }}>
@@ -155,7 +158,7 @@ function SessionWatcher({ hideMini }: { hideMini: boolean }) {
     const text = `🌿 You've focused for an hour on “${session.topicTitle}”. Maybe stretch and drink some water?`;
     toast(text, 'notice', 15_000);
     if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
-      new Notification('Us in Progress', { body: text, icon: '/favicon.svg' });
+      new Notification('Us in Progress', { body: text, icon: LOGO });
     }
   }, [session?.id, session?.remindAfterHour, elapsed >= ONE_HOUR_MS]);
 

@@ -18,6 +18,7 @@ const TYPES: { key: ProfileType; title: string; text: string; accessory: 'glasse
 export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -33,6 +34,7 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
     const body =
       mode === 'signup'
         ? {
+            email,
             username,
             password,
             displayName,
@@ -41,7 +43,7 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
             bio: bio || undefined,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           }
-        : { username, password };
+        : { email, password };
     if (mode === 'signup') {
       const check = signUpSchema.safeParse(body);
       if (!check.success) {
@@ -81,9 +83,14 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
 
         <form className="card stack" onSubmit={submit} noValidate>
           <h2>{mode === 'signup' ? 'Create your account' : 'Welcome back'}</h2>
-          <Field label="Username" hint={mode === 'signup' ? 'Your friend will search for this.' : undefined} error={fieldError('username')}>
-            <input className="input" autoComplete="username" autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          <Field label="Email" hint={mode === 'signup' ? 'Only used to sign in. Your friend never sees it.' : undefined} error={fieldError('email')}>
+            <input className="input" type="email" autoComplete="email" autoCapitalize="none" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </Field>
+          {mode === 'signup' && (
+            <Field label="Username" hint="Your friend will search for this." error={fieldError('username')}>
+              <input className="input" autoComplete="username" autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value)} required />
+            </Field>
+          )}
           <Field label="Password" hint={mode === 'signup' ? 'At least 8 characters.' : undefined} error={fieldError('password')}>
             <input
               className="input"

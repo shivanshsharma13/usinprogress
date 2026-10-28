@@ -1,18 +1,14 @@
-// Thin fetch wrapper. Errors are surfaced with the server's friendly message — never swallowed.
+// The screens' data interface. Same calls as before (api.get('/rooms') …), now answered in the browser
+// by the Supabase data layer. Errors carry a friendly message — never swallowed.
+import { createBackend } from '../data/backend';
+import { ApiError } from '../data/errors';
+import { supabase } from './supabase';
 
-export class ApiError extends Error {
-  status: number;
-  code: string;
-  data?: any;
-  constructor(status: number, code: string, message: string, data?: any) {
-    super(message);
-    this.status = status;
-    this.code = code;
-    this.data = data;
-  }
-}
+export { ApiError };
 
-/** serverTime - clientTime, smoothed. Used so a running timer shows the server's truth. */
+const backend = createBackend(supabase, { now: () => serverNow() });
+
+/** databaseTime - clientTime, smoothed, so a running timer shows the saved timestamps' truth. */
 let clockSkew = 0;
 export const serverNow = () => Date.now() + clockSkew;
 
@@ -21,35 +17,29 @@ export function noteServerTime(serverMs: number, sentAt: number, receivedAt: num
   clockSkew = clockSkew === 0 ? estimate : clockSkew * 0.7 + estimate * 0.3;
 }
 
+/** Re-measures the clock difference with the database (on start, and when the tab comes back). */
+export async function syncClock() {
+  const sentAt = Date.now();
+  try {
+    const db = await backend.serverNow();
+    noteServerTime(Number(db), sentAt, Date.now());
+  } catch {}
+}
+
 let onUnauthenticated: (() => void) | null = null;
 export const setUnauthenticatedHandler = (fn: () => void) => (onUnauthenticated = fn);
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const sentAt = Date.now();
-  let res: Response;
+async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
   try {
-    res = await fetch('/api' + path, {
-      method,
-      credentials: 'same-origin',
-      headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-  } catch {
+    return (await backend.request(method, path, body)) as T;
+  } catch (e) {
+    if (e instanceof ApiError) {
+      if (e.status === 401 && onUnauthenticated && !path.startsWith('/auth/')) onUnauthenticated();
+      throw e;
+    }
+    // supabase-js network failures surface as TypeErrors.
     throw new ApiError(0, 'NETWORK', "You seem to be offline. Nothing was saved — please try again when you're connected.");
   }
-  const st = res.headers.get('x-server-now');
-  if (st) noteServerTime(Number(st), sentAt, Date.now());
-  const text = await res.text();
-  let json: any = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {}
-  if (!res.ok) {
-    if (res.status === 401 && onUnauthenticated && !path.startsWith('/auth/')) onUnauthenticated();
-    const err = json?.error;
-    throw new ApiError(res.status, err?.code ?? 'ERROR', err?.message ?? 'Something went wrong. Nothing was saved.', err?.data);
-  }
-  return json as T;
 }
 
 export const api = {

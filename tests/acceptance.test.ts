@@ -1,7 +1,7 @@
 // End-to-end acceptance tests against the real HTTP API (spec section 17).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { Client, signUp, sleep, startServer, type TestServer } from './helpers.ts';
+import { Client, closeClients, emailFor, signUp, sleep, startServer, type TestServer } from './helpers.ts';
 import { addDays } from '../shared/dates.ts';
 
 let srv: TestServer;
@@ -20,6 +20,7 @@ before(async () => {
   srv = await startServer();
 });
 after(async () => {
+  await closeClients();
   await srv.close();
 });
 
@@ -34,21 +35,24 @@ test('two users can create accounts and sign in', async () => {
 
   const fresh = new Client(srv.base);
   assert.equal((await fresh.get('/me')).status, 401);
-  assert.equal((await fresh.post('/auth/signin', { username: 'asha', password: 'wrong password' })).status, 400);
-  const ok = await fresh.post('/auth/signin', { username: 'ASHA', password: 'correct horse battery' });
+  assert.equal((await fresh.post('/auth/signin', { email: emailFor('asha'), password: 'wrong password' })).status, 400);
+  const ok = await fresh.post('/auth/signin', { email: emailFor('ASHA'), password: 'correct horse battery' });
   assert.equal(ok.status, 200);
   assert.equal((await fresh.get('/me')).body.me.id, a.id);
 
-  // Duplicate usernames are rejected (case-insensitively).
-  const dup = await new Client(srv.base).post('/auth/signup', { username: 'Asha', password: 'whatever123', displayName: 'X', profileType: 'custom' });
+  // Duplicate usernames (case-insensitively) and duplicate emails are rejected.
+  const dup = await new Client(srv.base).post('/auth/signup', { email: 'someone@example.com', username: 'Asha', password: 'whatever123', displayName: 'X', profileType: 'custom' });
   assert.equal(dup.status, 409);
+  assert.equal(dup.body.error.code, 'USERNAME_TAKEN');
+  const dupEmail = await new Client(srv.base).post('/auth/signup', { email: emailFor('asha'), username: 'asha2', password: 'whatever123', displayName: 'X', profileType: 'custom' });
+  assert.notEqual(dupEmail.status, 201);
 
-  // Passwords are hashed and live outside the application tables.
-  const cols = (await srv.db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND table_schema = current_schema()")).map((r: any) => r.column_name);
-  assert.ok(!cols.some((n: string) => n.includes('pass')));
-  const cred = (await srv.db.query('SELECT password_hash FROM auth_credentials WHERE user_id = ?', [a.id]))[0] as any;
-  assert.ok(cred.password_hash.startsWith('scrypt$'));
-  assert.ok(!cred.password_hash.includes('correct horse'));
+  // Passwords and emails live only in Supabase Auth (bcrypt-hashed), never in the app's tables.
+  const cols = (await srv.db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'profiles' AND table_schema = 'public'")).map((r: any) => r.column_name);
+  assert.ok(!cols.some((n: string) => n.includes('pass') || n.includes('email')));
+  const cred = (await srv.db.query('SELECT encrypted_password FROM auth.users WHERE id = ?', [a.id]))[0] as any;
+  assert.match(cred.encrypted_password, /^\$2[aby]\$/);
+  assert.ok(!cred.encrypted_password.includes('correct horse'));
 
   // Signing out invalidates the session server-side.
   await fresh.post('/auth/signout');
@@ -147,7 +151,7 @@ test('starting a topic creates a persistent session the partner sees live', asyn
   const start = await A.post('/sessions', { topicId: topics[0] });
   assert.equal(start.status, 201);
   assert.equal(start.body.session.state, 'running');
-  await stream.waitFor((e) => e.keys.includes('friends'));
+  await stream.waitFor((e) => e.table === 'presence' && e.row.user_id === a.id);
   stream.stop();
 
   const friend = (await B.get('/friends')).body.friends[0];
@@ -498,8 +502,9 @@ test('encouragement reaches the friend in real time; strangers cannot send it', 
   const stream = await B.listen();
   const r = await A.post('/encourage', { recipientId: b.id, reaction: 'keep_going' });
   assert.equal(r.status, 201);
-  const e = await stream.waitFor((ev) => ev.notice?.kind === 'encouragement');
-  assert.match(e.notice.text, /Keep going/);
+  const e = await stream.waitFor((ev) => ev.table === 'activities' && ev.eventType === 'INSERT');
+  assert.equal(e.row.reaction, 'keep_going');
+  assert.equal(e.row.recipient_id, b.id);
   stream.stop();
   const feed = (await B.get('/activity')).body;
   assert.equal(feed.unread, 1);
@@ -538,10 +543,17 @@ test('failed writes are reported accurately', async () => {
   assert.equal(bad.status, 400);
   assert.equal(bad.body.error.code, 'VALIDATION');
   const before = (await A.get(`/rooms/${roomId}`)).body.topics.length;
-  assert.equal((await A.put(`/rooms/${roomId}/topics/order`, { topicIds: [topics[0], 'not-a-topic'] })).status, 400);
+  assert.equal((await A.put(`/rooms/${roomId}/topics/order`, { topicIds: [topics[0], crypto.randomUUID()] })).status, 400);
   assert.equal((await A.get(`/rooms/${roomId}`)).body.topics.length, before);
-  const cross = await fetch(srv.base + '/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.example', cookie: A.cookie }, body: '{}' });
-  assert.equal(cross.status, 403);
+  // Writing to tables directly (bypassing the checked functions) is refused by the database.
+  const direct = await A.sb.from('topic_completions').insert({ topic_id: topics[1], user_id: a.id, kind: 'first', completed_at: 0, local_date: today });
+  assert.ok(direct.error, 'direct insert should fail');
+  const forge = await A.sb.from('study_sessions').update({ focused_ms: 999_999_999 }).eq('user_id', a.id).select('id');
+  assert.ok(forge.error || !forge.data?.length, 'direct update should change nothing');
+  const peek = await A.sb.from('study_sessions').select('id').eq('user_id', b.id);
+  assert.deepEqual(peek.data, []); // the partner's session history (and notes) stay private
+  const spoof = await A.sb.from('profiles').update({ display_name: 'Hacked' }).eq('id', b.id).select('id');
+  assert.deepEqual(spoof.data, []); // can't edit someone else's profile
 });
 
 test('home summarises the next action', async () => {

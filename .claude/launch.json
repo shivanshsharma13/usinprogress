@@ -3,16 +3,14 @@
   "configurations": [
     {
       "name": "us-in-progress",
-      "runtimeExecutable": "node",
+      "runtimeExecutable": "npx",
       "runtimeArgs": [
-        "--disable-warning=ExperimentalWarning",
-        "server/index.ts"
+        "vite",
+        "--port",
+        "5199",
+        "--strictPort"
       ],
-      "port": 3100,
-      "env": {
-        "NODE_ENV": "production",
-        "PORT": "3100"
-      }
+      "port": 5199
     }
   ]
 }

@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMe } from './lib/queries';
 import { setUnauthenticatedHandler } from './lib/api';
+import { configured, supabase } from './lib/supabase';
 import { applyMyAccent, applyScheme } from './lib/theme';
 import { Layout } from './components/Layout';
 import { Spinner, Toasts } from './components/ui';
@@ -26,6 +27,14 @@ export function App() {
 
   useEffect(() => {
     setUnauthenticatedHandler(() => qc.setQueryData<any>(['me'], null));
+    // Signed out elsewhere, or the session expired: show the sign-in screen.
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
+        qc.setQueryData<any>(['me'], null);
+      }
+    });
+    return () => data.subscription.unsubscribe();
   }, [qc]);
 
   // The profile's theme follows the person everywhere, across pages and reloads.
@@ -35,6 +44,15 @@ export function App() {
     applyMyAccent(me.accent);
   }, [me?.colorScheme, me?.accent]);
 
+  if (!configured)
+    return (
+      <div className="auth-wrap">
+        <div className="card stack">
+          <h2>Almost there</h2>
+          <p className="small">This build doesn't know which Supabase project to use. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see README) and build again.</p>
+        </div>
+      </div>
+    );
   if (isLoading) return <Spinner />;
   if (error)
     return (
@@ -49,7 +67,7 @@ export function App() {
     );
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <Toasts />
       {!me ? (
         <Routes>
