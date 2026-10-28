@@ -2,11 +2,13 @@
 
 A private, shared study garden for two friends. Everything hangs off one simple shape:
 
-**Room → your goals (yearly → monthly → weekly) → the topics you study.**
+**Goal → sprints → days → tasks**, then **pull a sprint into a shared room** to study it there.
 
-In a shared room each of you has your own goals and topics, side by side. Press **Study** on a topic,
-then **Complete topic** — the app saves the session, ticks the topic off for you, picks your next topic
-(from the same goal first), fills up that goal and every goal above it, and shows your friend in real time.
+A goal (say "GTFO 2026") is your own plan: a start date, a sprint length (e.g. 12 days) and a number of
+sprints. The app lays out the days; you put tasks with estimated times on each day. When a sprint starts,
+pull it into the room you share with your friend: its tasks appear in your column there, you study them
+with the timer, and each finished task ticks off on its day. Past days show **Completed**, **Partially
+completed** or **Missed**; the goal page shows what to start next, today's progress and a ☆ revision list.
 
 ---
 
@@ -85,7 +87,7 @@ server/
     core.ts           users, friendship/room access checks, live status, activity feed
     rooms.ts          rooms, topics, independent per-member progress, completion/reopen
     sessions.ts       the timer service (start/pause/resume/finish/discard/correct)
-    goals.ts          goals in rooms, and their progress from the topics under them
+    plans.ts          goals as plans: sprints, days, tasks; pulling a sprint into a room
     tasks.ts          calendar tasks
     social.ts         friend requests, friends, encouragement, progress stats, home summary
   seed.ts             development data
@@ -122,9 +124,12 @@ time zone.
   index allows only one running/paused session per user. `measured_ms` (what the clock said) is kept
   alongside `focused_ms` (what counts).
 - **session_corrections** — every change to a recorded duration, with old and new values.
-- **goals** — owner, room, period (yearly/monthly/weekly/custom), dates, optional parent goal in the same
-  room, status. Archived, never deleted.
-- **topics.goal_id** — the goal a topic sits under (optional; must be the topic owner's goal in that room).
+- **plans** — a goal: owner, title, start date, days per sprint, number of sprints. Days aren't stored;
+  day N is the start date + N.
+- **plan_sprints** — only for sprints pulled into a room (`room_id`) or reviewed (`completed_at`).
+- **plan_tasks** — tasks on a day of a plan, with estimate, ☆ star and, once its sprint is in a room, the
+  `topic_id` it's studied as. Removing a task archives its topic, so study history stays.
+- `goals` / `topics.goal_id` from an earlier version are no longer used.
 - **tasks** + **task_events** — calendar items: date, optional time/duration, optional room/topic, shared
   flag, private note. Moves are logged; removal archives.
 - **activities** — reactions, messages, completions, room/friend events, with read state.
@@ -143,26 +148,27 @@ Accidental sessions can be discarded (kept for audit, counts zero).
 completion, mark *your* progress complete, then return the next incomplete topic in room order (wrapping
 around). The next topic is selected but its timer is **not** started. Completing twice is a no-op.
 
-**Goal progress.** Progress is never stored; it's worked out from `topic_completions` each time.
-A goal's progress is the share of topics done in it **and in every goal beneath it**. A topic sits under at
-most one goal, so finishing it counts once for its weekly goal, once for the monthly goal above, once for
-the yearly goal above that — never twice for the same goal. Undoing a mistaken completion takes it back out
-everywhere; revising a finished topic doesn't count it again. Marking a goal done shows 100%. Archiving a
-goal moves its topics and smaller goals up to its parent, so nothing is lost. Your friend's work never counts
-toward your goals.
+**Goals and sprints.** A plan task becomes a room topic when its sprint is pulled into a room, so the timer,
+completions, live status and the friend's view need nothing new. Progress is never stored: a task is done
+when its topic has a (non-revoked) completion, and its time is the topic's finished sessions. A day is
+*Completed* when all its tasks are done, *Partially completed* when some are, *Missed* when none are (past
+days only). Editing a task on the plan keeps its room topic in step; a task can't move into a sprint that's
+in a different room. "Review & complete" closes a sprint (it leaves the room view; history stays). In the
+room, "Study next" is today's first open task, then overdue ones; finishing a task moves on to the next one
+that day, then the following days.
 
 **Topic ownership.** A room is a shared space with two personal lists — an engineer's DSA topics next to a
 doctor's biochemistry topics. `requireOwnTopic` in `services/core.ts` rejects any change, completion or study
-session on someone else's topic with 403. Goals work the same way: your friend sees your goals and their
-progress in the room, but only you can change them or put topics under them. Room
+session on someone else's topic with 403. Goals are private to you; your friend only sees the sprints you
+pull into your shared room, read-only. Room
 progress is shown per person ("6 of 10 done") and never combined.
 
 **Privacy.** Every route requires a session; every service checks ownership or membership on the server.
 Non-members get 404 for rooms and topics (existence isn't revealed). Friends see: live status (unless you
-turn it off), today/week totals, your goals and topics in rooms you share, and calendar items you mark
+turn it off), today/week totals, your topics and pulled sprints in rooms you share, and calendar items you mark
 *Show on my friend's calendar*. They never see your session list, session notes or task notes. Cross-site state-changing requests are rejected; sign-in/up are rate-limited.
 
-**Realtime.** After each write, the server sends `invalidate` events (e.g. `rooms`, `goals`, `session`) to
+**Realtime.** After each write, the server sends `invalidate` events (e.g. `rooms`, `plans`, `session`) to
 the affected people (the actor, their friends, the room's members). Clients refetch those queries. On
 reconnect the client refetches everything, and a small indicator shows "Reconnecting…" while offline.
 
@@ -173,8 +179,9 @@ reconnect the client refetches everything, and a small indicator shows "Reconnec
   API: two accounts and sign-in, search/request/accept with duplicate and wrong-recipient guards, rooms only
   between friends and only two members, independent topic progress, live partner status over SSE, pause
   excluding paused time, refresh recovery, complete → next topic not started, finish without completion,
-  idempotent retries, long-session confirmation with audited corrections, goals in rooms with weekly →
-  monthly → yearly progress counted once, goals and topics staying personal and in one room, shared vs
+  idempotent retries, long-session confirmation with audited corrections, goal plans with day statuses,
+  pulling a sprint into a room (studyable there, partner read-only, next task in day order, edits kept in
+  step, removing a task keeps history, completing a sprint), shared vs
   private calendar items and notes, moving tasks keeping sessions, archiving keeping history, encouragement in
   real time, hidden status, owner-only profile edits, and accurate failure responses.
 - Manually in a browser: sign-in, home, starting/pausing/resuming the timer, reload recovery, completing a

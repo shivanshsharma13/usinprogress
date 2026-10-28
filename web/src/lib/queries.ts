@@ -6,11 +6,12 @@ import type {
   ActiveSession,
   Friend,
   FriendRequest,
-  Goal,
   HomeData,
   LiveStatus,
   Me,
   ProgressStats,
+  Plan,
+  PlanSummary,
   PublicUser,
   RoomDetail,
   RoomSummary,
@@ -46,13 +47,13 @@ export const useFriend = (id: string | undefined) =>
     queryKey: ['friend', id],
     enabled: Boolean(id),
     queryFn: () =>
-      api.get<{ user: PublicUser; status: LiveStatus; goals: Goal[]; recentCompletions: CompletionSummary[]; rooms: RoomSummary[]; activity: Activity[]; stats: ProgressStats }>(
+      api.get<{ user: PublicUser; status: LiveStatus; recentCompletions: CompletionSummary[]; rooms: RoomSummary[]; activity: Activity[]; stats: ProgressStats }>(
         `/friends/${id}`,
       ),
   });
-export const useGoals = () => useQuery({ queryKey: ['goals'], queryFn: async () => (await api.get<{ goals: Goal[] }>('/goals')).goals });
-export const useSharedGoals = (userId: string | undefined) =>
-  useQuery({ queryKey: ['sharedGoals', userId], enabled: Boolean(userId), queryFn: async () => (await api.get<{ goals: Goal[] }>(`/goals/shared/${userId}`)).goals });
+export const usePlans = () => useQuery({ queryKey: ['plans'], queryFn: async () => (await api.get<{ plans: PlanSummary[] }>('/plans')).plans });
+export const usePlan = (id: string | undefined) =>
+  useQuery({ queryKey: ['plan', id], enabled: Boolean(id), queryFn: async () => (await api.get<{ plan: Plan }>(`/plans/${id}`)).plan });
 export const useTasks = (from: string, to: string) =>
   useQuery({ queryKey: ['tasks', from, to], queryFn: async () => (await api.get<{ tasks: Task[] }>(`/tasks?from=${from}&to=${to}`)).tasks, placeholderData: (prev) => prev });
 export const useActiveSession = (enabled = true) =>

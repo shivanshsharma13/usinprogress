@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, fmt, LiveDot, ProgressBar, Spinner, StatusLine, useNow } from '../components/ui';
 import { EncourageButtons } from '../components/Encourage';
-import { GoalSummary } from '../components/GoalBits';
+import { PlanLine } from '../components/PlanBits';
 import { Buddy } from '../components/Buddy';
 import { Plant } from '../components/Plant';
 import { CheckIcon, PlayIcon } from '../components/icons';
@@ -23,11 +23,11 @@ export function HomePage() {
   const { data, isLoading, error, refetch } = useHome();
   const navigate = useNavigate();
   const now = useNow();
-  const completeTask = useAction((id: string) => api.patch(`/tasks/${id}`, { completed: true }), { invalidate: [['tasks'], ['goals']], success: 'Nice work — marked as done 🌼' });
+  const completeTask = useAction((id: string) => api.patch(`/tasks/${id}`, { completed: true }), { invalidate: [['tasks'], ['plan'], ['plans']], success: 'Nice work — marked as done 🌼' });
 
   if (isLoading) return <Spinner />;
   if (error || !data) return <ErrorNote error={error} retry={refetch} />;
-  const { me, activeSession, primary, friends, today, goals, rooms, upcoming } = data;
+  const { me, activeSession, primary, friends, today, plans, rooms, upcoming } = data;
   const friend = friends[0];
   const nothingYet = !rooms.length && !upcoming.length && !primary;
 
@@ -214,17 +214,17 @@ export function HomePage() {
                 All goals
               </Link>
             </div>
-            {goals.length ? (
+            {plans.length ? (
               <div className="stack">
-                {goals.map((g) => (
-                  <GoalSummary key={g.id} goal={g} accent={me.accent} />
+                {plans.map((p) => (
+                  <PlanLine key={p.id} plan={p} today={me.today} accent={me.accent} />
                 ))}
               </div>
             ) : (
               <div className="row">
                 <Plant percent={0} size={48} />
                 <p className="small muted grow">
-                  No goals yet. <Link to="/goals?new=1">Add one</Link> when you're ready — completed topics will count automatically.
+                  No goals yet. <Link to="/goals?new=1">Make a plan</Link> — split it into sprints and days, then pull a sprint into your room.
                 </p>
               </div>
             )}

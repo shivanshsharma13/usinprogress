@@ -10,7 +10,7 @@ const KEYMAP: Record<string, string[][]> = {
   friends: [['friends'], ['friend'], ['home']],
   rooms: [['rooms'], ['home']],
   room: [['room'], ['topicHistory']],
-  goals: [['goals'], ['sharedGoals'], ['friend'], ['home']],
+  plans: [['plans'], ['plan'], ['home']],
   calendar: [['tasks'], ['home']],
   activity: [['activity'], ['friend'], ['home']],
   session: [['session'], ['sessions'], ['home']],

@@ -7,7 +7,7 @@ export type Channel =
   | 'friends'
   | 'rooms'
   | 'room'
-  | 'goals'
+  | 'plans'
   | 'calendar'
   | 'activity'
   | 'session'

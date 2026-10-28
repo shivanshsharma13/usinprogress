@@ -3,15 +3,14 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { daysBetween, formatDate } from '@shared/dates';
 import { formatMinutes } from '@shared/timer';
-import type { Goal, MemberProgress, RoomDetail, Topic, TopicMemberProgress } from '@shared/types';
+import type { MemberProgress, PlanDay, RoomDetail, RoomSprint, Topic, TopicMemberProgress } from '@shared/types';
 import { useAction, useMe, useRoom, useTopicHistory } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
 import { Plant } from '../components/Plant';
-import { GoalForm } from '../components/GoalForm';
-import { goalValueText, PERIOD_LABEL, rootGoals } from '../components/GoalBits';
+import { DAY_STATUS_LABEL } from '../components/PlanBits';
 import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
 
 // Each person owns the topics they add. Both lists are visible side by side, but only the owner
@@ -70,16 +69,14 @@ export function RoomPage() {
 
 function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: MemberProgress; isMe: boolean }) {
   const navigate = useNavigate();
-  const { data: me } = useMe();
-  const [goalForm, setGoalForm] = useState<GoalFormState | null>(null);
   const ownerId = member.user.id;
   const name = isMe ? 'You' : member.user.displayName;
   const active = room.status === 'active';
   const topics = room.topics.filter((t) => t.createdBy === ownerId);
-  const goals = room.goals.filter((g) => g.ownerId === ownerId);
-  const goalIds = new Set(goals.map((g) => g.id));
-  const loose = topics.filter((t) => !t.goalId || !goalIds.has(t.goalId));
-  const ctx: PlanContext = { roomId: room.id, ownerId, isMe, active, topics, goals, openGoalForm: setGoalForm };
+  const sprints = room.sprints.filter((s) => s.ownerId === ownerId);
+  const inSprints = new Set(sprints.flatMap((s) => s.days.flatMap((d) => d.tasks.map((t) => t.topicId))));
+  const loose = topics.filter((t) => !inSprints.has(t.id));
+  const ctx: RowContext = { ownerId, isMe, active };
 
   return (
     <section className="stack" style={personVars(member.user.accent)} aria-label={`${name}'s plan`}>
@@ -100,7 +97,7 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
         <ProgressBar value={member.completed} max={member.total} accent={member.user.accent} label={`${name}: ${member.completed} of ${member.total}`} />
         <div className="row between small">
           <span className="bold num">
-            {member.completed} of {member.total} topics done
+            {member.completed} of {member.total} done
           </span>
           <span className="muted num">{fmt(member.focusedMs)} focused</span>
         </div>
@@ -111,100 +108,92 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
         )}
       </div>
 
-      {!goals.length && !topics.length && (
+      {!sprints.length && !topics.length && (
         <p className="small muted">
-          {isMe ? 'Start with a goal for this year, month or week, then add the topics you’ll study under it.' : `${member.user.displayName} hasn’t planned anything here yet.`}
+          {isMe ? (
+            <>
+              Nothing here yet. Open one of your <Link to="/goals">goals</Link> and pull its current sprint into this room.
+            </>
+          ) : (
+            `${member.user.displayName} hasn’t brought a sprint into this room yet.`
+          )}
         </p>
       )}
 
-      {rootGoals(goals).map((g) => (
-        <GoalBlock key={g.id} goal={g} depth={0} {...ctx} />
+      {sprints.map((s) => (
+        <SprintBlock key={`${s.planId}-${s.number}`} sprint={s} topics={topics} {...ctx} />
       ))}
 
-      {(loose.length > 0 || (isMe && active && !goals.length && topics.length > 0)) && (
+      {(loose.length > 0 || (isMe && active && !sprints.length)) && (
         <div className="goal-block">
           <div className="goal-head">
-            <b className="grow">{goals.length ? 'Not in a goal' : 'Topics'}</b>
+            <b className="grow">{sprints.length ? 'Other topics' : 'Topics'}</b>
           </div>
           {loose.map((t, i) => (
             <TopicRow key={t.id} topic={t} index={i} siblings={loose} {...ctx} />
           ))}
-          {isMe && active && <AddTopic roomId={room.id} goalId={null} />}
+          {isMe && active && <AddTopic roomId={room.id} />}
         </div>
       )}
-
-      {isMe && active && (
-        <button className="btn" onClick={() => setGoalForm({})}>
-          <PlusIcon /> Add a goal
-        </button>
-      )}
-
-      {goalForm && me && <GoalForm goal={goalForm.goal} parent={goalForm.parent} roomId={room.id} myGoals={goals} today={me.today} onClose={() => setGoalForm(null)} />}
     </section>
   );
 }
 
-interface GoalFormState {
-  goal?: Goal;
-  parent?: Goal;
-}
-
-/** What a person's goal tree and topic rows need to render (and whether the viewer may act). */
-interface PlanContext {
-  roomId: string;
+/** Whose rows these are, and whether the viewer may act on them. */
+interface RowContext {
   ownerId: string;
   isMe: boolean;
   active: boolean;
-  topics: Topic[];
-  goals: Goal[];
-  openGoalForm: (s: GoalFormState) => void;
 }
 
-function GoalBlock({ goal, depth, ...ctx }: { goal: Goal; depth: number } & PlanContext) {
-  const [open, setOpen] = useState(goal.status !== 'done');
-  const topics = ctx.topics.filter((t) => t.goalId === goal.id);
-  const children = ctx.goals.filter((g) => g.parentId === goal.id);
-  const inv = [['room', ctx.roomId], ['goals'], ['rooms']];
-  const update = useAction((body: object) => api.patch(`/goals/${goal.id}`, body), { invalidate: inv });
-  const archive = useAction(() => api.del(`/goals/${goal.id}`), { invalidate: inv, success: 'Goal archived — its topics moved up' });
-
+/** A sprint pulled into the room: its days, with today open. Tasks are studied as room topics. */
+function SprintBlock({ sprint, topics, ...ctx }: { sprint: RoomSprint; topics: Topic[] } & RowContext) {
+  const byId = new Map(topics.map((t) => [t.id, t]));
   return (
-    <div className={`goal-block${depth ? ' nested' : ''}`}>
+    <div className="goal-block">
       <div className="goal-head">
-        <button className="btn ghost icon small" aria-label={open ? 'Collapse goal' : 'Expand goal'} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {open ? <ChevronDown /> : <ChevronRight />}
-        </button>
         <div className="grow" style={{ minWidth: 0 }}>
-          <div className="bold">{goal.title}</div>
+          <div className="bold">
+            {sprint.planTitle} · Sprint {sprint.number}
+          </div>
           <div className="tiny muted num">
-            {PERIOD_LABEL[goal.period]} · {goalValueText(goal)} · until {formatDate(goal.deadline)}
+            {sprint.done} of {sprint.total} tasks done · {formatDate(sprint.startDate)} – {formatDate(sprint.endDate)}
           </div>
         </div>
-        <span className="small bold num">{goal.progress.percent}%</span>
         {ctx.isMe && (
-          <Menu
-            label={`More actions for ${goal.title}`}
-            items={[
-              { label: 'Add a smaller goal', onClick: () => ctx.openGoalForm({ parent: goal }), hidden: goal.period === 'weekly' },
-              { label: 'Edit goal', onClick: () => ctx.openGoalForm({ goal }) },
-              { label: 'Mark goal done', onClick: () => update.mutate({ status: 'done' }), hidden: goal.status === 'done' },
-              { label: 'Mark not done', onClick: () => update.mutate({ status: 'active' }), hidden: goal.status !== 'done' },
-              { label: 'Archive goal', danger: true, onClick: () => confirm(`Archive “${goal.title}”? Its topics move to the goal above it.`) && archive.mutate(undefined) },
-            ]}
-          />
+          <Link to={`/goals/${sprint.planId}`} className="btn ghost small">
+            Open plan
+          </Link>
         )}
       </div>
-      <ProgressBar value={goal.progress.percent} max={100} thin label={goal.title} />
+      <ProgressBar value={sprint.done} max={sprint.total} thin label={`Sprint ${sprint.number}`} />
+      {sprint.days
+        .filter((d) => d.tasks.length || d.status === 'today')
+        .map((d) => (
+          <SprintDay key={d.day} day={d} topics={d.tasks.map((t) => byId.get(t.topicId ?? '')).filter(Boolean) as Topic[]} {...ctx} />
+        ))}
+    </div>
+  );
+}
+
+function SprintDay({ day, topics, ...ctx }: { day: PlanDay; topics: Topic[] } & RowContext) {
+  const [open, setOpen] = useState(day.status === 'today');
+  const label = DAY_STATUS_LABEL[day.status];
+  return (
+    <div className={`day-row${day.status === 'today' ? ' today' : ''}`}>
+      {day.status === 'today' && <span className="today-tag">Today</span>}
+      <button className="day-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className={day.status === 'today' ? 'bold' : ''}>
+          Day {day.number} · {formatDate(day.date, { weekday: 'short', day: 'numeric', month: 'short' })}
+        </span>
+        <span className="grow" />
+        {day.status !== 'today' && label && <span className={`tiny day-status ${day.status}`}>{label}</span>}
+        {open ? <ChevronDown width={16} /> : <ChevronRight width={16} />}
+      </button>
       {open && (
-        <>
-          {topics.map((t, i) => (
-            <TopicRow key={t.id} topic={t} index={i} siblings={topics} {...ctx} />
-          ))}
-          {ctx.isMe && ctx.active && <AddTopic roomId={ctx.roomId} goalId={goal.id} />}
-          {children.map((c) => (
-            <GoalBlock key={c.id} goal={c} depth={depth + 1} {...ctx} />
-          ))}
-        </>
+        <div className="day-body" style={{ gap: 8 }}>
+          {topics.length ? topics.map((t, i) => <TopicRow key={t.id} topic={t} index={i} siblings={topics} planned {...ctx} />) : <p className="small muted">Nothing planned.</p>}
+        </div>
       )}
     </div>
   );
@@ -219,14 +208,15 @@ function statusText(p: TopicMemberProgress | undefined) {
   return 'Not started';
 }
 
-function TopicRow({ topic: t, index, siblings, ownerId, isMe, active, goals }: { topic: Topic; index: number; siblings: Topic[] } & PlanContext) {
+/** `planned` rows come from a goal's sprint: they're edited on the goal page, not here. */
+function TopicRow({ topic: t, index, siblings, ownerId, isMe, active, planned }: { topic: Topic; index: number; siblings: Topic[]; planned?: boolean } & RowContext) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [history, setHistory] = useState(false);
   const p = t.progress[ownerId];
   const done = p?.status === 'completed';
 
-  const inv = [['room', t.roomId], ['rooms'], ['goals'], ['progress'], ['session']];
+  const inv = [['room', t.roomId], ['rooms'], ['plan'], ['plans'], ['progress'], ['session']];
   const complete = useAction(() => api.post(`/topics/${t.id}/complete`), { invalidate: inv, success: 'Topic complete 🌼' });
   const reopen = useAction((mode: 'revise' | 'undo') => api.post(`/topics/${t.id}/reopen`, { mode }), { invalidate: inv });
   const archive = useAction(() => api.del(`/topics/${t.id}`), { invalidate: inv, success: 'Topic archived — its history is kept' });
@@ -264,17 +254,17 @@ function TopicRow({ topic: t, index, siblings, ownerId, isMe, active, goals }: {
           <Menu
             label={`More actions for ${t.title}`}
             items={[
-              { label: 'Edit', onClick: () => setEditing(true) },
-              { label: 'Move up', onClick: () => move(-1), hidden: index === 0 },
-              { label: 'Move down', onClick: () => move(1), hidden: index === siblings.length - 1 },
+              { label: 'Edit', onClick: () => setEditing(true), hidden: planned },
+              { label: 'Move up', onClick: () => move(-1), hidden: planned || index === 0 },
+              { label: 'Move down', onClick: () => move(1), hidden: planned || index === siblings.length - 1 },
               { label: 'History', onClick: () => setHistory(true) },
               { label: 'Undo “done”', onClick: () => confirm('Undo this completion? It will stop counting toward your goals. The record stays in history.') && reopen.mutate('undo'), hidden: !done },
-              { label: 'Archive', danger: true, onClick: () => confirm(`Archive “${t.title}”? Its study time and history are kept.`) && archive.mutate(undefined) },
+              { label: 'Archive', danger: true, onClick: () => confirm(`Archive “${t.title}”? Its study time and history are kept.`) && archive.mutate(undefined), hidden: planned },
             ]}
           />
         </div>
       )}
-      {editing && <TopicModal topic={t} goals={goals} onClose={() => setEditing(false)} />}
+      {editing && <TopicModal topic={t} onClose={() => setEditing(false)} />}
       {history && <HistoryModal topic={t} onClose={() => setHistory(false)} />}
     </div>
   );
@@ -299,7 +289,7 @@ function ArchivedTopics({ roomId, topics }: { roomId: string; topics: Topic[] })
   );
 }
 
-function AddTopic({ roomId, goalId }: { roomId: string; goalId: string | null }) {
+function AddTopic({ roomId }: { roomId: string }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [more, setMore] = useState(false);
@@ -308,14 +298,13 @@ function AddTopic({ roomId, goalId }: { roomId: string; goalId: string | null })
     () =>
       api.post(`/rooms/${roomId}/topics`, {
         title,
-        goalId,
         category: details.category || undefined,
         estimatedMinutes: details.estimatedHours ? Math.round(Number(details.estimatedHours) * 60) : null,
         sessionTargetMinutes: details.target ? Number(details.target) : null,
         deadline: details.deadline || null,
       }),
     {
-      invalidate: [['room', roomId], ['rooms'], ['goals']],
+      invalidate: [['room', roomId], ['rooms'], ['plan'], ['plans']],
       onSuccess: () => {
         setTitle('');
         setDetails({ category: '', estimatedHours: '', target: '', deadline: '' });
@@ -371,12 +360,11 @@ function AddTopic({ roomId, goalId }: { roomId: string; goalId: string | null })
   );
 }
 
-function TopicModal({ topic, goals, onClose }: { topic: Topic; goals: Goal[]; onClose: () => void }) {
+function TopicModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
   const [f, setF] = useState({
     title: topic.title,
     description: topic.description,
     category: topic.category,
-    goalId: topic.goalId ?? '',
     estimatedHours: topic.estimatedMinutes ? String(topic.estimatedMinutes / 60) : '',
     target: topic.sessionTargetMinutes ? String(topic.sessionTargetMinutes) : '',
     deadline: topic.deadline ?? '',
@@ -388,13 +376,12 @@ function TopicModal({ topic, goals, onClose }: { topic: Topic; goals: Goal[]; on
         title: f.title,
         description: f.description,
         category: f.category,
-        goalId: f.goalId || null,
         estimatedMinutes: f.estimatedHours ? Math.round(Number(f.estimatedHours) * 60) : null,
         sessionTargetMinutes: f.target ? Number(f.target) : null,
         deadline: f.deadline || null,
       }),
     {
-      invalidate: [['room', topic.roomId], ['rooms'], ['goals']],
+      invalidate: [['room', topic.roomId], ['rooms'], ['plan'], ['plans']],
       success: 'Topic saved',
       onSuccess: onClose,
       onError: (e: ApiError) => {
@@ -422,18 +409,6 @@ function TopicModal({ topic, goals, onClose }: { topic: Topic; goals: Goal[]; on
         <Field label="Title" full>
           <input className="input" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} maxLength={140} />
         </Field>
-        {goals.length > 0 && (
-          <Field label="Goal" full>
-            <select className="input" value={f.goalId} onChange={(e) => setF({ ...f, goalId: e.target.value })}>
-              <option value="">Not in a goal</option>
-              {goals.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {PERIOD_LABEL[g.period]}: {g.title}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
         <Field label="Subject">
           <input className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} />
         </Field>

@@ -19,7 +19,7 @@ import {
   type UserRow,
 } from './core.ts';
 import { listRooms } from './rooms.ts';
-import { listMyGoals } from './goals.ts';
+import { listPlans } from './plans.ts';
 import { completedTasksOn, listTasks } from './tasks.ts';
 import { getActiveSession } from './sessions.ts';
 
@@ -237,8 +237,7 @@ export function homeData(db: DB, userId: string): HomeData {
   const tasks = listTasks(db, userId, addDays(today, -1), addDays(today, 14), { includeFriends: false });
   // Tasks from a date range always have a date.
   const todaysOpen = tasks.filter((t) => t.date! <= today && !t.completed && (t.date === today || t.topicId));
-  const goals = listMyGoals(db, userId).filter((g) => g.status === 'active');
-  const currentGoals = goals.filter((g) => g.startDate <= today && g.deadline >= today);
+  const plans = listPlans(db, userId).filter((p) => p.status === 'active');
 
   let primary: HomeData['primary'] = null;
   const scheduled = todaysOpen.find((t) => t.date === today);
@@ -263,7 +262,7 @@ export function homeData(db: DB, userId: string): HomeData {
     primary,
     friends: listFriends(db, userId),
     today: { focusedMs: focusedToday(db, userId), completedTopics: completedToday, completedTasks: completedTasksOn(db, userId, today) },
-    goals: (currentGoals.length ? currentGoals : goals).slice(0, 4),
+    plans: plans.slice(0, 4),
     rooms,
     upcoming: tasks.filter((t) => t.date! >= today && !t.completed).slice(0, 5),
     unread: unreadCount(db, userId),

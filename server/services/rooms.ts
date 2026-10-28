@@ -18,7 +18,7 @@ import {
   type RoomRow,
   type TopicRow,
 } from './core.ts';
-import { checkTopicGoal, listRoomGoals } from './goals.ts';
+import { nextPlanTopic, nextPlanTopicAfter, roomSprints } from './plans.ts';
 
 // ───────────── Rooms ─────────────
 
@@ -129,7 +129,6 @@ function loadTopics(db: DB, roomIds: string[], includeArchived: boolean): Topic[
       estimatedMinutes: t.estimated_minutes,
       sessionTargetMinutes: t.session_target_minutes,
       deadline: t.deadline,
-      goalId: t.goal_id,
       position: t.position,
       createdBy: t.created_by,
       status: t.status,
@@ -149,8 +148,9 @@ function summarize(db: DB, viewerId: string, room: RoomRow, topics: Topic[]): Ro
   memberIds.sort((a, b) => (a === viewerId ? -1 : b === viewerId ? 1 : 0));
   const users = getUsers(db, memberIds);
   const active = topics.filter((t) => t.status === 'active');
+  // Today's plan task comes first; otherwise the first of your open topics in this room.
   const mine = active.filter((t) => t.createdBy === viewerId);
-  const next = mine.find((t) => !isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising');
+  const next = nextPlanTopic(db, viewerId, room.id) ?? mine.find((t) => !isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising');
   return {
     id: room.id,
     name: room.name,
@@ -186,13 +186,12 @@ export function listRooms(db: DB, userId: string): RoomSummary[] {
 export function roomDetail(db: DB, userId: string, roomId: string): RoomDetail {
   const room = requireRoomMember(db, roomId, userId);
   const topics = loadTopics(db, [roomId], true);
-  const memberIds = roomMemberIds(db, roomId);
   return {
     ...summarize(db, userId, room, topics),
     topics: topics.filter((t) => t.status === 'active'),
     archivedTopics: topics.filter((t) => t.status === 'archived'),
     activity: listActivity(db, userId, { roomId, limit: 15 }),
-    goals: listRoomGoals(db, roomId, memberIds),
+    sprints: roomSprints(db, roomId),
   };
 }
 
@@ -210,19 +209,18 @@ export function createTopic(
   db: DB,
   userId: string,
   roomId: string,
-  input: { title: string; description?: string; category?: string; estimatedMinutes?: number | null; sessionTargetMinutes?: number | null; deadline?: string | null; goalId?: string | null },
+  input: { title: string; description?: string; category?: string; estimatedMinutes?: number | null; sessionTargetMinutes?: number | null; deadline?: string | null },
 ): string {
   const room = requireRoomMember(db, roomId, userId);
   if (room.status === 'archived') throw badRequest('This room is archived. Reopen it to add topics.');
-  checkTopicGoal(db, userId, roomId, input.goalId);
   return transaction(db, () => {
     const id = newId();
     const now = Date.now();
     const last = get<{ p: number | null }>(db, 'SELECT MAX(position) AS p FROM topics WHERE room_id = ?', roomId);
     run(
       db,
-      `INSERT INTO topics (id, room_id, title, description, category, estimated_minutes, session_target_minutes, deadline, goal_id, position, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO topics (id, room_id, title, description, category, estimated_minutes, session_target_minutes, deadline, position, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       roomId,
       input.title,
@@ -231,7 +229,6 @@ export function createTopic(
       input.estimatedMinutes ?? null,
       input.sessionTargetMinutes ?? null,
       input.deadline ?? null,
-      input.goalId ?? null,
       (last?.p ?? 0) + 1,
       userId,
       now,
@@ -247,10 +244,9 @@ export function updateTopic(
   db: DB,
   userId: string,
   topicId: string,
-  input: Partial<{ title: string; description: string; category: string; estimatedMinutes: number | null; sessionTargetMinutes: number | null; deadline: string | null; goalId: string | null; status: 'active' | 'archived' }>,
+  input: Partial<{ title: string; description: string; category: string; estimatedMinutes: number | null; sessionTargetMinutes: number | null; deadline: string | null; status: 'active' | 'archived' }>,
 ) {
   const { topic } = requireOwnTopic(db, topicId, userId);
-  if (input.goalId !== undefined) checkTopicGoal(db, userId, topic.room_id, input.goalId);
   const changes: Record<string, unknown> = {};
   const next = {
     title: input.title ?? topic.title,
@@ -259,7 +255,6 @@ export function updateTopic(
     estimated_minutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : topic.estimated_minutes,
     session_target_minutes: input.sessionTargetMinutes !== undefined ? input.sessionTargetMinutes : topic.session_target_minutes,
     deadline: input.deadline !== undefined ? input.deadline : topic.deadline,
-    goal_id: input.goalId !== undefined ? input.goalId : topic.goal_id,
     status: input.status ?? topic.status,
   };
   for (const [k, v] of Object.entries(next)) if ((topic as any)[k] !== v) changes[k] = { from: (topic as any)[k], to: v };
@@ -267,14 +262,13 @@ export function updateTopic(
   transaction(db, () => {
     run(
       db,
-      `UPDATE topics SET title = ?, description = ?, category = ?, estimated_minutes = ?, session_target_minutes = ?, deadline = ?, goal_id = ?, status = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE topics SET title = ?, description = ?, category = ?, estimated_minutes = ?, session_target_minutes = ?, deadline = ?, status = ?, updated_at = ? WHERE id = ?`,
       next.title,
       next.description,
       next.category,
       next.estimated_minutes,
       next.session_target_minutes,
       next.deadline,
-      next.goal_id,
       next.status,
       Date.now(),
       topicId,
@@ -370,11 +364,21 @@ export function reopenTopic(db: DB, userId: string, topicId: string, mode: 'revi
   });
 }
 
-/** Next of the user's own topics after `afterTopicId` (wrapping around) that they have not completed. */
+/**
+ * What to study after `afterTopicId`. For a plan task: the next task that day, then the following
+ * days. Otherwise the next of your own open topics in room order (wrapping around).
+ */
 export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afterTopicId?: string): { id: string; title: string } | null {
-  const topics = all<{ id: string; title: string; status: string | null; goal_id: string | null }>(
+  if (afterTopicId) {
+    const fromPlan = nextPlanTopicAfter(db, userId, roomId, afterTopicId);
+    if (fromPlan !== undefined) return fromPlan ?? nextIncompleteTopic(db, userId, roomId);
+  } else {
+    const fromPlan = nextPlanTopic(db, userId, roomId);
+    if (fromPlan) return fromPlan;
+  }
+  const topics = all<{ id: string; title: string; status: string | null }>(
     db,
-    `SELECT t.id, t.title, p.status, t.goal_id FROM topics t
+    `SELECT t.id, t.title, p.status FROM topics t
        LEFT JOIN topic_progress p ON p.topic_id = t.id AND p.user_id = ?
       WHERE t.room_id = ? AND t.created_by = ? AND t.status = 'active' ORDER BY t.position, t.created_at`,
     userId,
@@ -383,10 +387,7 @@ export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afte
   );
   const start = afterTopicId ? topics.findIndex((t) => t.id === afterTopicId) + 1 : 0;
   const ordered = [...topics.slice(start), ...topics.slice(0, start)];
-  const open = (t: (typeof topics)[number]) => t.id !== afterTopicId && t.status !== 'completed';
-  // Stay within the same goal first, then move on to the rest of the room.
-  const goalId = topics.find((t) => t.id === afterTopicId)?.goal_id;
-  const next = (goalId && ordered.find((t) => open(t) && t.goal_id === goalId)) || ordered.find(open);
+  const next = ordered.find((t) => t.id !== afterTopicId && t.status !== 'completed');
   return next ? { id: next.id, title: next.title } : null;
 }
 

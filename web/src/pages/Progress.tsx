@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { formatDate } from '@shared/dates';
 import type { ProgressStats, PublicUser, SessionRecord } from '@shared/types';
-import { useAction, useActivity, useFriends, useGoals, useMe, useProgress, useRooms, useSessions } from '../lib/queries';
+import { useAction, useActivity, useFriends, useMe, usePlans, useProgress, useRooms, useSessions } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { ErrorNote, Field, fmt, Menu, Modal, ProgressBar, Spinner } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
-import { GoalSummary } from '../components/GoalBits';
+import { PlanLine } from '../components/PlanBits';
 
 export function ProgressPage() {
   const { data: me } = useMe();
@@ -15,12 +15,12 @@ export function ProgressPage() {
   const friend = friends?.friends[0]?.user;
   const mine = useProgress();
   const theirs = useProgress(friend?.id);
-  const { data: goals } = useGoals();
+  const { data: plans } = usePlans();
   const { data: rooms } = useRooms();
   const { data: sessions } = useSessions();
   const { data: activity } = useActivity();
   const [correcting, setCorrecting] = useState<SessionRecord | null>(null);
-  const discard = useAction((id: string) => api.post(`/sessions/${id}/discard`), { invalidate: [['sessions'], ['progress'], ['rooms'], ['goals']], success: 'Session discarded (kept in history)' });
+  const discard = useAction((id: string) => api.post(`/sessions/${id}/discard`), { invalidate: [['sessions'], ['progress'], ['rooms'], ['plan'], ['plans']], success: 'Session discarded (kept in history)' });
 
   if (!me || mine.isLoading) return <Spinner />;
   if (mine.error || !mine.data) return <ErrorNote error={mine.error} retry={mine.refetch} />;
@@ -97,10 +97,10 @@ export function ProgressPage() {
             </Link>
           </div>
           <div className="stack">
-            {(goals ?? []).filter((g) => g.status === 'active').slice(0, 6).map((g) => (
-              <GoalSummary key={g.id} goal={g} accent={me.accent} />
+            {(plans ?? []).filter((p) => p.status === 'active').map((p) => (
+              <PlanLine key={p.id} plan={p} today={me.today} accent={me.accent} />
             ))}
-            {!(goals ?? []).some((g) => g.status === 'active') && <p className="small muted">No active goals.</p>}
+            {!(plans ?? []).some((p) => p.status === 'active') && <p className="small muted">No active goals.</p>}
           </div>
         </div>
         <div className="card">
@@ -195,7 +195,7 @@ function CorrectModal({ session, onClose }: { session: SessionRecord; onClose: (
   const [reason, setReason] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const save = useAction(() => api.post(`/sessions/${session.id}/correct`, { minutes: Math.round(Number(minutes)), reason }), {
-    invalidate: [['sessions'], ['progress'], ['rooms'], ['room'], ['goals']],
+    invalidate: [['sessions'], ['progress'], ['rooms'], ['room'], ['plan'], ['plans']],
     success: 'Session corrected — the original is kept in history',
     onSuccess: onClose,
     onError: (e: ApiError) => {

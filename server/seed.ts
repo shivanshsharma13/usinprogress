@@ -1,11 +1,11 @@
-// Development seed: two friends with rooms, topics, goals, sessions and calendar tasks.
+// Development seed: two friends with a shared room, a sprint plan each, sessions and calendar tasks.
 // Usage: npm run seed  (refuses to run in production or on a database that already has users)
 import { openDatabase, get, run, newId } from './db.ts';
 import { hashPassword } from './auth.ts';
-import { addDays, endOfMonth, localDate, startOfMonth, startOfWeek } from '../shared/dates.ts';
-import { createRoom, createTopic, completeTopic } from './services/rooms.ts';
+import { addDays, localDate } from '../shared/dates.ts';
+import { createRoom, completeTopic } from './services/rooms.ts';
 import { sendFriendRequest, respondToRequest, encourage } from './services/social.ts';
-import { createGoal } from './services/goals.ts';
+import { addTask, createPlan, pullSprint } from './services/plans.ts';
 import { createTask } from './services/tasks.ts';
 
 if (process.env.NODE_ENV === 'production') {
@@ -48,29 +48,39 @@ const mira = user('mira', 'Mira', 'doctor', 'Biochemistry, revision, and lots of
 const req = sendFriendRequest(db, asha, mira);
 respondToRequest(db, mira, req.id, true);
 
-// One shared room; each person keeps their own list of topics inside it.
-const room = createRoom(db, asha, { friendId: mira, name: 'Our 90-Day Growth Plan', description: 'DSA for Asha, biochemistry for Mira.', startDate: today, endDate: addDays(today, 90), color: 'sage' });
+// One shared room. Each person pulls the current sprint of their own plan into it.
+const room = createRoom(db, asha, { friendId: mira, name: 'Our 90-Day Growth Plan', description: 'DSA for Asha, medicine for Mira.', startDate: today, endDate: addDays(today, 90), color: 'sage' });
 
-// Each person's plan in the room: yearly → monthly → weekly goals, with topics under them.
-const year = today.slice(0, 4);
-const weekStart = startOfWeek(today);
-const thisYear = { startDate: `${year}-01-01`, deadline: `${year}-12-31` };
-const thisMonth = { startDate: startOfMonth(today), deadline: endOfMonth(today) };
-const thisWeek = { startDate: weekStart, deadline: addDays(weekStart, 6) };
+// Asha's plan: 11 sprints of 12 days, started 5 days ago, so today is Day 6.
+const gtfo = createPlan(db, asha, { title: 'GTFO 2026', startDate: addDays(today, -5), sprintDays: 12, sprintCount: 11 });
+const ashaDays: [string, number][][] = [
+  [['Set Matrix Zeroes', 30], ['Pascal’s Triangle', 20], ['Next Permutation (first try)', 30]],
+  [['Kadane’s Algorithm', 25], ['Sort 0s, 1s and 2s', 20]],
+  [['Stock Buy and Sell', 20], ['Rotate Matrix', 25]],
+  [['Merge Overlapping Intervals', 30]],
+  [['Merge Sorted Arrays', 25], ['Find the Duplicate', 20]],
+  [['Next Permutation', 26], ['Majority Element II', 25], ['Find the repeating and missing number', 41], ['Count Inversions', 23], ['Reverse Pairs', 31], ['Maximum Product Subarray', 18]],
+  [['Two Sum', 15], ['4 Sum', 30], ['Longest Consecutive Sequence', 25]],
+  [['Largest Subarray with 0 Sum', 25], ['Subarrays with XOR K', 30]],
+];
+ashaDays.forEach((tasks, day) => tasks.forEach(([title, est]) => addTask(db, asha, gtfo, { day, title, estMinutes: est })));
 
-const ashaYear = createGoal(db, asha, { roomId: room, title: 'Get interview-ready in DSA', period: 'yearly', ...thisYear });
-const ashaMonth = createGoal(db, asha, { roomId: room, title: 'Core data structures', period: 'monthly', ...thisMonth, parentId: ashaYear });
-const ashaWeek = createGoal(db, asha, { roomId: room, title: 'Searching and lists', period: 'weekly', ...thisWeek, parentId: ashaMonth });
-const miraYear = createGoal(db, mira, { roomId: room, title: 'Finish the medical syllabus', period: 'yearly', ...thisYear });
-const miraMonth = createGoal(db, mira, { roomId: room, title: 'Biochemistry units', period: 'monthly', ...thisMonth, parentId: miraYear });
+// Mira's plan: 6 sprints of 14 days, started 2 days ago.
+const med = createPlan(db, mira, { title: 'Medical syllabus 2026', startDate: addDays(today, -2), sprintDays: 14, sprintCount: 6 });
+const miraDays: [string, number][][] = [
+  [['Enzyme kinetics', 90], ['Michaelis–Menten questions', 40]],
+  [['Glycolysis', 80], ['TCA cycle', 60]],
+  [['Carbohydrate metabolism revision', 70], ['Lipid metabolism', 90], ['Pharmacology flashcards', 30]],
+  [['Amino acid metabolism', 90]],
+  [['Cardiovascular physiology', 120]],
+];
+miraDays.forEach((tasks, day) => tasks.forEach(([title, est]) => addTask(db, mira, med, { day, title, estMinutes: est })));
 
-const dsa = (title: string, est: number, goalId: string) =>
-  createTopic(db, asha, room, { title, estimatedMinutes: est, sessionTargetMinutes: 45, category: 'DSA', goalId });
-const dsaTopics = [dsa('Arrays', 120, ashaWeek), dsa('Binary Search', 180, ashaWeek), dsa('Linked Lists', 120, ashaWeek), dsa('Trees', 300, ashaMonth), dsa('Graphs', 360, ashaMonth)];
-const bioTopics = ['Enzyme kinetics', 'Carbohydrate metabolism', 'Lipid metabolism', 'Amino acids'].map((title) =>
-  createTopic(db, mira, room, { title, estimatedMinutes: 240, sessionTargetMinutes: 50, category: 'Biochemistry', goalId: miraMonth }),
-);
-for (const title of ['Physiology: cardiovascular system', 'Pharmacology flashcards']) createTopic(db, mira, room, { title, goalId: miraYear });
+pullSprint(db, asha, gtfo, 1, room);
+pullSprint(db, mira, med, 1, room);
+
+const topicOf = (planId: string, title: string) =>
+  get<{ topic_id: string }>(db, 'SELECT topic_id FROM plan_tasks WHERE plan_id = ? AND title = ?', planId, title)!.topic_id;
 
 // A few finished sessions so progress screens have something to show.
 function pastSession(userId: string, roomId: string, topicId: string, minutesAgo: number, minutes: number) {
@@ -92,19 +102,23 @@ function pastSession(userId: string, roomId: string, topicId: string, minutesAgo
   );
   run(db, "UPDATE topic_progress SET status = 'in_progress', updated_at = ? WHERE topic_id = ? AND user_id = ? AND status = 'not_started'", Date.now(), topicId, userId);
 }
-pastSession(asha, room, dsaTopics[0], 26 * 60, 50);
-pastSession(asha, room, dsaTopics[0], 90, 40);
-pastSession(asha, room, dsaTopics[1], 45, 25);
-pastSession(mira, room, bioTopics[0], 30 * 60, 55);
-pastSession(mira, room, bioTopics[0], 120, 45);
-pastSession(mira, room, bioTopics[1], 3 * 24 * 60, 30);
-completeTopic(db, asha, dsaTopics[0]);
-completeTopic(db, mira, bioTopics[0]);
+// Day 1 and Day 5 partly done, days 2–4 missed, today not started.
+pastSession(asha, room, topicOf(gtfo, 'Set Matrix Zeroes'), 5 * 24 * 60, 35);
+pastSession(asha, room, topicOf(gtfo, 'Pascal’s Triangle'), 5 * 24 * 60 - 60, 22);
+pastSession(asha, room, topicOf(gtfo, 'Merge Sorted Arrays'), 26 * 60, 28);
+completeTopic(db, asha, topicOf(gtfo, 'Set Matrix Zeroes'));
+completeTopic(db, asha, topicOf(gtfo, 'Pascal’s Triangle'));
+completeTopic(db, asha, topicOf(gtfo, 'Merge Sorted Arrays'));
+run(db, 'UPDATE plan_tasks SET starred = 1 WHERE plan_id = ? AND title IN (?, ?)', gtfo, 'Count Inversions', 'Reverse Pairs');
 
-createTask(db, asha, { title: 'Solve 5 binary search questions', date: today, roomId: room, topicId: dsaTopics[1], shared: true });
+pastSession(mira, room, topicOf(med, 'Enzyme kinetics'), 2 * 24 * 60, 85);
+pastSession(mira, room, topicOf(med, 'Glycolysis'), 24 * 60, 70);
+completeTopic(db, mira, topicOf(med, 'Enzyme kinetics'));
+completeTopic(db, mira, topicOf(med, 'Michaelis–Menten questions'));
+completeTopic(db, mira, topicOf(med, 'Glycolysis'));
+
 createTask(db, asha, { title: 'Mock interview prep', date: addDays(today, 2), startTime: '19:00', durationMinutes: 60, shared: true });
-createTask(db, mira, { title: 'Carbohydrate metabolism — first pass', date: today, roomId: room, topicId: bioTopics[1], shared: true, startTime: '18:30' });
-createTask(db, mira, { title: 'Revise enzyme kinetics', date: addDays(today, 1), roomId: room, topicId: bioTopics[0], shared: true });
+createTask(db, mira, { title: 'Ward rounds — light study day', date: addDays(today, 1), shared: true });
 
 encourage(db, mira, { recipientId: asha, reaction: 'proud' });
 

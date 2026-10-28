@@ -115,7 +115,6 @@ export interface Topic {
   estimatedMinutes: number | null;
   sessionTargetMinutes: number | null;
   deadline: string | null;
-  goalId: string | null;
   position: number;
   createdBy: string;
   status: 'active' | 'archived';
@@ -127,7 +126,7 @@ export interface RoomDetail extends RoomSummary {
   topics: Topic[];
   archivedTopics: Topic[];
   activity: Activity[];
-  goals: Goal[]; // both members' goals in this room
+  sprints: RoomSprint[]; // both members' sprints pulled into this room
 }
 
 export interface TopicHistoryEntry {
@@ -154,22 +153,65 @@ export interface SessionRecord {
   corrections: { oldMs: number; newMs: number; reason: string; createdAt: number }[];
 }
 
-/** A goal lives in a room; its progress is how many of its topics (and its smaller goals' topics) are done. */
-export interface Goal {
+// ───────────── Plans (goals): plan → sprints → days → tasks ─────────────
+
+export interface PlanTask {
   id: string;
-  ownerId: string;
+  day: number; // 0-based day of the plan
+  title: string;
+  estMinutes: number | null;
+  starred: boolean;
+  topicId: string | null; // set once the sprint is pulled into a room
+  done: boolean;
+  focusedMs: number;
+}
+
+export type DayStatus = 'upcoming' | 'today' | 'done' | 'partial' | 'missed' | 'rest';
+
+export interface PlanDay {
+  day: number; // 0-based day of the plan
+  number: number; // 1-based day of the plan, as shown ("Day 6")
+  date: string;
+  status: DayStatus;
+  tasks: PlanTask[];
+}
+
+export interface PlanSprint {
+  number: number;
+  startDate: string;
+  endDate: string;
   roomId: string | null;
   roomName: string | null;
+  completedAt: number | null;
+  done: number;
+  total: number;
+  days: PlanDay[];
+}
+
+export interface PlanSummary {
+  id: string;
   title: string;
-  description: string;
-  period: 'yearly' | 'monthly' | 'weekly' | 'custom';
   startDate: string;
-  deadline: string;
-  parentId: string | null;
-  status: 'active' | 'done' | 'archived';
-  doneAt: number | null;
-  progress: { done: number; total: number; percent: number };
-  childIds: string[];
+  endDate: string;
+  sprintDays: number;
+  sprintCount: number;
+  sprintsCompleted: number;
+  currentSprint: number | null; // the sprint covering today, if any
+  done: number;
+  total: number;
+  focusedMs: number;
+  status: 'active' | 'archived';
+}
+
+export interface Plan extends PlanSummary {
+  sprints: PlanSprint[];
+}
+
+/** A pulled sprint as shown in a room, for either member. */
+export interface RoomSprint extends PlanSprint {
+  planId: string;
+  planTitle: string;
+  ownerId: string;
 }
 
 export interface Task {
@@ -224,7 +266,7 @@ export interface HomeData {
     | null;
   friends: Friend[];
   today: { focusedMs: number; completedTopics: CompletionSummary[]; completedTasks: number };
-  goals: Goal[];
+  plans: PlanSummary[];
   rooms: RoomSummary[];
   upcoming: Task[];
   unread: number;

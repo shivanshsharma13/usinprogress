@@ -3,7 +3,6 @@ import { useFriend, useMe } from '../lib/queries';
 import { personVars } from '../lib/theme';
 import { Avatar, ErrorNote, fmt, LiveDot, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
 import { ActivityFeed, EncourageButtons } from '../components/Encourage';
-import { GoalSummary } from '../components/GoalBits';
 import { ChevronLeft } from '../components/icons';
 
 export function FriendPage() {
@@ -12,7 +11,7 @@ export function FriendPage() {
   const { data, isLoading, error, refetch } = useFriend(id);
   if (isLoading || !me) return <Spinner />;
   if (error || !data) return <ErrorNote error={error} retry={refetch} />;
-  const { user, status, goals, recentCompletions, rooms, activity, stats } = data;
+  const { user, status, recentCompletions, rooms, activity, stats } = data;
 
   return (
     <div className="stack-lg" style={personVars(user.accent)}>
@@ -58,20 +57,6 @@ export function FriendPage() {
                 <div className="small muted">topics completed</div>
               </div>
             </div>
-          </div>
-          <div className="card">
-            <div className="card-head">
-              <h2>Goals {user.displayName} shares</h2>
-            </div>
-            {goals.length ? (
-              <div className="stack">
-                {goals.map((g) => (
-                  <GoalSummary key={g.id} goal={g} accent={user.accent} />
-                ))}
-              </div>
-            ) : (
-              <p className="small muted">{user.displayName} hasn't shared any goals.</p>
-            )}
           </div>
         </div>
         <div className="stack-lg">

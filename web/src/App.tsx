@@ -13,6 +13,7 @@ const RoomsPage = lazy(() => import('./pages/Rooms').then((m) => ({ default: m.R
 const RoomPage = lazy(() => import('./pages/Room').then((m) => ({ default: m.RoomPage })));
 const StudyPage = lazy(() => import('./pages/Study').then((m) => ({ default: m.StudyPage })));
 const GoalsPage = lazy(() => import('./pages/Goals').then((m) => ({ default: m.GoalsPage })));
+const PlanPage = lazy(() => import('./pages/Plan').then((m) => ({ default: m.PlanPage })));
 const CalendarPage = lazy(() => import('./pages/Calendar').then((m) => ({ default: m.CalendarPage })));
 const FriendsPage = lazy(() => import('./pages/Friends').then((m) => ({ default: m.FriendsPage })));
 const FriendPage = lazy(() => import('./pages/Friend').then((m) => ({ default: m.FriendPage })));
@@ -64,6 +65,7 @@ export function App() {
               <Route path="/rooms/:id" element={<RoomPage />} />
               <Route path="/study" element={<StudyPage />} />
               <Route path="/goals" element={<GoalsPage />} />
+              <Route path="/goals/:id" element={<PlanPage />} />
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/friends" element={<FriendsPage />} />
               <Route path="/friends/:id" element={<FriendPage />} />

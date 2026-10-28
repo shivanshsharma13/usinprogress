@@ -10,11 +10,11 @@ import { REACTIONS } from '../shared/theme.ts';
 import { circleOf, getUser, listActivity, liveStatus, myRoomIds, requireTopicAccess, roomMemberIds, toMe, toPublicUser, activeSessionRow } from './services/core.ts';
 import * as rooms from './services/rooms.ts';
 import * as sessions from './services/sessions.ts';
-import * as goals from './services/goals.ts';
+import * as plans from './services/plans.ts';
 import * as tasks from './services/tasks.ts';
 import * as social from './services/social.ts';
 
-const EVERYTHING: Channel[] = ['me', 'friends', 'rooms', 'room', 'goals', 'calendar', 'activity', 'session', 'progress'];
+const EVERYTHING: Channel[] = ['me', 'friends', 'rooms', 'room', 'plans', 'calendar', 'activity', 'session', 'progress'];
 
 export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boolean }) {
   const r = Router();
@@ -27,7 +27,7 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
   const notifyWork = (userId: string, roomId?: string) => {
     const audience = new Set(circleOf(db, userId));
     if (roomId) for (const m of roomMemberIds(db, roomId)) audience.add(m);
-    notify(audience, ['session', 'friends', 'rooms', 'room', 'goals', 'progress', 'activity', 'calendar'], { roomId });
+    notify(audience, ['session', 'friends', 'rooms', 'room', 'plans', 'progress', 'activity', 'calendar'], { roomId });
   };
   const notifyRoom = (roomId: string, keys: Channel[] = ['rooms', 'room', 'activity']) => notify(roomMemberIds(db, roomId), keys, { roomId });
 
@@ -127,7 +127,7 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
     else if (action === 'cancel') f = social.cancelRequest(db, req.userId, id);
     else throw badRequest('Unknown action.');
     const me = getUser(db, req.userId);
-    notify([f.requester_id, f.recipient_id], ['friends', 'activity', 'rooms', 'calendar', 'goals'], {
+    notify([f.requester_id, f.recipient_id], ['friends', 'activity', 'rooms', 'calendar', 'plans'], {
       notice: action === 'accept' ? { kind: 'friend', text: `${me.display_name} accepted your friend request 🌱` } : undefined,
     });
     res.json({ ok: true });
@@ -140,7 +140,6 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
     res.json({
       user: toPublicUser(getUser(db, friendId)),
       status: liveStatus(db, req.userId, friendId),
-      goals: goals.listSharedGoals(db, req.userId, friendId),
       recentCompletions: social.recentCompletions(db, req.userId, friendId, 10),
       rooms: rooms.listRooms(db, req.userId).filter((room) => shared.includes(room.id)),
       activity: listActivity(db, req.userId, { withUserId: friendId, limit: 20 }),
@@ -173,7 +172,7 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
   r.post('/rooms', (req, res) => {
     const input = parse(v.roomCreateSchema, req.body);
     const id = rooms.createRoom(db, req.userId, input);
-    notifyRoom(id, ['rooms', 'room', 'activity', 'goals', 'friends']);
+    notifyRoom(id, ['rooms', 'room', 'activity', 'plans', 'friends']);
     res.status(201).json({ id });
   });
 
@@ -204,7 +203,7 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
     const id = String(req.params.id);
     rooms.updateTopic(db, req.userId, id, parse(v.topicUpdateSchema, req.body));
     const { room } = requireTopicAccess(db, id, req.userId);
-    notifyRoom(room.id, ['rooms', 'room', 'goals', 'calendar']);
+    notifyRoom(room.id, ['rooms', 'room', 'plans', 'calendar']);
     res.json({ ok: true });
   });
 
@@ -212,7 +211,7 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
     const id = String(req.params.id);
     rooms.archiveTopic(db, req.userId, id);
     const { room } = requireTopicAccess(db, id, req.userId);
-    notifyRoom(room.id, ['rooms', 'room', 'goals', 'calendar']);
+    notifyRoom(room.id, ['rooms', 'room', 'plans', 'calendar']);
     res.json({ ok: true });
   });
 
@@ -301,34 +300,64 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
     res.json({ ok: true });
   });
 
-  // ───────────── Goals ─────────────
+  // ───────────── Goals (plans → sprints → days → tasks) ─────────────
 
-  r.get('/goals', (req, res) => res.json({ goals: goals.listMyGoals(db, req.userId) }));
-  r.get('/goals/shared/:userId', (req, res) => res.json({ goals: goals.listSharedGoals(db, req.userId, String(req.params.userId)) }));
+  // A plan change can show up in a room (pulled sprints), so friends refetch too. Events carry no data.
+  const notifyPlan = (req: Request) => notify(circleOf(db, req.userId), ['plans', 'room', 'rooms', 'session', 'progress']);
+  const sprintNumber = (req: Request) => Number.parseInt(String(req.params.n), 10);
 
-  r.post('/goals', (req, res) => {
-    const id = goals.createGoal(db, req.userId, parse(v.goalCreateSchema, req.body));
-    notify(circleOf(db, req.userId), ['goals', 'room', 'activity']);
+  r.get('/plans', (req, res) => res.json({ plans: plans.listPlans(db, req.userId) }));
+  r.get('/plans/:id', (req, res) => res.json({ plan: plans.getPlan(db, req.userId, String(req.params.id)) }));
+
+  r.post('/plans', (req, res) => {
+    const id = plans.createPlan(db, req.userId, parse(v.planCreateSchema, req.body));
+    notifyPlan(req);
     res.status(201).json({ id });
   });
 
-  r.patch('/goals/:id', (req, res) => {
-    goals.updateGoal(db, req.userId, String(req.params.id), parse(v.goalUpdateSchema, req.body));
-    notify(circleOf(db, req.userId), ['goals', 'room', 'activity', 'calendar']);
+  r.patch('/plans/:id', (req, res) => {
+    plans.updatePlan(db, req.userId, String(req.params.id), parse(v.planUpdateSchema, req.body));
+    notifyPlan(req);
     res.json({ ok: true });
   });
 
-  r.delete('/goals/:id', (req, res) => {
-    goals.archiveGoal(db, req.userId, String(req.params.id));
-    notify(circleOf(db, req.userId), ['goals', 'room', 'calendar']);
+  r.post('/plans/:id/sprints/:n/pull', (req, res) => {
+    const roomId = plans.pullSprint(db, req.userId, String(req.params.id), sprintNumber(req), parse(v.pullSprintSchema, req.body).roomId);
+    notifyPlan(req);
+    notifyRoom(roomId, ['rooms', 'room', 'plans']);
+    res.json({ roomId });
+  });
+
+  r.post('/plans/:id/sprints/:n/:action', (req, res) => {
+    const action = req.params.action;
+    if (action !== 'complete' && action !== 'reopen') throw badRequest('Unknown action.');
+    plans.setSprintCompleted(db, req.userId, String(req.params.id), sprintNumber(req), action === 'complete');
+    notifyPlan(req);
+    res.json({ ok: true });
+  });
+
+  r.post('/plans/:id/tasks', (req, res) => {
+    const id = plans.addTask(db, req.userId, String(req.params.id), parse(v.planTaskCreateSchema, req.body));
+    notifyPlan(req);
+    res.status(201).json({ id });
+  });
+
+  r.patch('/plan-tasks/:id', (req, res) => {
+    plans.updateTask(db, req.userId, String(req.params.id), parse(v.planTaskUpdateSchema, req.body));
+    notifyPlan(req);
+    res.json({ ok: true });
+  });
+
+  r.delete('/plan-tasks/:id', (req, res) => {
+    plans.removeTask(db, req.userId, String(req.params.id));
+    notifyPlan(req);
     res.json({ ok: true });
   });
 
   // ───────────── Tasks / calendar ─────────────
 
-  // Friends are always told to refetch: a task may sit inside a goal they can see. The event
-  // carries no task data, so private tasks stay private.
-  const notifyTask = (req: Request) => notify(circleOf(db, req.userId), ['calendar', 'goals', 'session', 'progress']);
+  // Friends refetch too (a task may be shared with them). Events carry no task data.
+  const notifyTask = (req: Request) => notify(circleOf(db, req.userId), ['calendar', 'session', 'progress']);
 
   r.get('/tasks', (req, res) => {
     const today = localDate(Date.now(), getUser(db, req.userId).timezone);

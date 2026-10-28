@@ -81,7 +81,6 @@ export const topicCreateSchema = z.object({
   estimatedMinutes: minutes.nullable().optional(),
   sessionTargetMinutes: minutes.max(600).nullable().optional(),
   deadline: date.nullable().optional(),
-  goalId: z.string().nullable().optional(),
 });
 
 export const topicUpdateSchema = topicCreateSchema.partial().extend({
@@ -114,28 +113,33 @@ export const sessionCorrectSchema = z.object({
   reason: text(200).optional(),
 });
 
-export const goalCreateSchema = z
-  .object({
-    roomId: z.string().min(1, 'Choose a room'),
-    title,
-    description: text(1000).optional(),
-    period: z.enum(['yearly', 'monthly', 'weekly', 'custom']),
-    startDate: date,
-    deadline: date,
-    parentId: z.string().nullable().optional(),
-  })
-  .refine((g) => g.deadline >= g.startDate, { message: 'The deadline must be after the start date', path: ['deadline'] });
-
-export const goalUpdateSchema = z.object({
-  roomId: z.string().min(1).optional(),
-  title: title.optional(),
-  description: text(1000).optional(),
-  period: z.enum(['yearly', 'monthly', 'weekly', 'custom']).optional(),
-  startDate: date.optional(),
-  deadline: date.optional(),
-  parentId: z.string().nullable().optional(),
-  status: z.enum(['active', 'done', 'archived']).optional(),
+export const planCreateSchema = z.object({
+  title,
+  startDate: date,
+  sprintDays: z.number().int().min(1, 'At least 1 day').max(60, 'Up to 60 days'),
+  sprintCount: z.number().int().min(1, 'At least 1 sprint').max(100, 'Up to 100 sprints'),
 });
+
+export const planUpdateSchema = z.object({
+  title: title.optional(),
+  sprintCount: z.number().int().min(1).max(100).optional(),
+  status: z.enum(['active', 'archived']).optional(),
+});
+
+export const planTaskCreateSchema = z.object({
+  day: z.number().int().min(0),
+  title,
+  estMinutes: minutes.max(24 * 60).nullable().optional(),
+});
+
+export const planTaskUpdateSchema = z.object({
+  day: z.number().int().min(0).optional(),
+  title: title.optional(),
+  estMinutes: minutes.max(24 * 60).nullable().optional(),
+  starred: z.boolean().optional(),
+});
+
+export const pullSprintSchema = z.object({ roomId: z.string().min(1, 'Choose a room') });
 
 export const taskCreateSchema = z.object({
   title,

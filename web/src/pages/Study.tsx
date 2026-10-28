@@ -59,7 +59,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
   const target = session.targetMinutes;
   const paused = session.state === 'paused';
 
-  const inv = [['session'], ['room', session.roomId], ['rooms'], ['goals'], ['progress'], ['sessions'], ['tasks']];
+  const inv = [['session'], ['room', session.roomId], ['rooms'], ['plan'], ['plans'], ['progress'], ['sessions'], ['tasks']];
   const setSession = (s: ActiveSession) => qc.setQueryData<any>(['session'], s);
 
   const pause = useAction(() => api.post<{ session: ActiveSession }>(`/sessions/${session.id}/${paused ? 'resume' : 'pause'}`), {
