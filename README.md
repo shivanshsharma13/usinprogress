@@ -18,7 +18,8 @@ out of the room until you schedule it again ("Do today" or pick a day). Past day
 
 ## Quick start
 
-Requirements: **Node.js 22.13+** (built and tested on Node 24). No database server, no Docker.
+Requirements: **Node.js 22.13+** (built and tested on Node 24). For local development no database server is
+needed: data is kept in a local PGlite database (real Postgres running in-process) in `./data/pglite`.
 
 ```bash
 npm install
@@ -34,9 +35,24 @@ npm run dev
 
 Open the URL Vite prints (normally http://localhost:5173 — it picks the next free port if that one is
 busy). The seed creates two demo friends, **asha** (engineer, blue) and **mira** (doctor, pink), both with
-the password `garden-demo-1`. These are development-only accounts; delete `./data` to start fresh.
+the password `garden-demo-1`. These are development-only accounts; delete `./data` to start fresh. (The seed
+refuses to write into a real Postgres such as Supabase unless you set `SEED_ALLOW_REMOTE=true`.)
 
 To try both sides at once, sign in as `asha` in one browser and `mira` in a private window.
+
+### Storing data in Supabase
+
+1. In your Supabase project, open **Connect** and copy the **Session pooler** connection string
+   (`postgresql://postgres.<ref>:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres`).
+2. Copy `.env.example` to `.env` and set `DATABASE_URL` to that string, with your database password filled in.
+   Keep `.env` private; it's git-ignored.
+3. Start the app (`npm run dev` or `npm start`). On first start it creates all tables itself (see
+   `server/migrations/001_schema.sql`); the startup log says `data: Postgres (DATABASE_URL)`.
+
+The browser never talks to Supabase directly: only the app's server does, with the connection string. The
+schema turns on row-level security (with no policies) for every table, so Supabase's public API keys can't read
+or change any of it. TLS is always on for hosted databases; set `DATABASE_SSL_CA` to Supabase's CA certificate
+to also verify the server's identity.
 
 ### Production build
 
@@ -58,8 +74,9 @@ npm start
 npm test
 ```
 
-Runs the acceptance suite (`tests/acceptance.test.ts`) against a real HTTP server with an in-memory
-database, plus unit tests for the timer math.
+Runs the acceptance suite (`tests/acceptance.test.ts`) against a real HTTP server with an in-memory Postgres
+(PGlite), plus unit tests for the timer math. To run the same suite against a real, **empty** Postgres server,
+set `TEST_DATABASE_URL`. `npm run lint` checks the server for forgotten `await`s.
 
 ---
 
@@ -68,7 +85,7 @@ database, plus unit tests for the timer math.
 | Layer | Choice | Reason |
 | --- | --- | --- |
 | Server | Node 24 + Express 5, TypeScript run directly by Node (type stripping) | One small process; no build step for the server |
-| Database | SQLite via Node's built-in `node:sqlite` | Durable, transactional, zero setup, no native dependencies. Perfect for a two-person app |
+| Database | **Postgres** — Supabase in production (`DATABASE_URL`), PGlite (Postgres in-process) for development and tests | One SQL dialect everywhere; transactions, partial unique indexes and triggers enforce the rules |
 | Auth | Username + password, **scrypt** hashes, random session tokens in HttpOnly SameSite cookies (only SHA-256 of the token is stored) | Real accounts without fake email addresses or third-party services |
 | Realtime | Server-Sent Events | One-way "something changed" pushes; clients refetch from the database, so the server stays the only source of truth and reconnects can't duplicate anything |
 | Frontend | React 18 + Vite + TanStack Query + React Router | Simple data fetching with cache invalidation driven by realtime events |
@@ -82,7 +99,7 @@ No microservices, no external infrastructure.
 server/
   index.ts            process entry (env, listen, shutdown)
   app.ts              Express app factory (used by tests too)
-  db.ts               SQLite connection, migrations, transaction helper
+  db.ts               Postgres (pg / PGlite), migrations, transaction helper
   migrations/         SQL schema (001_init.sql)
   auth.ts             password hashing, sessions, same-origin + rate-limit guards
   realtime.ts         SSE hub
@@ -195,8 +212,9 @@ reconnect the client refetches everything, and a small indicator shows "Reconnec
 
 ## What was verified
 
-- `npm run typecheck` and `npm run build` succeed.
-- `npm test` — 22 tests pass, covering every acceptance criterion in the spec that can be checked through the
+- `npm run typecheck`, `npm run lint` and `npm run build` succeed.
+- `npm test` — 23 tests pass, both on PGlite and on a real Postgres 15 server through the `pg` driver (the path
+  Supabase uses), covering every acceptance criterion in the spec that can be checked through the
   API: two accounts and sign-in, search/request/accept with duplicate and wrong-recipient guards, rooms only
   between friends and only two members, independent topic progress, live partner status over SSE, pause
   excluding paused time, refresh recovery, complete → next topic not started, finish without completion,
@@ -211,8 +229,10 @@ reconnect the client refetches everything, and a small indicator shows "Reconnec
 
 ## Known limitations
 
-- Single server process: SQLite and the in-memory SSE hub assume one instance (fine for this app; to scale
-  out you'd move to Postgres and a pub/sub channel).
+- Single server process: the live-update hub is in memory and transactions are serialised per process, so run
+  one instance (plenty for this app). Scaling out would need a pub/sub channel such as Postgres LISTEN/NOTIFY.
+- Moving from the earlier SQLite version: existing SQLite data isn't copied over automatically; the Postgres
+  database starts empty.
 - The one-hour reminder works while the app is open in a tab (in-app toast, plus a browser notification if
   you allow it). There are no closed-browser push notifications.
 - Avatars are built-in study-buddy characters with accessories; image upload isn't implemented.

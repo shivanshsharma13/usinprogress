@@ -22,17 +22,17 @@ import { nextPlanTopic, nextPlanTopicAfter, roomSprints } from './plans.ts';
 
 // ───────────── Rooms ─────────────
 
-export function createRoom(
+export async function createRoom(
   db: DB,
   userId: string,
   input: { friendId: string; name: string; description?: string; startDate: string; endDate: string; color?: string },
-): string {
+): Promise<string> {
   if (input.friendId === userId) throw badRequest('Choose a friend to share this room with.');
-  if (!areFriends(db, userId, input.friendId)) throw forbidden('You can only create rooms with accepted friends.');
-  return transaction(db, () => {
+  if (!await areFriends(db, userId, input.friendId)) throw forbidden('You can only create rooms with accepted friends.');
+  return await transaction(db, async () => {
     const id = newId();
     const now = Date.now();
-    run(
+    await run(
       db,
       'INSERT INTO rooms (id, name, description, start_date, end_date, color, creator_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       id,
@@ -45,19 +45,19 @@ export function createRoom(
       now,
       now,
     );
-    run(db, 'INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', id, userId, now);
-    run(db, 'INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', id, input.friendId, now);
-    recordActivity(db, { actorId: userId, type: 'room_created', roomId: id, refId: id });
+    await run(db, 'INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', id, userId, now);
+    await run(db, 'INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', id, input.friendId, now);
+    await recordActivity(db, { actorId: userId, type: 'room_created', roomId: id, refId: id });
     return id;
   });
 }
 
-export function updateRoom(db: DB, userId: string, roomId: string, input: Partial<{ name: string; description: string; startDate: string; endDate: string; color: string; status: 'active' | 'archived' }>) {
-  const room = requireRoomMember(db, roomId, userId);
+export async function updateRoom(db: DB, userId: string, roomId: string, input: Partial<{ name: string; description: string; startDate: string; endDate: string; color: string; status: 'active' | 'archived' }>) {
+  const room = await requireRoomMember(db, roomId, userId);
   const start = input.startDate ?? room.start_date;
   const end = input.endDate ?? room.end_date;
   if (end < start) throw badRequest('The end date must be after the start date.');
-  run(
+  await run(
     db,
     'UPDATE rooms SET name = ?, description = ?, start_date = ?, end_date = ?, color = ?, status = ?, updated_at = ? WHERE id = ?',
     input.name ?? room.name,
@@ -79,24 +79,24 @@ interface ProgressRow {
 }
 
 /** Topics for the given rooms with each member's independent progress and recorded time. */
-function loadTopics(db: DB, roomIds: string[], includeArchived: boolean): Topic[] {
+async function loadTopics(db: DB, roomIds: string[], includeArchived: boolean): Promise<Topic[]> {
   if (!roomIds.length) return [];
   const ph = placeholders(roomIds.length);
-  const topics = all<TopicRow & { plan_task_id: string | null }>(
+  const topics = await all<TopicRow & { plan_task_id: string | null }>(
     db,
     `SELECT t.*, pt.id AS plan_task_id FROM topics t LEFT JOIN plan_tasks pt ON pt.topic_id = t.id AND pt.status = 'active'
       WHERE t.room_id IN (${ph}) ${includeArchived ? '' : "AND t.status = 'active'"} ORDER BY t.position, t.created_at`,
     ...roomIds,
   );
   if (!topics.length) return [];
-  const progress = all<ProgressRow>(db, `SELECT p.* FROM topic_progress p JOIN topics t ON t.id = p.topic_id WHERE t.room_id IN (${ph})`, ...roomIds);
-  const firsts = all<{ topic_id: string; user_id: string; completed_at: number }>(
+  const progress = await all<ProgressRow>(db, `SELECT p.* FROM topic_progress p JOIN topics t ON t.id = p.topic_id WHERE t.room_id IN (${ph})`, ...roomIds);
+  const firsts = await all<{ topic_id: string; user_id: string; completed_at: number }>(
     db,
     `SELECT c.topic_id, c.user_id, c.completed_at FROM topic_completions c JOIN topics t ON t.id = c.topic_id
       WHERE t.room_id IN (${ph}) AND c.kind = 'first' AND c.revoked_at IS NULL`,
     ...roomIds,
   );
-  const time = all<{ topic_id: string; user_id: string; ms: number; n: number }>(
+  const time = await all<{ topic_id: string; user_id: string; ms: number; n: number }>(
     db,
     `SELECT topic_id, user_id, SUM(focused_ms) AS ms, COUNT(*) AS n FROM study_sessions
       WHERE room_id IN (${ph}) AND state = 'finished' GROUP BY topic_id, user_id`,
@@ -144,15 +144,15 @@ function isDone(p: TopicMemberProgress | undefined) {
   return Boolean(p && (p.status === 'completed' || p.firstCompletedAt));
 }
 
-function summarize(db: DB, viewerId: string, room: RoomRow, topics: Topic[]): RoomSummary {
-  const memberIds = roomMemberIds(db, room.id);
+async function summarize(db: DB, viewerId: string, room: RoomRow, topics: Topic[]): Promise<RoomSummary> {
+  const memberIds = await roomMemberIds(db, room.id);
   // The viewer first, then their partner, so "me" is always on the left.
   memberIds.sort((a, b) => (a === viewerId ? -1 : b === viewerId ? 1 : 0));
-  const users = getUsers(db, memberIds);
+  const users = await getUsers(db, memberIds);
   const active = topics.filter((t) => t.status === 'active');
   // Today's plan task comes first; otherwise the first of your open topics in this room.
   const mine = active.filter((t) => t.createdBy === viewerId);
-  const next = nextPlanTopic(db, viewerId, room.id) ?? mine.find((t) => !t.planTaskId && (!isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising'));
+  const next = await nextPlanTopic(db, viewerId, room.id) ?? mine.find((t) => !t.planTaskId && (!isDone(t.progress[viewerId]) || t.progress[viewerId]?.status === 'revising'));
   return {
     id: room.id,
     name: room.name,
@@ -163,63 +163,63 @@ function summarize(db: DB, viewerId: string, room: RoomRow, topics: Topic[]): Ro
     status: room.status,
     createdBy: room.creator_id,
     createdAt: room.created_at,
-    members: memberIds.map((uid) => ({
+    members: await Promise.all(memberIds.map(async (uid) => ({
       user: toPublicUser(users.get(uid)!),
       completed: active.filter((t) => t.createdBy === uid && isDone(t.progress[uid])).length,
       total: active.filter((t) => t.createdBy === uid).length,
       focusedMs: topics.reduce((sum, t) => sum + (t.progress[uid]?.focusedMs ?? 0), 0),
-      status: liveStatus(db, viewerId, uid),
-    })),
+      status: await liveStatus(db, viewerId, uid),
+    }))),
     nextTopic: next ? { id: next.id, title: next.title } : null,
   };
 }
 
-export function listRooms(db: DB, userId: string): RoomSummary[] {
-  const rooms = all<RoomRow>(
+export async function listRooms(db: DB, userId: string): Promise<RoomSummary[]> {
+  const rooms = await all<RoomRow>(
     db,
     `SELECT r.* FROM rooms r JOIN room_members m ON m.room_id = r.id
       WHERE m.user_id = ? AND m.status = 'active' ORDER BY r.status, r.updated_at DESC`,
     userId,
   );
-  const topics = loadTopics(db, rooms.map((r) => r.id), true);
-  return rooms.map((r) => summarize(db, userId, r, topics.filter((t) => t.roomId === r.id)));
+  const topics = await loadTopics(db, rooms.map((r) => r.id), true);
+  return Promise.all(rooms.map((r) => summarize(db, userId, r, topics.filter((t) => t.roomId === r.id))));
 }
 
-export function roomDetail(db: DB, userId: string, roomId: string): RoomDetail {
-  const room = requireRoomMember(db, roomId, userId);
-  const topics = loadTopics(db, [roomId], true);
+export async function roomDetail(db: DB, userId: string, roomId: string): Promise<RoomDetail> {
+  const room = await requireRoomMember(db, roomId, userId);
+  const topics = await loadTopics(db, [roomId], true);
   return {
-    ...summarize(db, userId, room, topics),
+    ...await summarize(db, userId, room, topics),
     topics: topics.filter((t) => t.status === 'active'),
     archivedTopics: topics.filter((t) => t.status === 'archived'),
-    activity: listActivity(db, userId, { roomId, limit: 15 }),
-    sprints: roomSprints(db, roomId),
+    activity: await listActivity(db, userId, { roomId, limit: 15 }),
+    sprints: await roomSprints(db, roomId),
   };
 }
 
 // ───────────── Topics ─────────────
 
-function topicEvent(db: DB, topicId: string, userId: string, type: string, detail: Record<string, unknown> = {}) {
-  run(db, 'INSERT INTO topic_events (id, topic_id, user_id, type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)', newId(), topicId, userId, type, JSON.stringify(detail), Date.now());
+async function topicEvent(db: DB, topicId: string, userId: string, type: string, detail: Record<string, unknown> = {}) {
+  await run(db, 'INSERT INTO topic_events (id, topic_id, user_id, type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)', newId(), topicId, userId, type, JSON.stringify(detail), Date.now());
 }
 
-export function ensureProgress(db: DB, topicId: string, userId: string) {
-  run(db, "INSERT OR IGNORE INTO topic_progress (topic_id, user_id, status, updated_at) VALUES (?, ?, 'not_started', ?)", topicId, userId, Date.now());
+export async function ensureProgress(db: DB, topicId: string, userId: string) {
+  await run(db, "INSERT INTO topic_progress (topic_id, user_id, status, updated_at) VALUES (?, ?, 'not_started', ?) ON CONFLICT (topic_id, user_id) DO NOTHING", topicId, userId, Date.now());
 }
 
-export function createTopic(
+export async function createTopic(
   db: DB,
   userId: string,
   roomId: string,
   input: { title: string; description?: string; category?: string; estimatedMinutes?: number | null; sessionTargetMinutes?: number | null; deadline?: string | null },
-): string {
-  const room = requireRoomMember(db, roomId, userId);
+): Promise<string> {
+  const room = await requireRoomMember(db, roomId, userId);
   if (room.status === 'archived') throw badRequest('This room is archived. Reopen it to add topics.');
-  return transaction(db, () => {
+  return await transaction(db, async () => {
     const id = newId();
     const now = Date.now();
-    const last = get<{ p: number | null }>(db, 'SELECT MAX(position) AS p FROM topics WHERE room_id = ?', roomId);
-    run(
+    const last = await get<{ p: number | null }>(db, 'SELECT MAX(position) AS p FROM topics WHERE room_id = ?', roomId);
+    await run(
       db,
       `INSERT INTO topics (id, room_id, title, description, category, estimated_minutes, session_target_minutes, deadline, position, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -236,19 +236,19 @@ export function createTopic(
       now,
       now,
     );
-    ensureProgress(db, id, userId);
-    topicEvent(db, id, userId, 'created', { title: input.title });
+    await ensureProgress(db, id, userId);
+    await topicEvent(db, id, userId, 'created', { title: input.title });
     return id;
   });
 }
 
-export function updateTopic(
+export async function updateTopic(
   db: DB,
   userId: string,
   topicId: string,
   input: Partial<{ title: string; description: string; category: string; estimatedMinutes: number | null; sessionTargetMinutes: number | null; deadline: string | null; status: 'active' | 'archived' }>,
 ) {
-  const { topic } = requireOwnTopic(db, topicId, userId);
+  const { topic } = await requireOwnTopic(db, topicId, userId);
   const changes: Record<string, unknown> = {};
   const next = {
     title: input.title ?? topic.title,
@@ -261,8 +261,8 @@ export function updateTopic(
   };
   for (const [k, v] of Object.entries(next)) if ((topic as any)[k] !== v) changes[k] = { from: (topic as any)[k], to: v };
   if (!Object.keys(changes).length) return;
-  transaction(db, () => {
-    run(
+  await transaction(db, async () => {
+    await run(
       db,
       `UPDATE topics SET title = ?, description = ?, category = ?, estimated_minutes = ?, session_target_minutes = ?, deadline = ?, status = ?, updated_at = ? WHERE id = ?`,
       next.title,
@@ -276,23 +276,23 @@ export function updateTopic(
       topicId,
     );
     const type = input.status && input.status !== topic.status ? (input.status === 'archived' ? 'archived' : 'restored') : 'edited';
-    topicEvent(db, topicId, userId, type, changes);
+    await topicEvent(db, topicId, userId, type, changes);
   });
 }
 
 /** Archiving keeps every session, completion and event — topics are never hard-deleted. */
-export function archiveTopic(db: DB, userId: string, topicId: string) {
-  const { topic } = requireOwnTopic(db, topicId, userId);
-  const active = get(db, "SELECT 1 FROM study_sessions WHERE topic_id = ? AND state IN ('running', 'paused')", topicId);
+export async function archiveTopic(db: DB, userId: string, topicId: string) {
+  const { topic } = await requireOwnTopic(db, topicId, userId);
+  const active = await get(db, "SELECT 1 FROM study_sessions WHERE topic_id = ? AND state IN ('running', 'paused')", topicId);
   if (active) throw conflict('Someone is studying this topic right now. Try again after their session.');
-  if (topic.status !== 'archived') updateTopic(db, userId, topicId, { status: 'archived' });
+  if (topic.status !== 'archived') await updateTopic(db, userId, topicId, { status: 'archived' });
 }
 
-export function reorderTopics(db: DB, userId: string, roomId: string, topicIds: string[]) {
-  requireRoomMember(db, roomId, userId);
+export async function reorderTopics(db: DB, userId: string, roomId: string, topicIds: string[]) {
+  await requireRoomMember(db, roomId, userId);
   // Reorders a group of your own topics (e.g. one goal's list) among the positions they already hold.
   const rows = topicIds.length
-    ? all<{ id: string; position: number }>(
+    ? await all<{ id: string; position: number }>(
         db,
         `SELECT id, position FROM topics WHERE room_id = ? AND created_by = ? AND status = 'active' AND id IN (${placeholders(topicIds.length)})`,
         roomId,
@@ -304,8 +304,8 @@ export function reorderTopics(db: DB, userId: string, roomId: string, topicIds: 
     throw badRequest('The topic list changed. Please refresh and try again.', 'STALE_ORDER');
   }
   const slots = rows.map((r) => r.position).sort((a, b) => a - b);
-  transaction(db, () => {
-    topicIds.forEach((id, i) => run(db, 'UPDATE topics SET position = ? WHERE id = ?', slots[i], id));
+  await transaction(db, async () => {
+    for (const [i, id] of topicIds.entries()) await run(db, 'UPDATE topics SET position = ? WHERE id = ?', slots[i], id);
   });
 }
 
@@ -313,17 +313,17 @@ export function reorderTopics(db: DB, userId: string, roomId: string, topicIds: 
  * Marks a topic complete for this user only. Idempotent: completing an already-completed topic
  * changes nothing, so retries after a dropped connection never double count.
  */
-export function completeTopic(db: DB, userId: string, topicId: string): { alreadyCompleted: boolean } {
-  const { topic, room } = requireOwnTopic(db, topicId, userId);
+export async function completeTopic(db: DB, userId: string, topicId: string): Promise<{ alreadyCompleted: boolean }> {
+  const { topic, room } = await requireOwnTopic(db, topicId, userId);
   if (topic.status !== 'active') throw badRequest('This topic is archived.');
-  return transaction(db, () => {
-    ensureProgress(db, topicId, userId);
-    const progress = get<{ status: string }>(db, 'SELECT status FROM topic_progress WHERE topic_id = ? AND user_id = ?', topicId, userId)!;
+  return await transaction(db, async () => {
+    await ensureProgress(db, topicId, userId);
+    const progress = (await get<{ status: string }>(db, 'SELECT status FROM topic_progress WHERE topic_id = ? AND user_id = ?', topicId, userId))!;
     if (progress.status === 'completed') return { alreadyCompleted: true };
     const now = Date.now();
-    const hasFirst = get(db, "SELECT 1 FROM topic_completions WHERE topic_id = ? AND user_id = ? AND kind = 'first' AND revoked_at IS NULL", topicId, userId);
+    const hasFirst = await get(db, "SELECT 1 FROM topic_completions WHERE topic_id = ? AND user_id = ? AND kind = 'first' AND revoked_at IS NULL", topicId, userId);
     const kind = hasFirst ? 'revision' : 'first';
-    run(
+    await run(
       db,
       'INSERT INTO topic_completions (id, topic_id, user_id, kind, completed_at, local_date) VALUES (?, ?, ?, ?, ?, ?)',
       newId(),
@@ -331,11 +331,11 @@ export function completeTopic(db: DB, userId: string, topicId: string): { alread
       userId,
       kind,
       now,
-      localDate(now, getUser(db, userId).timezone),
+      localDate(now, (await getUser(db, userId)).timezone),
     );
-    run(db, "UPDATE topic_progress SET status = 'completed', completed_at = ?, updated_at = ? WHERE topic_id = ? AND user_id = ?", now, now, topicId, userId);
-    topicEvent(db, topicId, userId, kind === 'first' ? 'completed' : 'revision_completed');
-    if (kind === 'first') recordActivity(db, { actorId: userId, type: 'topic_completed', roomId: room.id, refId: topicId });
+    await run(db, "UPDATE topic_progress SET status = 'completed', completed_at = ?, updated_at = ? WHERE topic_id = ? AND user_id = ?", now, now, topicId, userId);
+    await topicEvent(db, topicId, userId, kind === 'first' ? 'completed' : 'revision_completed');
+    if (kind === 'first') await recordActivity(db, { actorId: userId, type: 'topic_completed', roomId: room.id, refId: topicId });
     return { alreadyCompleted: false };
   });
 }
@@ -345,23 +345,23 @@ export function completeTopic(db: DB, userId: string, topicId: string): { alread
  *  - 'revise': study it again; the original completion still counts toward goals.
  *  - 'undo':   it was marked complete by mistake; the completion is revoked (kept for audit).
  */
-export function reopenTopic(db: DB, userId: string, topicId: string, mode: 'revise' | 'undo') {
-  requireOwnTopic(db, topicId, userId);
-  transaction(db, () => {
-    ensureProgress(db, topicId, userId);
+export async function reopenTopic(db: DB, userId: string, topicId: string, mode: 'revise' | 'undo') {
+  await requireOwnTopic(db, topicId, userId);
+  await transaction(db, async () => {
+    await ensureProgress(db, topicId, userId);
     const now = Date.now();
     if (mode === 'undo') {
-      const last = get<{ id: string }>(db, 'SELECT id FROM topic_completions WHERE topic_id = ? AND user_id = ? AND revoked_at IS NULL ORDER BY completed_at DESC LIMIT 1', topicId, userId);
+      const last = await get<{ id: string }>(db, 'SELECT id FROM topic_completions WHERE topic_id = ? AND user_id = ? AND revoked_at IS NULL ORDER BY completed_at DESC LIMIT 1', topicId, userId);
       if (!last) throw badRequest('This topic is not complete.');
-      run(db, 'UPDATE topic_completions SET revoked_at = ? WHERE id = ?', now, last.id);
-      const remaining = get(db, 'SELECT 1 FROM topic_completions WHERE topic_id = ? AND user_id = ? AND revoked_at IS NULL', topicId, userId);
-      run(db, 'UPDATE topic_progress SET status = ?, completed_at = NULL, updated_at = ? WHERE topic_id = ? AND user_id = ?', remaining ? 'revising' : 'in_progress', now, topicId, userId);
-      topicEvent(db, topicId, userId, 'completion_undone');
+      await run(db, 'UPDATE topic_completions SET revoked_at = ? WHERE id = ?', now, last.id);
+      const remaining = await get(db, 'SELECT 1 FROM topic_completions WHERE topic_id = ? AND user_id = ? AND revoked_at IS NULL', topicId, userId);
+      await run(db, 'UPDATE topic_progress SET status = ?, completed_at = NULL, updated_at = ? WHERE topic_id = ? AND user_id = ?', remaining ? 'revising' : 'in_progress', now, topicId, userId);
+      await topicEvent(db, topicId, userId, 'completion_undone');
     } else {
-      const p = get<{ status: string }>(db, 'SELECT status FROM topic_progress WHERE topic_id = ? AND user_id = ?', topicId, userId)!;
+      const p = (await get<{ status: string }>(db, 'SELECT status FROM topic_progress WHERE topic_id = ? AND user_id = ?', topicId, userId))!;
       if (p.status !== 'completed') return;
-      run(db, "UPDATE topic_progress SET status = 'revising', updated_at = ? WHERE topic_id = ? AND user_id = ?", now, topicId, userId);
-      topicEvent(db, topicId, userId, 'reopened_for_revision');
+      await run(db, "UPDATE topic_progress SET status = 'revising', updated_at = ? WHERE topic_id = ? AND user_id = ?", now, topicId, userId);
+      await topicEvent(db, topicId, userId, 'reopened_for_revision');
     }
   });
 }
@@ -370,15 +370,15 @@ export function reopenTopic(db: DB, userId: string, topicId: string, mode: 'revi
  * What to study after `afterTopicId`. For a plan task: the next task that day, then the following
  * days. Otherwise the next of your own open topics in room order (wrapping around).
  */
-export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afterTopicId?: string): { id: string; title: string } | null {
+export async function nextIncompleteTopic(db: DB, userId: string, roomId: string, afterTopicId?: string): Promise<{ id: string; title: string } | null> {
   if (afterTopicId) {
-    const fromPlan = nextPlanTopicAfter(db, userId, roomId, afterTopicId);
-    if (fromPlan !== undefined) return fromPlan ?? nextIncompleteTopic(db, userId, roomId);
+    const fromPlan = await nextPlanTopicAfter(db, userId, roomId, afterTopicId);
+    if (fromPlan !== undefined) return fromPlan ?? await nextIncompleteTopic(db, userId, roomId);
   } else {
-    const fromPlan = nextPlanTopic(db, userId, roomId);
+    const fromPlan = await nextPlanTopic(db, userId, roomId);
     if (fromPlan) return fromPlan;
   }
-  const topics = all<{ id: string; title: string; status: string | null }>(
+  const topics = await all<{ id: string; title: string; status: string | null }>(
     db,
     `SELECT t.id, t.title, p.status FROM topics t
        LEFT JOIN topic_progress p ON p.topic_id = t.id AND p.user_id = ?
@@ -395,24 +395,24 @@ export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afte
   return next ? { id: next.id, title: next.title } : null;
 }
 
-export function topicHistory(db: DB, userId: string, topicId: string): { events: TopicHistoryEntry[]; sessions: { userId: string; startedAt: number; focusedMs: number; isRevision: boolean }[] } {
-  const { room } = requireTopicAccess(db, topicId, userId);
+export async function topicHistory(db: DB, userId: string, topicId: string): Promise<{ events: TopicHistoryEntry[]; sessions: { userId: string; startedAt: number; focusedMs: number; isRevision: boolean }[] }> {
+  const { room } = await requireTopicAccess(db, topicId, userId);
   void room;
-  const events = all<{ id: string; type: string; user_id: string; detail: string; created_at: number }>(
+  const events = (await all<{ id: string; type: string; user_id: string; detail: string; created_at: number }>(
     db,
     'SELECT * FROM topic_events WHERE topic_id = ? ORDER BY created_at DESC LIMIT 100',
     topicId,
-  ).map((e) => ({ id: e.id, type: e.type, userId: e.user_id, detail: JSON.parse(e.detail), createdAt: e.created_at }));
+  )).map((e) => ({ id: e.id, type: e.type, userId: e.user_id, detail: JSON.parse(e.detail), createdAt: e.created_at }));
   // Room members share per-topic time; session notes stay private to their owner.
-  const sessions = all<{ user_id: string; started_at: number; focused_ms: number; is_revision: number }>(
+  const sessions = (await all<{ user_id: string; started_at: number; focused_ms: number; is_revision: number }>(
     db,
     "SELECT user_id, started_at, focused_ms, is_revision FROM study_sessions WHERE topic_id = ? AND state = 'finished' ORDER BY started_at DESC LIMIT 100",
     topicId,
-  ).map((s) => ({ userId: s.user_id, startedAt: s.started_at, focusedMs: s.focused_ms, isRevision: Boolean(s.is_revision) }));
+  )).map((s) => ({ userId: s.user_id, startedAt: s.started_at, focusedMs: s.focused_ms, isRevision: Boolean(s.is_revision) }));
   return { events, sessions };
 }
 
-export function assertTopicInRoom(db: DB, topicId: string, roomId: string) {
-  const t = get(db, 'SELECT 1 FROM topics WHERE id = ? AND room_id = ?', topicId, roomId);
+export async function assertTopicInRoom(db: DB, topicId: string, roomId: string) {
+  const t = await get(db, 'SELECT 1 FROM topics WHERE id = ? AND room_id = ?', topicId, roomId);
   if (!t) throw notFound('That topic is not in this room.');
 }

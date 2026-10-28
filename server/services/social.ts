@@ -34,46 +34,46 @@ interface FriendshipRow {
   responded_at: number | null;
 }
 
-function livePair(db: DB, a: string, b: string): FriendshipRow | undefined {
+async function livePair(db: DB, a: string, b: string): Promise<FriendshipRow | undefined> {
   const [lo, hi] = a < b ? [a, b] : [b, a];
-  return get<FriendshipRow>(db, "SELECT * FROM friendships WHERE user_low = ? AND user_high = ? AND status IN ('pending', 'accepted')", lo, hi);
+  return await get<FriendshipRow>(db, "SELECT * FROM friendships WHERE user_low = ? AND user_high = ? AND status IN ('pending', 'accepted')", lo, hi);
 }
 
-export function searchUsers(db: DB, viewerId: string, q: string): UserSearchResult[] {
+export async function searchUsers(db: DB, viewerId: string, q: string): Promise<UserSearchResult[]> {
   const term = q.trim().toLowerCase().replace(/^@/, '');
   if (term.length < 2) return [];
   const escaped = term.replace(/[\\%_]/g, (c) => '\\' + c);
-  const rows = all<UserRow>(
+  const rows = await all<UserRow>(
     db,
     `SELECT * FROM users WHERE username LIKE ? ESCAPE '\\' ORDER BY (username = ?) DESC, username LIMIT 10`,
     escaped + '%',
     term,
   );
-  return rows.map((u) => {
+  return Promise.all(rows.map(async (u) => {
     if (u.id === viewerId) return { user: toPublicUser(u), relation: 'self' as const };
-    const pair = livePair(db, viewerId, u.id);
+    const pair = await livePair(db, viewerId, u.id);
     let relation: UserSearchResult['relation'] = 'none';
     if (pair?.status === 'accepted') relation = 'friend';
     else if (pair?.status === 'pending') relation = pair.requester_id === viewerId ? 'pending_outgoing' : 'pending_incoming';
     return { user: toPublicUser(u), relation };
-  });
+  }));
 }
 
 /** Sends a request. If they already asked me, this accepts theirs instead of creating a duplicate. */
-export function sendFriendRequest(db: DB, viewerId: string, recipientId: string): { id: string; status: 'pending' | 'accepted' } {
+export async function sendFriendRequest(db: DB, viewerId: string, recipientId: string): Promise<{ id: string; status: 'pending' | 'accepted' }> {
   if (recipientId === viewerId) throw badRequest("That's you! Search for your friend's username.");
-  getUser(db, recipientId);
-  return transaction(db, () => {
-    const existing = livePair(db, viewerId, recipientId);
+  await getUser(db, recipientId);
+  return await transaction(db, async () => {
+    const existing = await livePair(db, viewerId, recipientId);
     if (existing?.status === 'accepted') throw conflict('You are already friends.', 'ALREADY_FRIENDS');
     if (existing?.status === 'pending') {
       if (existing.requester_id === viewerId) throw conflict('Your request is already waiting for them.', 'ALREADY_REQUESTED');
-      respondToRequest(db, viewerId, existing.id, true);
+      await respondToRequest(db, viewerId, existing.id, true);
       return { id: existing.id, status: 'accepted' as const };
     }
     const id = newId();
     const [lo, hi] = viewerId < recipientId ? [viewerId, recipientId] : [recipientId, viewerId];
-    run(
+    await run(
       db,
       "INSERT INTO friendships (id, requester_id, recipient_id, user_low, user_high, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
       id,
@@ -87,33 +87,33 @@ export function sendFriendRequest(db: DB, viewerId: string, recipientId: string)
   });
 }
 
-export function respondToRequest(db: DB, viewerId: string, friendshipId: string, accept: boolean): FriendshipRow {
-  const f = get<FriendshipRow>(db, 'SELECT * FROM friendships WHERE id = ?', friendshipId);
+export async function respondToRequest(db: DB, viewerId: string, friendshipId: string, accept: boolean): Promise<FriendshipRow> {
+  const f = await get<FriendshipRow>(db, 'SELECT * FROM friendships WHERE id = ?', friendshipId);
   if (!f || (f.recipient_id !== viewerId && f.requester_id !== viewerId)) throw notFound('That request could not be found.');
   if (f.recipient_id !== viewerId) throw forbidden('Only the person who received this request can answer it.');
   if (f.status !== 'pending') throw conflict('This request was already answered.', 'ALREADY_ANSWERED');
   const now = Date.now();
-  run(db, 'UPDATE friendships SET status = ?, responded_at = ? WHERE id = ?', accept ? 'accepted' : 'rejected', now, f.id);
-  if (accept) recordActivity(db, { actorId: viewerId, type: 'friend_accepted', recipientId: f.requester_id });
+  await run(db, 'UPDATE friendships SET status = ?, responded_at = ? WHERE id = ?', accept ? 'accepted' : 'rejected', now, f.id);
+  if (accept) await recordActivity(db, { actorId: viewerId, type: 'friend_accepted', recipientId: f.requester_id });
   return { ...f, status: accept ? 'accepted' : 'rejected', responded_at: now };
 }
 
-export function cancelRequest(db: DB, viewerId: string, friendshipId: string): FriendshipRow {
-  const f = get<FriendshipRow>(db, 'SELECT * FROM friendships WHERE id = ?', friendshipId);
+export async function cancelRequest(db: DB, viewerId: string, friendshipId: string): Promise<FriendshipRow> {
+  const f = await get<FriendshipRow>(db, 'SELECT * FROM friendships WHERE id = ?', friendshipId);
   if (!f || f.requester_id !== viewerId) throw notFound('That request could not be found.');
   if (f.status !== 'pending') throw conflict('This request was already answered.', 'ALREADY_ANSWERED');
-  run(db, "UPDATE friendships SET status = 'cancelled', responded_at = ? WHERE id = ?", Date.now(), f.id);
+  await run(db, "UPDATE friendships SET status = 'cancelled', responded_at = ? WHERE id = ?", Date.now(), f.id);
   return f;
 }
 
-export function listRequests(db: DB, viewerId: string): FriendRequest[] {
-  const rows = all<FriendshipRow>(
+export async function listRequests(db: DB, viewerId: string): Promise<FriendRequest[]> {
+  const rows = await all<FriendshipRow>(
     db,
     "SELECT * FROM friendships WHERE status = 'pending' AND (requester_id = ? OR recipient_id = ?) ORDER BY created_at DESC",
     viewerId,
     viewerId,
   );
-  const users = getUsers(db, rows.map((r) => (r.requester_id === viewerId ? r.recipient_id : r.requester_id)));
+  const users = await getUsers(db, rows.map((r) => (r.requester_id === viewerId ? r.recipient_id : r.requester_id)));
   return rows.map((r) => {
     const other = r.requester_id === viewerId ? r.recipient_id : r.requester_id;
     return { id: r.id, direction: r.requester_id === viewerId ? 'outgoing' : 'incoming', user: toPublicUser(users.get(other)!), createdAt: r.created_at };
@@ -123,10 +123,10 @@ export function listRequests(db: DB, viewerId: string): FriendRequest[] {
 // ───────────── Friends ─────────────
 
 /** Recent first completions by `userId` in rooms that the viewer also belongs to. */
-export function recentCompletions(db: DB, viewerId: string, userId: string, limit = 5): CompletionSummary[] {
-  const rooms = myRoomIds(db, viewerId);
+export async function recentCompletions(db: DB, viewerId: string, userId: string, limit = 5): Promise<CompletionSummary[]> {
+  const rooms = await myRoomIds(db, viewerId);
   if (!rooms.length) return [];
-  return all<{ topic_id: string; title: string; room_id: string; room: string; completed_at: number }>(
+  return (await all<{ topic_id: string; title: string; room_id: string; room: string; completed_at: number }>(
     db,
     `SELECT c.topic_id, t.title, r.id AS room_id, r.name AS room, c.completed_at FROM topic_completions c
        JOIN topics t ON t.id = c.topic_id JOIN rooms r ON r.id = t.room_id
@@ -135,11 +135,11 @@ export function recentCompletions(db: DB, viewerId: string, userId: string, limi
     userId,
     ...rooms,
     limit,
-  ).map((r) => ({ topicId: r.topic_id, topicTitle: r.title, roomId: r.room_id, roomName: r.room, completedAt: r.completed_at }));
+  )).map((r) => ({ topicId: r.topic_id, topicTitle: r.title, roomId: r.room_id, roomName: r.room, completedAt: r.completed_at }));
 }
 
-export function listFriends(db: DB, viewerId: string): Friend[] {
-  const rows = all<FriendshipRow & { other: string }>(
+export async function listFriends(db: DB, viewerId: string): Promise<Friend[]> {
+  const rows = await all<FriendshipRow & { other: string }>(
     db,
     `SELECT *, CASE WHEN requester_id = ? THEN recipient_id ELSE requester_id END AS other
        FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR recipient_id = ?) ORDER BY responded_at`,
@@ -147,26 +147,26 @@ export function listFriends(db: DB, viewerId: string): Friend[] {
     viewerId,
     viewerId,
   );
-  const users = getUsers(db, rows.map((r) => r.other));
-  return rows.map((r) => ({
+  const users = await getUsers(db, rows.map((r) => r.other));
+  return Promise.all(rows.map(async (r) => ({
     friendshipId: r.id,
     since: r.responded_at ?? r.created_at,
     user: toPublicUser(users.get(r.other)!),
-    status: liveStatus(db, viewerId, r.other),
-    recentCompletions: recentCompletions(db, viewerId, r.other),
-  }));
+    status: await liveStatus(db, viewerId, r.other),
+    recentCompletions: await recentCompletions(db, viewerId, r.other),
+  })));
 }
 
-export function requireFriend(db: DB, viewerId: string, userId: string) {
-  if (!areFriends(db, viewerId, userId)) throw notFound('That person is not in your friends list.');
+export async function requireFriend(db: DB, viewerId: string, userId: string) {
+  if (!await areFriends(db, viewerId, userId)) throw notFound('That person is not in your friends list.');
 }
 
-export function encourage(db: DB, viewerId: string, input: { recipientId: string; reaction?: ReactionKey; message?: string; roomId?: string | null }) {
+export async function encourage(db: DB, viewerId: string, input: { recipientId: string; reaction?: ReactionKey; message?: string; roomId?: string | null }) {
   if (!input.reaction && !input.message) throw badRequest('Pick a reaction or write a short message.');
-  requireFriend(db, viewerId, input.recipientId);
+  await requireFriend(db, viewerId, input.recipientId);
   if (input.roomId) {
-    const rooms = myRoomIds(db, viewerId);
-    if (!rooms.includes(input.roomId) || !myRoomIds(db, input.recipientId).includes(input.roomId)) throw badRequest('That room is not shared with them.');
+    const rooms = await myRoomIds(db, viewerId);
+    if (!rooms.includes(input.roomId) || !(await myRoomIds(db, input.recipientId)).includes(input.roomId)) throw badRequest('That room is not shared with them.');
   }
   return recordActivity(db, {
     actorId: viewerId,
@@ -178,33 +178,33 @@ export function encourage(db: DB, viewerId: string, input: { recipientId: string
   });
 }
 
-export function markActivityRead(db: DB, viewerId: string) {
-  run(db, 'UPDATE activities SET read_at = ? WHERE recipient_id = ? AND read_at IS NULL', Date.now(), viewerId);
+export async function markActivityRead(db: DB, viewerId: string) {
+  await run(db, 'UPDATE activities SET read_at = ? WHERE recipient_id = ? AND read_at IS NULL', Date.now(), viewerId);
 }
 
-export function unreadCount(db: DB, viewerId: string): number {
-  return get<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM activities WHERE recipient_id = ? AND read_at IS NULL', viewerId)!.n;
+export async function unreadCount(db: DB, viewerId: string): Promise<number> {
+  return (await get<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM activities WHERE recipient_id = ? AND read_at IS NULL', viewerId))!.n;
 }
 
 // ───────────── Progress ─────────────
 
 /** Aggregate stats. For a friend, only totals are returned — never their session list or notes. */
-export function progressStats(db: DB, viewerId: string, userId: string): ProgressStats {
-  if (viewerId !== userId) requireFriend(db, viewerId, userId);
-  const today = todayFor(db, userId);
+export async function progressStats(db: DB, viewerId: string, userId: string): Promise<ProgressStats> {
+  if (viewerId !== userId) await requireFriend(db, viewerId, userId);
+  const today = await todayFor(db, userId);
   const weekStart = startOfWeek(today);
   const from7 = addDays(today, -6);
-  const byDay = all<{ local_date: string; ms: number }>(
+  const byDay = await all<{ local_date: string; ms: number }>(
     db,
     "SELECT local_date, SUM(focused_ms) AS ms FROM study_sessions WHERE user_id = ? AND state = 'finished' AND local_date >= ? GROUP BY local_date",
     userId,
     from7 < weekStart ? from7 : weekStart,
   );
   const dayMap = new Map(byDay.map((d) => [d.local_date, d.ms]));
-  const todayMs = focusedToday(db, userId);
+  const todayMs = await focusedToday(db, userId);
   dayMap.set(today, todayMs);
   const weekMs = [...dayMap.entries()].filter(([d]) => d >= weekStart && d <= today).reduce((s, [, ms]) => s + ms, 0);
-  const counts = get<{ topics: number; tasks: number; sessions: number }>(
+  const counts = (await get<{ topics: number; tasks: number; sessions: number }>(
     db,
     `SELECT
        (SELECT COUNT(*) FROM topic_completions WHERE user_id = ? AND kind = 'first' AND revoked_at IS NULL) AS topics,
@@ -213,7 +213,7 @@ export function progressStats(db: DB, viewerId: string, userId: string): Progres
     userId,
     userId,
     userId,
-  )!;
+  ))!;
   return {
     userId,
     todayMs,
@@ -230,14 +230,14 @@ export function progressStats(db: DB, viewerId: string, userId: string): Progres
 
 // ───────────── Home ─────────────
 
-export function homeData(db: DB, userId: string): HomeData {
-  const me = toMe(getUser(db, userId));
+export async function homeData(db: DB, userId: string): Promise<HomeData> {
+  const me = toMe(await getUser(db, userId));
   const today = me.today;
-  const rooms = listRooms(db, userId).filter((r) => r.status === 'active');
-  const tasks = listTasks(db, userId, addDays(today, -1), addDays(today, 14), { includeFriends: false });
+  const rooms = (await listRooms(db, userId)).filter((r) => r.status === 'active');
+  const tasks = await listTasks(db, userId, addDays(today, -1), addDays(today, 14), { includeFriends: false });
   // Tasks from a date range always have a date.
   const todaysOpen = tasks.filter((t) => t.date! <= today && !t.completed && (t.date === today || t.topicId));
-  const plans = listPlans(db, userId).filter((p) => p.status === 'active');
+  const plans = (await listPlans(db, userId)).filter((p) => p.status === 'active');
 
   let primary: HomeData['primary'] = null;
   const scheduled = todaysOpen.find((t) => t.date === today);
@@ -247,26 +247,26 @@ export function homeData(db: DB, userId: string): HomeData {
     if (room?.nextTopic) primary = { kind: 'topic', roomId: room.id, roomName: room.name, topicId: room.nextTopic.id, topicTitle: room.nextTopic.title };
   }
 
-  const completedToday = all<{ topic_id: string; title: string; room_id: string; room: string; completed_at: number }>(
+  const completedToday = (await all<{ topic_id: string; title: string; room_id: string; room: string; completed_at: number }>(
     db,
     `SELECT c.topic_id, t.title, r.id AS room_id, r.name AS room, c.completed_at FROM topic_completions c
        JOIN topics t ON t.id = c.topic_id JOIN rooms r ON r.id = t.room_id
       WHERE c.user_id = ? AND c.local_date = ? AND c.revoked_at IS NULL ORDER BY c.completed_at DESC`,
     userId,
     today,
-  ).map((r) => ({ topicId: r.topic_id, topicTitle: r.title, roomId: r.room_id, roomName: r.room, completedAt: r.completed_at }));
+  )).map((r) => ({ topicId: r.topic_id, topicTitle: r.title, roomId: r.room_id, roomName: r.room, completedAt: r.completed_at }));
 
   return {
     me,
-    activeSession: getActiveSession(db, userId),
+    activeSession: await getActiveSession(db, userId),
     primary,
-    friends: listFriends(db, userId),
-    today: { focusedMs: focusedToday(db, userId), completedTopics: completedToday, completedTasks: completedTasksOn(db, userId, today) },
+    friends: await listFriends(db, userId),
+    today: { focusedMs: await focusedToday(db, userId), completedTopics: completedToday, completedTasks: await completedTasksOn(db, userId, today) },
     plans: plans.slice(0, 4),
     rooms,
     upcoming: tasks.filter((t) => t.date! >= today && !t.completed).slice(0, 5),
-    plannedTasks: calendarPlanItems(db, userId, today, addDays(today, 14), { friends: false }).items.filter((t) => !t.done).slice(0, 8),
-    unread: unreadCount(db, userId),
+    plannedTasks: (await calendarPlanItems(db, userId, today, addDays(today, 14), { friends: false })).items.filter((t) => !t.done).slice(0, 8),
+    unread: await unreadCount(db, userId),
   };
 }
 

@@ -53,10 +53,10 @@ function toTask(row: TaskRow, viewerId: string, viewerRooms: Set<string>): Task 
 }
 
 /** My tasks plus friends' tasks they explicitly shared, within a date range. */
-export function listTasks(db: DB, viewerId: string, from: string, to: string, opts: { includeFriends?: boolean } = {}): Task[] {
+export async function listTasks(db: DB, viewerId: string, from: string, to: string, opts: { includeFriends?: boolean } = {}): Promise<Task[]> {
   const owners = [viewerId];
-  if (opts.includeFriends !== false) owners.push(...friendIds(db, viewerId));
-  const rows = all<TaskRow>(
+  if (opts.includeFriends !== false) owners.push(...await friendIds(db, viewerId));
+  const rows = await all<TaskRow>(
     db,
     `${SELECT} WHERE tk.status = 'active' AND tk.date BETWEEN ? AND ? AND tk.owner_id IN (${placeholders(owners.length)})
        AND (tk.owner_id = ? OR tk.shared = 1)
@@ -66,40 +66,40 @@ export function listTasks(db: DB, viewerId: string, from: string, to: string, op
     ...owners,
     viewerId,
   );
-  const rooms = new Set(myRoomIds(db, viewerId));
+  const rooms = new Set(await myRoomIds(db, viewerId));
   return rows.map((r) => toTask(r, viewerId, rooms));
 }
 
-export function getTask(db: DB, viewerId: string, taskId: string): Task {
-  const row = get<TaskRow>(db, `${SELECT} WHERE tk.id = ?`, taskId);
-  if (!row || (row.owner_id !== viewerId && !(row.shared && friendIds(db, viewerId).includes(row.owner_id)))) throw notFound('That task could not be found.');
-  return toTask(row, viewerId, new Set(myRoomIds(db, viewerId)));
+export async function getTask(db: DB, viewerId: string, taskId: string): Promise<Task> {
+  const row = await get<TaskRow>(db, `${SELECT} WHERE tk.id = ?`, taskId);
+  if (!row || (row.owner_id !== viewerId && !(row.shared && (await friendIds(db, viewerId)).includes(row.owner_id)))) throw notFound('That task could not be found.');
+  return toTask(row, viewerId, new Set(await myRoomIds(db, viewerId)));
 }
 
-function ownTask(db: DB, userId: string, taskId: string): TaskRow {
-  const row = get<TaskRow>(db, `${SELECT} WHERE tk.id = ? AND tk.owner_id = ?`, taskId, userId);
+async function ownTask(db: DB, userId: string, taskId: string): Promise<TaskRow> {
+  const row = await get<TaskRow>(db, `${SELECT} WHERE tk.id = ? AND tk.owner_id = ?`, taskId, userId);
   if (!row) throw notFound('That task could not be found.');
   return row;
 }
 
-function validateRefs(db: DB, userId: string, refs: { roomId?: string | null; topicId?: string | null }) {
+async function validateRefs(db: DB, userId: string, refs: { roomId?: string | null; topicId?: string | null }) {
   let roomId = refs.roomId ?? null;
   if (refs.topicId) {
-    const t = get<{ room_id: string; created_by: string }>(db, 'SELECT room_id, created_by FROM topics WHERE id = ?', refs.topicId);
+    const t = await get<{ room_id: string; created_by: string }>(db, 'SELECT room_id, created_by FROM topics WHERE id = ?', refs.topicId);
     if (!t) throw badRequest('That topic could not be found.');
     if (t.created_by !== userId) throw badRequest('You can only plan your own topics.');
     if (roomId && roomId !== t.room_id) throw badRequest('That topic is not in the selected room.');
     roomId = t.room_id;
   }
-  if (roomId && !myRoomIds(db, userId).includes(roomId)) throw badRequest('That room could not be found.');
+  if (roomId && !(await myRoomIds(db, userId)).includes(roomId)) throw badRequest('That room could not be found.');
   return roomId;
 }
 
-function event(db: DB, taskId: string, userId: string, type: string, detail: Record<string, unknown> = {}) {
-  run(db, 'INSERT INTO task_events (id, task_id, user_id, type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)', newId(), taskId, userId, type, JSON.stringify(detail), Date.now());
+async function event(db: DB, taskId: string, userId: string, type: string, detail: Record<string, unknown> = {}) {
+  await run(db, 'INSERT INTO task_events (id, task_id, user_id, type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)', newId(), taskId, userId, type, JSON.stringify(detail), Date.now());
 }
 
-export function createTask(
+export async function createTask(
   db: DB,
   userId: string,
   input: {
@@ -113,12 +113,12 @@ export function createTask(
     shared?: boolean;
     note?: string;
   },
-): string {
-  const roomId = validateRefs(db, userId, input);
+): Promise<string> {
+  const roomId = await validateRefs(db, userId, input);
   const id = newId();
   const now = Date.now();
-  transaction(db, () => {
-    run(
+  await transaction(db, async () => {
+    await run(
       db,
       `INSERT INTO tasks (id, owner_id, title, description, date, start_time, duration_minutes, room_id, topic_id, shared, note, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -136,12 +136,12 @@ export function createTask(
       now,
       now,
     );
-    event(db, id, userId, 'created', { date: input.date });
+    await event(db, id, userId, 'created', { date: input.date });
   });
   return id;
 }
 
-export function updateTask(
+export async function updateTask(
   db: DB,
   userId: string,
   taskId: string,
@@ -159,28 +159,28 @@ export function updateTask(
     status: 'active' | 'archived';
   }>,
 ) {
-  const t = ownTask(db, userId, taskId);
+  const t = await ownTask(db, userId, taskId);
   const refs = {
     roomId: input.roomId !== undefined ? input.roomId : t.room_id,
     topicId: input.topicId !== undefined ? input.topicId : t.topic_id,
   };
   if (input.roomId !== undefined && input.topicId === undefined && input.roomId !== t.room_id) refs.topicId = null;
-  const roomId = validateRefs(db, userId, refs);
-  transaction(db, () => {
+  const roomId = await validateRefs(db, userId, refs);
+  await transaction(db, async () => {
     const now = Date.now();
     let completedAt = t.completed_at;
     let completedDate = t.completed_date;
     if (input.completed === true && !t.completed_at) {
       completedAt = now;
-      completedDate = localDate(now, getUser(db, userId).timezone);
-      event(db, taskId, userId, 'completed');
+      completedDate = localDate(now, (await getUser(db, userId)).timezone);
+      await event(db, taskId, userId, 'completed');
     } else if (input.completed === false && t.completed_at) {
       completedAt = null;
       completedDate = null;
-      event(db, taskId, userId, 'uncompleted');
+      await event(db, taskId, userId, 'uncompleted');
     }
-    if (input.date && input.date !== t.date) event(db, taskId, userId, 'moved', { from: t.date, to: input.date });
-    run(
+    if (input.date && input.date !== t.date) await event(db, taskId, userId, 'moved', { from: t.date, to: input.date });
+    await run(
       db,
       `UPDATE tasks SET title = ?, description = ?, date = ?, start_time = ?, duration_minutes = ?, room_id = ?, topic_id = ?,
               shared = ?, note = ?, completed_at = ?, completed_date = ?, status = ?, updated_at = ? WHERE id = ?`,
@@ -203,12 +203,12 @@ export function updateTask(
 }
 
 /** Removing a task archives it; any study sessions started from it are untouched. */
-export function archiveTask(db: DB, userId: string, taskId: string) {
-  ownTask(db, userId, taskId);
-  run(db, "UPDATE tasks SET status = 'archived', updated_at = ? WHERE id = ?", Date.now(), taskId);
-  event(db, taskId, userId, 'archived');
+export async function archiveTask(db: DB, userId: string, taskId: string) {
+  await ownTask(db, userId, taskId);
+  await run(db, "UPDATE tasks SET status = 'archived', updated_at = ? WHERE id = ?", Date.now(), taskId);
+  await event(db, taskId, userId, 'archived');
 }
 
-export function completedTasksOn(db: DB, userId: string, date: string): number {
-  return get<{ n: number }>(db, "SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND completed_date = ? AND status = 'active'", userId, date)!.n;
+export async function completedTasksOn(db: DB, userId: string, date: string): Promise<number> {
+  return (await get<{ n: number }>(db, "SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND completed_date = ? AND status = 'active'", userId, date))!.n;
 }

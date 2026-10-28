@@ -2,21 +2,22 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDatabase, type DB } from './db.ts';
+import { Database } from './db.ts';
 import { RealtimeHub } from './realtime.ts';
 import { apiRouter } from './routes.ts';
 import { errorHandler, notFound } from './http.ts';
 import { sameOriginWrites } from './auth.ts';
 
 export interface AppOptions {
-  dbPath: string;
+  /** postgres://… (e.g. Supabase), a PGlite directory for local development, or undefined for in-memory. */
+  databaseUrl?: string;
   secureCookies?: boolean;
   serveStatic?: boolean;
   trustProxy?: boolean;
 }
 
-export function createApp(opts: AppOptions) {
-  const db: DB = openDatabase(opts.dbPath);
+export async function createApp(opts: AppOptions) {
+  const db = await Database.open(opts.databaseUrl);
   const hub = new RealtimeHub();
   const app = express();
   app.disable('x-powered-by');
@@ -49,9 +50,9 @@ export function createApp(opts: AppOptions) {
     app,
     db,
     hub,
-    close() {
+    async close() {
       hub.close();
-      db.close();
+      await db.close();
     },
   };
 }

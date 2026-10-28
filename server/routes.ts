@@ -24,22 +24,22 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
   // ── realtime fan-out helpers ──
   const notify = (userIds: Iterable<string>, keys: Channel[], extra: { roomId?: string; notice?: any } = {}) => hub.send(userIds, { keys, ...extra });
   /** Someone's work changed: they, their friends and their room partners refresh progress views. */
-  const notifyWork = (userId: string, roomId?: string) => {
-    const audience = new Set(circleOf(db, userId));
-    if (roomId) for (const m of roomMemberIds(db, roomId)) audience.add(m);
+  const notifyWork = async (userId: string, roomId?: string) => {
+    const audience = new Set(await circleOf(db, userId));
+    if (roomId) for (const m of await roomMemberIds(db, roomId)) audience.add(m);
     notify(audience, ['session', 'friends', 'rooms', 'room', 'plans', 'progress', 'activity', 'calendar'], { roomId });
   };
-  const notifyRoom = (roomId: string, keys: Channel[] = ['rooms', 'room', 'activity']) => notify(roomMemberIds(db, roomId), keys, { roomId });
+  const notifyRoom = async (roomId: string, keys: Channel[] = ['rooms', 'room', 'activity']) => notify(await roomMemberIds(db, roomId), keys, { roomId });
 
   // ───────────── Auth ─────────────
 
-  r.post('/auth/signup', limiter, (req, res) => {
+  r.post('/auth/signup', limiter, async (req, res) => {
     const input = parse(v.signUpSchema, req.body);
-    if (get(db, 'SELECT 1 FROM users WHERE username = ?', input.username)) throw conflict('That username is taken. Try another one.', 'USERNAME_TAKEN');
+    if (await get(db, 'SELECT 1 FROM users WHERE username = ?', input.username)) throw conflict('That username is taken. Try another one.', 'USERNAME_TAKEN');
     const id = newId();
     const tz = input.timezone && isValidTimeZone(input.timezone) ? input.timezone : 'UTC';
-    transaction(db, () => {
-      run(
+    await transaction(db, async () => {
+      await run(
         db,
         'INSERT INTO users (id, username, display_name, profile_type, accent, bio, avatar, timezone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         id,
@@ -52,22 +52,22 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
         tz,
         Date.now(),
       );
-      run(db, 'INSERT INTO auth_credentials (user_id, password_hash, updated_at) VALUES (?, ?, ?)', id, hashPassword(input.password), Date.now());
+      await run(db, 'INSERT INTO auth_credentials (user_id, password_hash, updated_at) VALUES (?, ?, ?)', id, hashPassword(input.password), Date.now());
     });
-    startAuthSession(db, res, id, opts.secureCookies);
-    res.status(201).json({ me: toMe(getUser(db, id)) });
+    await startAuthSession(db, res, id, opts.secureCookies);
+    res.status(201).json({ me: toMe(await getUser(db, id)) });
   });
 
-  r.post('/auth/signin', limiter, (req, res) => {
+  r.post('/auth/signin', limiter, async (req, res) => {
     const input = parse(v.signInSchema, req.body);
-    const user = get<{ id: string }>(db, 'SELECT id FROM users WHERE username = ?', input.username);
-    if (!checkCredentials(db, user?.id, input.password)) throw badRequest('That username and password do not match.', 'BAD_CREDENTIALS');
-    startAuthSession(db, res, user!.id, opts.secureCookies);
-    res.json({ me: toMe(getUser(db, user!.id)) });
+    const user = await get<{ id: string }>(db, 'SELECT id FROM users WHERE username = ?', input.username);
+    if (!await checkCredentials(db, user?.id, input.password)) throw badRequest('That username and password do not match.', 'BAD_CREDENTIALS');
+    await startAuthSession(db, res, user!.id, opts.secureCookies);
+    res.json({ me: toMe(await getUser(db, user!.id)) });
   });
 
-  r.post('/auth/signout', (req, res) => {
-    endAuthSession(db, req, res);
+  r.post('/auth/signout', async (req, res) => {
+    await endAuthSession(db, req, res);
     res.json({ ok: true });
   });
 
@@ -76,14 +76,14 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
 
   r.get('/events', (req, res) => hub.connect(req.userId, res));
 
-  r.get('/me', (req, res) => res.json({ me: toMe(getUser(db, req.userId)) }));
+  r.get('/me', async (req, res) => res.json({ me: toMe(await getUser(db, req.userId)) }));
 
-  r.patch('/me', (req, res) => {
+  r.patch('/me', async (req, res) => {
     const input = parse(v.profileUpdateSchema, req.body);
-    const u = getUser(db, req.userId);
+    const u = await getUser(db, req.userId);
     if (input.timezone && !isValidTimeZone(input.timezone)) throw badRequest('Unknown time zone.');
     const typeChanged = input.profileType && input.profileType !== u.profile_type;
-    run(
+    await run(
       db,
       'UPDATE users SET display_name = ?, profile_type = ?, accent = ?, bio = ?, avatar = ?, color_scheme = ?, timezone = ?, share_status = ? WHERE id = ?',
       input.displayName ?? u.display_name,
@@ -96,206 +96,207 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
       input.shareStatus === undefined ? u.share_status : input.shareStatus ? 1 : 0,
       req.userId,
     );
-    notify(circleOf(db, req.userId), EVERYTHING);
-    res.json({ me: toMe(getUser(db, req.userId)) });
+    notify(await circleOf(db, req.userId), EVERYTHING);
+    res.json({ me: toMe(await getUser(db, req.userId)) });
   });
 
-  r.get('/home', (req, res) => res.json(social.homeData(db, req.userId)));
+  r.get('/home', async (req, res) => res.json(await social.homeData(db, req.userId)));
 
   // ───────────── Friends ─────────────
 
-  r.get('/users/search', (req, res) => res.json({ results: social.searchUsers(db, req.userId, String(req.query.q ?? '')) }));
+  r.get('/users/search', async (req, res) => res.json({ results: await social.searchUsers(db, req.userId, String(req.query.q ?? '')) }));
 
-  r.get('/friends', (req, res) => res.json({ friends: social.listFriends(db, req.userId), requests: social.listRequests(db, req.userId) }));
+  r.get('/friends', async (req, res) => res.json({ friends: await social.listFriends(db, req.userId), requests: await social.listRequests(db, req.userId) }));
 
-  r.post('/friends/requests', (req, res) => {
+  r.post('/friends/requests', async (req, res) => {
     const userId = String(req.body?.userId ?? '');
     if (!userId) throw badRequest('Choose someone to add.');
-    const result = social.sendFriendRequest(db, req.userId, userId);
-    const me = getUser(db, req.userId);
+    const result = await social.sendFriendRequest(db, req.userId, userId);
+    const me = await getUser(db, req.userId);
     notify([req.userId, userId], ['friends', 'activity', 'rooms'], {
       notice: { kind: 'friend', text: result.status === 'accepted' ? `${me.display_name} accepted your friend request` : `${me.display_name} sent you a friend request` },
     });
     res.status(201).json(result);
   });
 
-  r.post('/friends/requests/:id/:action', (req, res) => {
+  r.post('/friends/requests/:id/:action', async (req, res) => {
     const id = String(req.params.id);
     const action = req.params.action;
     let f;
-    if (action === 'accept' || action === 'reject') f = social.respondToRequest(db, req.userId, id, action === 'accept');
-    else if (action === 'cancel') f = social.cancelRequest(db, req.userId, id);
+    if (action === 'accept' || action === 'reject') f = await social.respondToRequest(db, req.userId, id, action === 'accept');
+    else if (action === 'cancel') f = await social.cancelRequest(db, req.userId, id);
     else throw badRequest('Unknown action.');
-    const me = getUser(db, req.userId);
+    const me = await getUser(db, req.userId);
     notify([f.requester_id, f.recipient_id], ['friends', 'activity', 'rooms', 'calendar', 'plans'], {
       notice: action === 'accept' ? { kind: 'friend', text: `${me.display_name} accepted your friend request 🌱` } : undefined,
     });
     res.json({ ok: true });
   });
 
-  r.get('/friends/:userId', (req, res) => {
+  r.get('/friends/:userId', async (req, res) => {
     const friendId = String(req.params.userId);
-    social.requireFriend(db, req.userId, friendId);
-    const shared = myRoomIds(db, req.userId).filter((id) => myRoomIds(db, friendId).includes(id));
+    await social.requireFriend(db, req.userId, friendId);
+    const theirRooms = new Set(await myRoomIds(db, friendId));
+    const shared = (await myRoomIds(db, req.userId)).filter((id) => theirRooms.has(id));
     res.json({
-      user: toPublicUser(getUser(db, friendId)),
-      status: liveStatus(db, req.userId, friendId),
-      recentCompletions: social.recentCompletions(db, req.userId, friendId, 10),
-      rooms: rooms.listRooms(db, req.userId).filter((room) => shared.includes(room.id)),
-      activity: listActivity(db, req.userId, { withUserId: friendId, limit: 20 }),
-      stats: social.progressStats(db, req.userId, friendId),
+      user: toPublicUser(await getUser(db, friendId)),
+      status: await liveStatus(db, req.userId, friendId),
+      recentCompletions: await social.recentCompletions(db, req.userId, friendId, 10),
+      rooms: (await rooms.listRooms(db, req.userId)).filter((room) => shared.includes(room.id)),
+      activity: await listActivity(db, req.userId, { withUserId: friendId, limit: 20 }),
+      stats: await social.progressStats(db, req.userId, friendId),
     });
   });
 
-  r.post('/encourage', (req, res) => {
+  r.post('/encourage', async (req, res) => {
     const input = parse(v.encourageSchema, req.body);
-    const id = social.encourage(db, req.userId, input);
-    const me = getUser(db, req.userId);
+    const id = await social.encourage(db, req.userId, input);
+    const me = await getUser(db, req.userId);
     const text = input.reaction ? `${REACTIONS[input.reaction].emoji} ${me.display_name}: ${REACTIONS[input.reaction].label}` : `💌 ${me.display_name}: ${input.message}`;
     notify([req.userId], ['activity']);
     notify([input.recipientId], ['activity', 'friends'], { notice: { kind: 'encouragement', text } });
-    if (input.roomId) notifyRoom(input.roomId, ['room', 'activity']);
+    if (input.roomId) await notifyRoom(input.roomId, ['room', 'activity']);
     res.status(201).json({ id });
   });
 
-  r.get('/activity', (req, res) => res.json({ activity: listActivity(db, req.userId, { limit: 40 }), unread: social.unreadCount(db, req.userId) }));
-  r.post('/activity/read', (req, res) => {
-    social.markActivityRead(db, req.userId);
+  r.get('/activity', async (req, res) => res.json({ activity: await listActivity(db, req.userId, { limit: 40 }), unread: await social.unreadCount(db, req.userId) }));
+  r.post('/activity/read', async (req, res) => {
+    await social.markActivityRead(db, req.userId);
     notify([req.userId], ['activity']);
     res.json({ ok: true });
   });
 
   // ───────────── Rooms & topics ─────────────
 
-  r.get('/rooms', (req, res) => res.json({ rooms: rooms.listRooms(db, req.userId) }));
+  r.get('/rooms', async (req, res) => res.json({ rooms: await rooms.listRooms(db, req.userId) }));
 
-  r.post('/rooms', (req, res) => {
+  r.post('/rooms', async (req, res) => {
     const input = parse(v.roomCreateSchema, req.body);
-    const id = rooms.createRoom(db, req.userId, input);
-    notifyRoom(id, ['rooms', 'room', 'activity', 'plans', 'friends']);
+    const id = await rooms.createRoom(db, req.userId, input);
+    await notifyRoom(id, ['rooms', 'room', 'activity', 'plans', 'friends']);
     res.status(201).json({ id });
   });
 
-  r.get('/rooms/:id', (req, res) => res.json(rooms.roomDetail(db, req.userId, String(req.params.id))));
+  r.get('/rooms/:id', async (req, res) => res.json(await rooms.roomDetail(db, req.userId, String(req.params.id))));
 
-  r.patch('/rooms/:id', (req, res) => {
+  r.patch('/rooms/:id', async (req, res) => {
     const id = String(req.params.id);
-    rooms.updateRoom(db, req.userId, id, parse(v.roomUpdateSchema, req.body));
-    notifyRoom(id, ['rooms', 'room', 'calendar']);
+    await rooms.updateRoom(db, req.userId, id, parse(v.roomUpdateSchema, req.body));
+    await notifyRoom(id, ['rooms', 'room', 'calendar']);
     res.json({ ok: true });
   });
 
-  r.post('/rooms/:id/topics', (req, res) => {
+  r.post('/rooms/:id/topics', async (req, res) => {
     const roomId = String(req.params.id);
-    const id = rooms.createTopic(db, req.userId, roomId, parse(v.topicCreateSchema, req.body));
-    notifyRoom(roomId, ['rooms', 'room']);
+    const id = await rooms.createTopic(db, req.userId, roomId, parse(v.topicCreateSchema, req.body));
+    await notifyRoom(roomId, ['rooms', 'room']);
     res.status(201).json({ id });
   });
 
-  r.put('/rooms/:id/topics/order', (req, res) => {
+  r.put('/rooms/:id/topics/order', async (req, res) => {
     const roomId = String(req.params.id);
-    rooms.reorderTopics(db, req.userId, roomId, parse(v.reorderSchema, req.body).topicIds);
-    notifyRoom(roomId, ['rooms', 'room']);
+    await rooms.reorderTopics(db, req.userId, roomId, parse(v.reorderSchema, req.body).topicIds);
+    await notifyRoom(roomId, ['rooms', 'room']);
     res.json({ ok: true });
   });
 
-  r.patch('/topics/:id', (req, res) => {
+  r.patch('/topics/:id', async (req, res) => {
     const id = String(req.params.id);
-    rooms.updateTopic(db, req.userId, id, parse(v.topicUpdateSchema, req.body));
-    const { room } = requireTopicAccess(db, id, req.userId);
-    notifyRoom(room.id, ['rooms', 'room', 'plans', 'calendar']);
+    await rooms.updateTopic(db, req.userId, id, parse(v.topicUpdateSchema, req.body));
+    const { room } = await requireTopicAccess(db, id, req.userId);
+    await notifyRoom(room.id, ['rooms', 'room', 'plans', 'calendar']);
     res.json({ ok: true });
   });
 
-  r.delete('/topics/:id', (req, res) => {
+  r.delete('/topics/:id', async (req, res) => {
     const id = String(req.params.id);
-    rooms.archiveTopic(db, req.userId, id);
-    const { room } = requireTopicAccess(db, id, req.userId);
-    notifyRoom(room.id, ['rooms', 'room', 'plans', 'calendar']);
+    await rooms.archiveTopic(db, req.userId, id);
+    const { room } = await requireTopicAccess(db, id, req.userId);
+    await notifyRoom(room.id, ['rooms', 'room', 'plans', 'calendar']);
     res.json({ ok: true });
   });
 
   /** Complete a topic. If a session is running on it, that session is ended and saved first. */
-  r.post('/topics/:id/complete', (req, res) => {
+  r.post('/topics/:id/complete', async (req, res) => {
     const id = String(req.params.id);
-    const { room } = requireTopicAccess(db, id, req.userId);
-    const active = activeSessionRow(db, req.userId);
+    const { room } = await requireTopicAccess(db, id, req.userId);
+    const active = await activeSessionRow(db, req.userId);
     let result;
     if (active && active.topic_id === id) {
       const input = parse(v.sessionFinishSchema, req.body);
-      result = sessions.finishSession(db, req.userId, active.id, { ...input, completeTopic: true });
+      result = await sessions.finishSession(db, req.userId, active.id, { ...input, completeTopic: true });
     } else {
-      rooms.completeTopic(db, req.userId, id);
-      result = { session: null, completedTopic: true, nextTopic: rooms.nextIncompleteTopic(db, req.userId, room.id, id), roomId: room.id };
+      await rooms.completeTopic(db, req.userId, id);
+      result = { session: null, completedTopic: true, nextTopic: await rooms.nextIncompleteTopic(db, req.userId, room.id, id), roomId: room.id };
     }
-    notifyWork(req.userId, room.id);
-    const me = getUser(db, req.userId);
-    const topic = get<{ title: string }>(db, 'SELECT title FROM topics WHERE id = ?', id)!;
+    await notifyWork(req.userId, room.id);
+    const me = await getUser(db, req.userId);
+    const topic = (await get<{ title: string }>(db, 'SELECT title FROM topics WHERE id = ?', id))!;
     notify(
-      roomMemberIds(db, room.id).filter((m) => m !== req.userId),
+      (await roomMemberIds(db, room.id)).filter((m) => m !== req.userId),
       ['room'],
       { roomId: room.id, notice: { kind: 'completion', text: `🌼 ${me.display_name} completed “${topic.title}”` } },
     );
     res.json(result);
   });
 
-  r.post('/topics/:id/reopen', (req, res) => {
+  r.post('/topics/:id/reopen', async (req, res) => {
     const id = String(req.params.id);
     const mode = req.body?.mode === 'undo' ? 'undo' : 'revise';
-    rooms.reopenTopic(db, req.userId, id, mode);
-    const { room } = requireTopicAccess(db, id, req.userId);
-    notifyWork(req.userId, room.id);
+    await rooms.reopenTopic(db, req.userId, id, mode);
+    const { room } = await requireTopicAccess(db, id, req.userId);
+    await notifyWork(req.userId, room.id);
     res.json({ ok: true });
   });
 
-  r.get('/topics/:id', (req, res) => {
-    const { topic, room } = requireTopicAccess(db, String(req.params.id), req.userId);
+  r.get('/topics/:id', async (req, res) => {
+    const { topic, room } = await requireTopicAccess(db, String(req.params.id), req.userId);
     res.json({ topicId: topic.id, roomId: room.id, roomName: room.name });
   });
 
-  r.get('/topics/:id/history', (req, res) => res.json(rooms.topicHistory(db, req.userId, String(req.params.id))));
+  r.get('/topics/:id/history', async (req, res) => res.json(await rooms.topicHistory(db, req.userId, String(req.params.id))));
 
   // ───────────── Study sessions (timer) ─────────────
 
-  r.get('/sessions/active', (req, res) => res.json({ session: sessions.getActiveSession(db, req.userId) }));
+  r.get('/sessions/active', async (req, res) => res.json({ session: await sessions.getActiveSession(db, req.userId) }));
 
-  r.get('/sessions', (req, res) => res.json({ sessions: sessions.listSessions(db, req.userId) }));
+  r.get('/sessions', async (req, res) => res.json({ sessions: await sessions.listSessions(db, req.userId) }));
 
-  r.post('/sessions', (req, res) => {
-    const session = sessions.startSession(db, req.userId, parse(v.sessionStartSchema, req.body));
-    notifyWork(req.userId, session.roomId);
+  r.post('/sessions', async (req, res) => {
+    const session = await sessions.startSession(db, req.userId, parse(v.sessionStartSchema, req.body));
+    await notifyWork(req.userId, session.roomId);
     res.status(201).json({ session });
   });
 
-  r.post('/sessions/:id/:action', (req, res) => {
+  r.post('/sessions/:id/:action', async (req, res) => {
     const id = String(req.params.id);
     const action = req.params.action;
     if (action === 'pause' || action === 'resume') {
-      const session = action === 'pause' ? sessions.pauseSession(db, req.userId, id) : sessions.resumeSession(db, req.userId, id);
-      notifyWork(req.userId, session.roomId);
+      const session = action === 'pause' ? await sessions.pauseSession(db, req.userId, id) : await sessions.resumeSession(db, req.userId, id);
+      await notifyWork(req.userId, session.roomId);
       return res.json({ session });
     }
     if (action === 'finish') {
-      const result = sessions.finishSession(db, req.userId, id, parse(v.sessionFinishSchema, req.body));
-      notifyWork(req.userId, result.roomId);
+      const result = await sessions.finishSession(db, req.userId, id, parse(v.sessionFinishSchema, req.body));
+      await notifyWork(req.userId, result.roomId);
       return res.json(result);
     }
     if (action === 'discard') {
-      sessions.discardSession(db, req.userId, id);
-      notifyWork(req.userId);
+      await sessions.discardSession(db, req.userId, id);
+      await notifyWork(req.userId);
       return res.json({ ok: true });
     }
     if (action === 'correct') {
       const input = parse(v.sessionCorrectSchema, req.body);
-      const session = sessions.correctSession(db, req.userId, id, input.minutes, input.reason);
-      notifyWork(req.userId, session.roomId);
+      const session = await sessions.correctSession(db, req.userId, id, input.minutes, input.reason);
+      await notifyWork(req.userId, session.roomId);
       return res.json({ session });
     }
     throw badRequest('Unknown action.');
   });
 
-  r.patch('/sessions/:id', (req, res) => {
-    sessions.updateSessionSettings(db, req.userId, String(req.params.id), parse(v.sessionUpdateSchema, req.body));
+  r.patch('/sessions/:id', async (req, res) => {
+    await sessions.updateSessionSettings(db, req.userId, String(req.params.id), parse(v.sessionUpdateSchema, req.body));
     notify([req.userId], ['session']);
     res.json({ ok: true });
   });
@@ -303,120 +304,120 @@ export function apiRouter(db: DB, hub: RealtimeHub, opts: { secureCookies: boole
   // ───────────── Goals (plans → sprints → days → tasks) ─────────────
 
   // A plan change can show up in a room (pulled sprints), so friends refetch too. Events carry no data.
-  const notifyPlan = (req: Request) => notify(circleOf(db, req.userId), ['plans', 'room', 'rooms', 'session', 'progress', 'calendar']);
+  const notifyPlan = async (req: Request) => notify(await circleOf(db, req.userId), ['plans', 'room', 'rooms', 'session', 'progress', 'calendar']);
   const sprintNumber = (req: Request) => Number.parseInt(String(req.params.n), 10);
 
-  r.get('/plans', (req, res) => res.json({ plans: plans.listPlans(db, req.userId) }));
-  r.get('/plans/:id', (req, res) => res.json({ plan: plans.getPlan(db, req.userId, String(req.params.id)) }));
+  r.get('/plans', async (req, res) => res.json({ plans: await plans.listPlans(db, req.userId) }));
+  r.get('/plans/:id', async (req, res) => res.json({ plan: await plans.getPlan(db, req.userId, String(req.params.id)) }));
 
-  r.post('/plans', (req, res) => {
-    const id = plans.createPlan(db, req.userId, parse(v.planCreateSchema, req.body));
-    notifyPlan(req);
+  r.post('/plans', async (req, res) => {
+    const id = await plans.createPlan(db, req.userId, parse(v.planCreateSchema, req.body));
+    await notifyPlan(req);
     res.status(201).json({ id });
   });
 
-  r.patch('/plans/:id', (req, res) => {
-    plans.updatePlan(db, req.userId, String(req.params.id), parse(v.planUpdateSchema, req.body));
-    notifyPlan(req);
+  r.patch('/plans/:id', async (req, res) => {
+    await plans.updatePlan(db, req.userId, String(req.params.id), parse(v.planUpdateSchema, req.body));
+    await notifyPlan(req);
     res.json({ ok: true });
   });
 
-  r.post('/plans/:id/sprints', (req, res) => {
-    const number = plans.addSprint(db, req.userId, String(req.params.id), parse(v.sprintCreateSchema, req.body).days);
-    notifyPlan(req);
+  r.post('/plans/:id/sprints', async (req, res) => {
+    const number = await plans.addSprint(db, req.userId, String(req.params.id), parse(v.sprintCreateSchema, req.body).days);
+    await notifyPlan(req);
     res.status(201).json({ number });
   });
 
-  r.patch('/plans/:id/sprints/:n', (req, res) => {
-    plans.resizeSprint(db, req.userId, String(req.params.id), sprintNumber(req), parse(v.sprintUpdateSchema, req.body).days);
-    notifyPlan(req);
+  r.patch('/plans/:id/sprints/:n', async (req, res) => {
+    await plans.resizeSprint(db, req.userId, String(req.params.id), sprintNumber(req), parse(v.sprintUpdateSchema, req.body).days);
+    await notifyPlan(req);
     res.json({ ok: true });
   });
 
-  r.delete('/plans/:id/sprints/:n', (req, res) => {
-    plans.removeSprint(db, req.userId, String(req.params.id), sprintNumber(req));
-    notifyPlan(req);
+  r.delete('/plans/:id/sprints/:n', async (req, res) => {
+    await plans.removeSprint(db, req.userId, String(req.params.id), sprintNumber(req));
+    await notifyPlan(req);
     res.json({ ok: true });
   });
 
-  r.post('/plans/:id/sprints/:n/unpull', (req, res) => {
-    const roomId = plans.unpullSprint(db, req.userId, String(req.params.id), sprintNumber(req));
-    notifyPlan(req);
-    if (roomId) notifyRoom(roomId, ['rooms', 'room', 'plans']);
+  r.post('/plans/:id/sprints/:n/unpull', async (req, res) => {
+    const roomId = await plans.unpullSprint(db, req.userId, String(req.params.id), sprintNumber(req));
+    await notifyPlan(req);
+    if (roomId) await notifyRoom(roomId, ['rooms', 'room', 'plans']);
     res.json({ ok: true });
   });
 
-  r.post('/plans/:id/sprints/:n/pull', (req, res) => {
-    const roomId = plans.pullSprint(db, req.userId, String(req.params.id), sprintNumber(req), parse(v.pullSprintSchema, req.body).roomId);
-    notifyPlan(req);
-    notifyRoom(roomId, ['rooms', 'room', 'plans']);
+  r.post('/plans/:id/sprints/:n/pull', async (req, res) => {
+    const roomId = await plans.pullSprint(db, req.userId, String(req.params.id), sprintNumber(req), parse(v.pullSprintSchema, req.body).roomId);
+    await notifyPlan(req);
+    await notifyRoom(roomId, ['rooms', 'room', 'plans']);
     res.json({ roomId });
   });
 
-  r.post('/plans/:id/sprints/:n/:action', (req, res) => {
+  r.post('/plans/:id/sprints/:n/:action', async (req, res) => {
     const action = req.params.action;
     if (action !== 'complete' && action !== 'reopen') throw badRequest('Unknown action.');
-    plans.setSprintCompleted(db, req.userId, String(req.params.id), sprintNumber(req), action === 'complete');
-    notifyPlan(req);
+    await plans.setSprintCompleted(db, req.userId, String(req.params.id), sprintNumber(req), action === 'complete');
+    await notifyPlan(req);
     res.json({ ok: true });
   });
 
-  r.post('/plans/:id/tasks', (req, res) => {
-    const id = plans.addTask(db, req.userId, String(req.params.id), parse(v.planTaskCreateSchema, req.body));
-    notifyPlan(req);
+  r.post('/plans/:id/tasks', async (req, res) => {
+    const id = await plans.addTask(db, req.userId, String(req.params.id), parse(v.planTaskCreateSchema, req.body));
+    await notifyPlan(req);
     res.status(201).json({ id });
   });
 
-  r.patch('/plan-tasks/:id', (req, res) => {
-    plans.updateTask(db, req.userId, String(req.params.id), parse(v.planTaskUpdateSchema, req.body));
-    notifyPlan(req);
+  r.patch('/plan-tasks/:id', async (req, res) => {
+    await plans.updateTask(db, req.userId, String(req.params.id), parse(v.planTaskUpdateSchema, req.body));
+    await notifyPlan(req);
     res.json({ ok: true });
   });
 
-  r.delete('/plan-tasks/:id', (req, res) => {
-    plans.removeTask(db, req.userId, String(req.params.id));
-    notifyPlan(req);
+  r.delete('/plan-tasks/:id', async (req, res) => {
+    await plans.removeTask(db, req.userId, String(req.params.id));
+    await notifyPlan(req);
     res.json({ ok: true });
   });
 
   // ───────────── Tasks / calendar ─────────────
 
   // Friends refetch too (a task may be shared with them). Events carry no task data.
-  const notifyTask = (req: Request) => notify(circleOf(db, req.userId), ['calendar', 'session', 'progress']);
+  const notifyTask = async (req: Request) => notify(await circleOf(db, req.userId), ['calendar', 'session', 'progress']);
 
-  r.get('/tasks', (req, res) => {
-    const today = localDate(Date.now(), getUser(db, req.userId).timezone);
+  r.get('/tasks', async (req, res) => {
+    const today = localDate(Date.now(), (await getUser(db, req.userId)).timezone);
     const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from)) ? String(req.query.from) : addMonths(today, -1);
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to)) ? String(req.query.to) : addMonths(today, 2);
-    const planned = plans.calendarPlanItems(db, req.userId, from, to, { friends: true });
-    res.json({ tasks: tasks.listTasks(db, req.userId, from, to), planItems: planned.items, sprints: planned.sprints });
+    const planned = await plans.calendarPlanItems(db, req.userId, from, to, { friends: true });
+    res.json({ tasks: await tasks.listTasks(db, req.userId, from, to), planItems: planned.items, sprints: planned.sprints });
   });
 
-  r.post('/tasks', (req, res) => {
-    const id = tasks.createTask(db, req.userId, parse(v.taskCreateSchema, req.body));
-    notifyTask(req);
-    res.status(201).json({ task: tasks.getTask(db, req.userId, id) });
+  r.post('/tasks', async (req, res) => {
+    const id = await tasks.createTask(db, req.userId, parse(v.taskCreateSchema, req.body));
+    await notifyTask(req);
+    res.status(201).json({ task: await tasks.getTask(db, req.userId, id) });
   });
 
-  r.patch('/tasks/:id', (req, res) => {
+  r.patch('/tasks/:id', async (req, res) => {
     const id = String(req.params.id);
-    tasks.updateTask(db, req.userId, id, parse(v.taskUpdateSchema, req.body));
-    notifyTask(req);
-    res.json({ task: tasks.getTask(db, req.userId, id) });
+    await tasks.updateTask(db, req.userId, id, parse(v.taskUpdateSchema, req.body));
+    await notifyTask(req);
+    res.json({ task: await tasks.getTask(db, req.userId, id) });
   });
 
-  r.delete('/tasks/:id', (req, res) => {
+  r.delete('/tasks/:id', async (req, res) => {
     const id = String(req.params.id);
-    tasks.archiveTask(db, req.userId, id);
-    notifyTask(req);
+    await tasks.archiveTask(db, req.userId, id);
+    await notifyTask(req);
     res.json({ ok: true });
   });
 
   // ───────────── Progress ─────────────
 
-  r.get('/progress', (req, res) => {
+  r.get('/progress', async (req, res) => {
     const userId = req.query.userId ? String(req.query.userId) : req.userId;
-    res.json({ stats: social.progressStats(db, req.userId, userId) });
+    res.json({ stats: await social.progressStats(db, req.userId, userId) });
   });
 
   return r;

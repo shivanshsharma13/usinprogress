@@ -44,9 +44,9 @@ test('two users can create accounts and sign in', async () => {
   assert.equal(dup.status, 409);
 
   // Passwords are hashed and live outside the application tables.
-  const cols = srv.db.prepare('PRAGMA table_info(users)').all().map((r: any) => r.name);
+  const cols = (await srv.db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")).map((r: any) => r.column_name);
   assert.ok(!cols.some((n: string) => n.includes('pass')));
-  const cred = srv.db.prepare('SELECT password_hash FROM auth_credentials WHERE user_id = ?').get(a.id) as any;
+  const cred = (await srv.db.query('SELECT password_hash FROM auth_credentials WHERE user_id = ?', [a.id]))[0] as any;
   assert.ok(cred.password_hash.startsWith('scrypt$'));
   assert.ok(!cred.password_hash.includes('correct horse'));
 
@@ -104,7 +104,7 @@ test('only accepted friends can create private rooms; rooms have exactly two mem
   assert.equal((await C.post(`/rooms/${roomId}/topics`, { title: 'x' })).status, 404);
 
   // The database itself refuses a third member.
-  assert.throws(() => srv.db.prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)').run(roomId, c.id, Date.now()), /ROOM_FULL/);
+  await assert.rejects(srv.db.query('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', [roomId, c.id, Date.now()]), /ROOM_FULL/);
 });
 
 test('each member adds, edits and reorders their own topics; the partner can only see them', async () => {
@@ -161,7 +161,7 @@ test('starting a topic creates a persistent session the partner sees live', asyn
   const other = await A.post('/sessions', { topicId: topics[1] });
   assert.equal(other.status, 409);
   assert.equal(other.body.error.code, 'SESSION_ACTIVE');
-  const count = srv.db.prepare("SELECT COUNT(*) AS n FROM study_sessions WHERE user_id = ? AND state IN ('running','paused')").get(a.id) as any;
+  const count = (await srv.db.query("SELECT COUNT(*) AS n FROM study_sessions WHERE user_id = ? AND state IN ('running','paused')", [a.id]))[0] as any;
   assert.equal(count.n, 1);
 });
 
@@ -214,7 +214,7 @@ test('completing a topic saves the session, marks it complete and selects the ne
 
   // Retrying the completion does not double count.
   await A.post(`/topics/${topics[0]}/complete`);
-  const n = srv.db.prepare("SELECT COUNT(*) AS n FROM topic_completions WHERE user_id = ? AND topic_id = ? AND revoked_at IS NULL").get(a.id, topics[0]) as any;
+  const n = (await srv.db.query("SELECT COUNT(*) AS n FROM topic_completions WHERE user_id = ? AND topic_id = ? AND revoked_at IS NULL", [a.id, topics[0]]))[0] as any;
   assert.equal(n.n, 1);
 });
 
@@ -242,7 +242,7 @@ test('one member cannot complete or change the other member’s records', async 
   await A.post(`/sessions/${s.id}/discard`);
   assert.equal((await A.get('/sessions/active')).body.session, null);
   // Discarded sessions are kept for audit but add no time.
-  const row = srv.db.prepare('SELECT state, focused_ms FROM study_sessions WHERE id = ?').get(s.id) as any;
+  const row = (await srv.db.query('SELECT state, focused_ms FROM study_sessions WHERE id = ?', [s.id]))[0] as any;
   assert.deepEqual({ ...row }, { state: 'discarded', focused_ms: 0 });
   // B can't read A's session history.
   const bs = (await B.get('/sessions')).body.sessions;
@@ -251,7 +251,7 @@ test('one member cannot complete or change the other member’s records', async 
 
 test('very long sessions must be confirmed or corrected, with an audit trail', async () => {
   const s = (await A.post('/sessions', { topicId: topics[2] })).body.session;
-  srv.db.prepare('UPDATE study_sessions SET started_at = started_at - ? WHERE id = ?').run(5 * 3600_000, s.id);
+  await srv.db.query('UPDATE study_sessions SET started_at = started_at - ? WHERE id = ?', [5 * 3600_000, s.id]);
   const first = await A.post(`/sessions/${s.id}/finish`, {});
   assert.equal(first.status, 409);
   assert.equal(first.body.error.code, 'LONG_SESSION');
@@ -274,9 +274,9 @@ test('reconnecting replays nothing: realtime events only invalidate, state comes
   for (let i = 0; i < 3; i++) assert.equal((await B.get('/sessions/active')).body.session.id, s.id);
   await B.post(`/sessions/${s.id}/finish`, { completeTopic: true });
   await B.post(`/sessions/${s.id}/finish`, { completeTopic: true });
-  const n = srv.db.prepare('SELECT COUNT(*) AS n FROM study_sessions WHERE user_id = ?').get(b.id) as any;
+  const n = (await srv.db.query('SELECT COUNT(*) AS n FROM study_sessions WHERE user_id = ?', [b.id]))[0] as any;
   assert.equal(n.n, 1);
-  const done = srv.db.prepare("SELECT COUNT(*) AS n FROM topic_completions WHERE user_id = ?").get(b.id) as any;
+  const done = (await srv.db.query("SELECT COUNT(*) AS n FROM topic_completions WHERE user_id = ?", [b.id]))[0] as any;
   assert.equal(done.n, 1);
 });
 
@@ -368,7 +368,7 @@ test('pulled sprints: study in the room, backlog stays out until you schedule it
   await A.patch(`/plan-tasks/${other.id}`, { day: 3 });
   const otherTopic = (await get()).sprints[0].days[3].tasks.find((t: any) => t.id === other.id).topicId;
   await A.post(`/topics/${otherTopic}/complete`);
-  srv.db.prepare('UPDATE topic_completions SET local_date = ? WHERE topic_id = ?').run(addDays(today, -3), otherTopic);
+  await srv.db.query('UPDATE topic_completions SET local_date = ? WHERE topic_id = ?', [addDays(today, -3), otherTopic]);
   assert.equal((await get()).sprints[0].days[0].status, 'partial');
 
   // Parking today's task in the backlog takes it out of the room.

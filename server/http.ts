@@ -33,6 +33,11 @@ export function errorHandler(err: any, _req: Request, res: Response, _next: Next
     res.status(err.status).json({ error: { code: err.code, message: err.message, data: err.data } });
     return;
   }
+  // A uniqueness rule in the database caught a duplicate (e.g. two taps racing to start a session).
+  if (err?.code === '23505') {
+    res.status(409).json({ error: { code: 'DUPLICATE', message: 'That was already saved. Please refresh and try again.' } });
+    return;
+  }
   if (err?.type === 'entity.parse.failed') {
     res.status(400).json({ error: { code: 'BAD_JSON', message: 'Malformed request.' } });
     return;

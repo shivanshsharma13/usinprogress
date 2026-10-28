@@ -61,50 +61,50 @@ export function toMe(u: UserRow): Me {
   };
 }
 
-export function getUser(db: DB, id: string): UserRow {
-  const u = get<UserRow>(db, 'SELECT * FROM users WHERE id = ?', id);
+export async function getUser(db: DB, id: string): Promise<UserRow> {
+  const u = await get<UserRow>(db, 'SELECT * FROM users WHERE id = ?', id);
   if (!u) throw notFound('That person could not be found.');
   return u;
 }
 
-export function getUsers(db: DB, ids: string[]): Map<string, UserRow> {
+export async function getUsers(db: DB, ids: string[]): Promise<Map<string, UserRow>> {
   if (!ids.length) return new Map();
-  const rows = all<UserRow>(db, `SELECT * FROM users WHERE id IN (${placeholders(ids.length)})`, ...ids);
+  const rows = await all<UserRow>(db, `SELECT * FROM users WHERE id IN (${placeholders(ids.length)})`, ...ids);
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-export function todayFor(db: DB, userId: string): string {
-  return localDate(Date.now(), getUser(db, userId).timezone);
+export async function todayFor(db: DB, userId: string): Promise<string> {
+  return localDate(Date.now(), (await getUser(db, userId)).timezone);
 }
 
 // ───────────── Friendship ─────────────
 
-export function friendIds(db: DB, userId: string): string[] {
-  return all<{ id: string }>(
+export async function friendIds(db: DB, userId: string): Promise<string[]> {
+  return (await all<{ id: string }>(
     db,
     `SELECT CASE WHEN requester_id = ? THEN recipient_id ELSE requester_id END AS id
        FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR recipient_id = ?)`,
     userId,
     userId,
     userId,
-  ).map((r) => r.id);
+  )).map((r) => r.id);
 }
 
-export function areFriends(db: DB, a: string, b: string): boolean {
+export async function areFriends(db: DB, a: string, b: string): Promise<boolean> {
   const [lo, hi] = a < b ? [a, b] : [b, a];
-  return Boolean(get(db, "SELECT 1 FROM friendships WHERE user_low = ? AND user_high = ? AND status = 'accepted'", lo, hi));
+  return Boolean(await get(db, "SELECT 1 FROM friendships WHERE user_low = ? AND user_high = ? AND status = 'accepted'", lo, hi));
 }
 
 /** Me plus my accepted friends — who should hear about changes to my profile/status. */
-export function circleOf(db: DB, userId: string): string[] {
-  return [userId, ...friendIds(db, userId)];
+export async function circleOf(db: DB, userId: string): Promise<string[]> {
+  return [userId, ...await friendIds(db, userId)];
 }
 
 // ───────────── Rooms ─────────────
 
 /** Returns the room if the user is an active member; otherwise 404 (never reveals that it exists). */
-export function requireRoomMember(db: DB, roomId: string, userId: string): RoomRow {
-  const room = get<RoomRow>(
+export async function requireRoomMember(db: DB, roomId: string, userId: string): Promise<RoomRow> {
+  const room = await get<RoomRow>(
     db,
     `SELECT r.* FROM rooms r JOIN room_members m ON m.room_id = r.id
       WHERE r.id = ? AND m.user_id = ? AND m.status = 'active'`,
@@ -115,14 +115,14 @@ export function requireRoomMember(db: DB, roomId: string, userId: string): RoomR
   return room;
 }
 
-export function roomMemberIds(db: DB, roomId: string): string[] {
-  return all<{ user_id: string }>(db, "SELECT user_id FROM room_members WHERE room_id = ? AND status = 'active' ORDER BY joined_at, user_id", roomId).map(
+export async function roomMemberIds(db: DB, roomId: string): Promise<string[]> {
+  return (await all<{ user_id: string }>(db, "SELECT user_id FROM room_members WHERE room_id = ? AND status = 'active' ORDER BY joined_at, user_id", roomId)).map(
     (r) => r.user_id,
   );
 }
 
-export function myRoomIds(db: DB, userId: string): string[] {
-  return all<{ room_id: string }>(db, "SELECT room_id FROM room_members WHERE user_id = ? AND status = 'active'", userId).map((r) => r.room_id);
+export async function myRoomIds(db: DB, userId: string): Promise<string[]> {
+  return (await all<{ room_id: string }>(db, "SELECT room_id FROM room_members WHERE user_id = ? AND status = 'active'", userId)).map((r) => r.room_id);
 }
 
 export interface TopicRow {
@@ -134,7 +134,6 @@ export interface TopicRow {
   estimated_minutes: number | null;
   session_target_minutes: number | null;
   deadline: string | null;
-  goal_id: string | null;
   position: number;
   created_by: string;
   status: 'active' | 'archived';
@@ -143,10 +142,10 @@ export interface TopicRow {
 }
 
 /** Topic plus a membership check on its room. */
-export function requireTopicAccess(db: DB, topicId: string, userId: string): { topic: TopicRow; room: RoomRow } {
-  const topic = get<TopicRow>(db, 'SELECT * FROM topics WHERE id = ?', topicId);
+export async function requireTopicAccess(db: DB, topicId: string, userId: string): Promise<{ topic: TopicRow; room: RoomRow }> {
+  const topic = await get<TopicRow>(db, 'SELECT * FROM topics WHERE id = ?', topicId);
   if (!topic) throw notFound('That topic could not be found.');
-  const room = requireRoomMember(db, topic.room_id, userId);
+  const room = await requireRoomMember(db, topic.room_id, userId);
   return { topic, room };
 }
 
@@ -154,8 +153,8 @@ export function requireTopicAccess(db: DB, topicId: string, userId: string): { t
  * Topic access for changes: each topic belongs to the person who added it. Room partners can see
  * it and its progress, but only the owner can edit, complete, reorder or study it.
  */
-export function requireOwnTopic(db: DB, topicId: string, userId: string): { topic: TopicRow; room: RoomRow } {
-  const access = requireTopicAccess(db, topicId, userId);
+export async function requireOwnTopic(db: DB, topicId: string, userId: string): Promise<{ topic: TopicRow; room: RoomRow }> {
+  const access = await requireTopicAccess(db, topicId, userId);
   if (access.topic.created_by !== userId) {
     throw forbidden("This is your friend's topic. You can follow their progress, but only they can change or study it.");
   }
@@ -183,42 +182,42 @@ export interface SessionRow {
   created_at: number;
 }
 
-export function pausesFor(db: DB, sessionId: string) {
-  return all<{ paused_at: number; resumed_at: number | null }>(db, 'SELECT paused_at, resumed_at FROM session_pauses WHERE session_id = ? ORDER BY paused_at', sessionId).map(
+export async function pausesFor(db: DB, sessionId: string) {
+  return (await all<{ paused_at: number; resumed_at: number | null }>(db, 'SELECT paused_at, resumed_at FROM session_pauses WHERE session_id = ? ORDER BY paused_at', sessionId)).map(
     (p) => ({ pausedAt: p.paused_at, resumedAt: p.resumed_at }),
   );
 }
 
-export function activeSessionRow(db: DB, userId: string): SessionRow | undefined {
-  return get<SessionRow>(db, "SELECT * FROM study_sessions WHERE user_id = ? AND state IN ('running', 'paused')", userId);
+export async function activeSessionRow(db: DB, userId: string): Promise<SessionRow | undefined> {
+  return await get<SessionRow>(db, "SELECT * FROM study_sessions WHERE user_id = ? AND state IN ('running', 'paused')", userId);
 }
 
-export function focusedToday(db: DB, userId: string): number {
-  const today = todayFor(db, userId);
-  const done = get<{ ms: number | null }>(db, "SELECT SUM(focused_ms) AS ms FROM study_sessions WHERE user_id = ? AND local_date = ? AND state = 'finished'", userId, today);
+export async function focusedToday(db: DB, userId: string): Promise<number> {
+  const today = await todayFor(db, userId);
+  const done = await get<{ ms: number | null }>(db, "SELECT SUM(focused_ms) AS ms FROM study_sessions WHERE user_id = ? AND local_date = ? AND state = 'finished'", userId, today);
   let ms = done?.ms ?? 0;
-  const active = activeSessionRow(db, userId);
+  const active = await activeSessionRow(db, userId);
   if (active && active.local_date === today) {
-    ms += focusedMs({ startedAt: active.started_at, endedAt: null, pauses: pausesFor(db, active.id) }, Date.now());
+    ms += focusedMs({ startedAt: active.started_at, endedAt: null, pauses: await pausesFor(db, active.id) }, Date.now());
   }
   return ms;
 }
 
 /** What `viewerId` may see of `userId`'s live activity. */
-export function liveStatus(db: DB, viewerId: string, userId: string): LiveStatus {
-  const user = getUser(db, userId);
-  const todayFocusedMs = focusedToday(db, userId);
+export async function liveStatus(db: DB, viewerId: string, userId: string): Promise<LiveStatus> {
+  const user = await getUser(db, userId);
+  const todayFocusedMs = await focusedToday(db, userId);
   if (viewerId !== userId && !user.share_status) return { state: 'hidden', todayFocusedMs };
-  const active = activeSessionRow(db, userId);
+  const active = await activeSessionRow(db, userId);
   if (!active) return { state: 'idle', todayFocusedMs };
   const status: LiveStatus = {
     state: active.state === 'running' ? 'studying' : 'paused',
     startedAt: active.started_at,
-    pauses: pausesFor(db, active.id),
+    pauses: await pausesFor(db, active.id),
     todayFocusedMs,
   };
   // Only reveal what they are studying if the viewer shares that room.
-  const visible = get<{ topic: string; room: string; room_id: string }>(
+  const visible = await get<{ topic: string; room: string; room_id: string }>(
     db,
     `SELECT t.title AS topic, r.name AS room, r.id AS room_id FROM topics t JOIN rooms r ON r.id = t.room_id
        JOIN room_members m ON m.room_id = r.id AND m.user_id = ? AND m.status = 'active'
@@ -236,12 +235,12 @@ export function liveStatus(db: DB, viewerId: string, userId: string): LiveStatus
 
 // ───────────── Activity ─────────────
 
-export function recordActivity(
+export async function recordActivity(
   db: DB,
   a: { actorId: string; type: Activity['type']; recipientId?: string | null; roomId?: string | null; refId?: string | null; reaction?: ReactionKey | null; message?: string | null },
 ) {
   const id = newId();
-  run(
+  await run(
     db,
     'INSERT INTO activities (id, actor_id, recipient_id, room_id, type, ref_id, reaction, message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     id,
@@ -276,8 +275,8 @@ interface ActivityRow {
  * Activity visible to the viewer: things addressed to them, things they did, and events in rooms
  * they belong to. Optional filters narrow to one room or to activity between two people.
  */
-export function listActivity(db: DB, viewerId: string, opts: { roomId?: string; withUserId?: string; limit?: number } = {}): Activity[] {
-  const rooms = myRoomIds(db, viewerId);
+export async function listActivity(db: DB, viewerId: string, opts: { roomId?: string; withUserId?: string; limit?: number } = {}): Promise<Activity[]> {
+  const rooms = await myRoomIds(db, viewerId);
   const where = [`(a.recipient_id = ? OR a.actor_id = ? ${rooms.length ? `OR a.room_id IN (${placeholders(rooms.length)})` : ''})`];
   const params: (string | number)[] = [viewerId, viewerId, ...rooms];
   if (opts.roomId) {
@@ -288,21 +287,20 @@ export function listActivity(db: DB, viewerId: string, opts: { roomId?: string; 
     where.push('(a.actor_id = ? OR a.recipient_id = ?)');
     params.push(opts.withUserId, opts.withUserId);
   }
-  const rows = all<ActivityRow>(
+  const rows = await all<ActivityRow>(
     db,
     `SELECT a.*, r.name AS room_name,
-            COALESCE(t.title, g.title, rr.name) AS ref_title
+            COALESCE(t.title, rr.name) AS ref_title
        FROM activities a
        LEFT JOIN rooms r ON r.id = a.room_id
        LEFT JOIN topics t ON t.id = a.ref_id
-       LEFT JOIN goals g ON g.id = a.ref_id
        LEFT JOIN rooms rr ON rr.id = a.ref_id
       WHERE ${where.join(' AND ')}
       ORDER BY a.created_at DESC LIMIT ?`,
     ...params,
     opts.limit ?? 30,
   );
-  const users = getUsers(db, [...new Set(rows.map((r) => r.actor_id))]);
+  const users = await getUsers(db, [...new Set(rows.map((r) => r.actor_id))]);
   return rows.map((r) => ({
     id: r.id,
     type: r.type,

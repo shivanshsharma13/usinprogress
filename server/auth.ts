@@ -31,24 +31,24 @@ export function verifyPassword(password: string, stored: string): boolean {
 // A fixed hash so unknown usernames take as long to reject as wrong passwords.
 const DUMMY_HASH = hashPassword('not-a-real-password');
 
-export function checkCredentials(db: DB, userId: string | undefined, password: string): boolean {
-  const row = userId ? get<{ password_hash: string }>(db, 'SELECT password_hash FROM auth_credentials WHERE user_id = ?', userId) : undefined;
+export async function checkCredentials(db: DB, userId: string | undefined, password: string): Promise<boolean> {
+  const row = userId ? await get<{ password_hash: string }>(db, 'SELECT password_hash FROM auth_credentials WHERE user_id = ?', userId) : undefined;
   const ok = verifyPassword(password, row?.password_hash ?? DUMMY_HASH);
   return Boolean(row) && ok;
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
-export function startAuthSession(db: DB, res: Response, userId: string, secure: boolean) {
+export async function startAuthSession(db: DB, res: Response, userId: string, secure: boolean) {
   const token = randomBytes(32).toString('base64url');
   const now = Date.now();
-  run(db, 'INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', sha256(token), userId, now, now + SESSION_TTL_MS);
+  await run(db, 'INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', sha256(token), userId, now, now + SESSION_TTL_MS);
   res.cookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure, maxAge: SESSION_TTL_MS, path: '/' });
 }
 
-export function endAuthSession(db: DB, req: Request, res: Response) {
+export async function endAuthSession(db: DB, req: Request, res: Response) {
   const token = readCookie(req, COOKIE);
-  if (token) run(db, 'DELETE FROM auth_sessions WHERE token_hash = ?', sha256(token));
+  if (token) await run(db, 'DELETE FROM auth_sessions WHERE token_hash = ?', sha256(token));
   res.clearCookie(COOKIE, { path: '/' });
 }
 
@@ -62,17 +62,17 @@ function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
-export function userIdFromRequest(db: DB, req: Request): string | undefined {
+export async function userIdFromRequest(db: DB, req: Request): Promise<string | undefined> {
   const token = readCookie(req, COOKIE);
   if (!token) return undefined;
-  const row = get<{ user_id: string; expires_at: number }>(db, 'SELECT user_id, expires_at FROM auth_sessions WHERE token_hash = ?', sha256(token));
+  const row = await get<{ user_id: string; expires_at: number }>(db, 'SELECT user_id, expires_at FROM auth_sessions WHERE token_hash = ?', sha256(token));
   if (!row || row.expires_at < Date.now()) return undefined;
   return row.user_id;
 }
 
 export function requireAuth(db: DB) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const userId = userIdFromRequest(db, req);
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    const userId = await userIdFromRequest(db, req);
     if (!userId) return next(new HttpError(401, 'UNAUTHENTICATED', 'Please sign in again.'));
     req.userId = userId;
     next();

@@ -4,12 +4,13 @@ import { createApp } from '../server/app.ts';
 
 export interface TestServer {
   base: string;
-  db: ReturnType<typeof createApp>['db'];
+  db: Awaited<ReturnType<typeof createApp>>['db'];
   close(): Promise<void>;
 }
 
 export async function startServer(): Promise<TestServer> {
-  const { app, db, close } = createApp({ dbPath: ':memory:' });
+  // In-memory PGlite by default; set TEST_DATABASE_URL to run the same tests against a real (empty) Postgres.
+  const { app, db, close } = await createApp({ databaseUrl: process.env.TEST_DATABASE_URL });
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s));
   });
@@ -19,9 +20,8 @@ export async function startServer(): Promise<TestServer> {
     db,
     close: () =>
       new Promise((resolve) => {
-        close();
         server.closeAllConnections();
-        server.close(() => resolve());
+        server.close(() => void close().then(resolve));
       }),
   };
 }
