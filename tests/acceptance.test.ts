@@ -282,129 +282,80 @@ test('reconnecting replays nothing: realtime events only invalidate, state comes
 
 // ───────────── Goals ─────────────
 
-test('completed work propagates weekly → monthly → yearly exactly once; unlinked goals stay at zero', async () => {
+test('goals live in a room (yearly → monthly → weekly) with topics under them; each topic counts once', async () => {
   const year = today.slice(0, 4);
-  const yearly = (await A.post('/goals', { title: 'DSA proficiency', period: 'yearly', startDate: `${year}-01-01`, deadline: `${year}-12-31`, measure: 'count', target: 1000, unit: 'questions' })).body.id;
-  const monthly = (await A.post('/goals', { title: '100 questions', period: 'monthly', startDate: startOfMonth(today), deadline: endOfMonth(today), measure: 'count', target: 100, unit: 'questions', parentId: yearly })).body.id;
   const weekStart = startOfWeek(today);
-  const weekly = await A.post('/goals', { title: '25 this week', period: 'weekly', startDate: weekStart, deadline: addDays(weekStart, 6), measure: 'count', target: 25, unit: 'questions', parentId: monthly, roomIds: [roomId] });
-  assert.equal(weekly.status, 201);
-  const unlinked = (await A.post('/goals', { title: 'Read a book', period: 'monthly', startDate: startOfMonth(today), deadline: endOfMonth(today), measure: 'count', target: 3, unit: 'books' })).body.id;
+  const goal = async (title: string, period: string, startDate: string, deadline: string, parentId?: string) => {
+    const res = await A.post('/goals', { roomId, title, period, startDate, deadline, parentId });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    return res.body.id as string;
+  };
+  const yearly = await goal('DSA this year', 'yearly', `${year}-01-01`, `${year}-12-31`);
+  const monthly = await goal('Core structures', 'monthly', startOfMonth(today), endOfMonth(today), yearly);
+  const weekly = await goal('Searching', 'weekly', weekStart, addDays(weekStart, 6), monthly);
+  const topic = async (title: string, goalId?: string) => (await A.post(`/rooms/${roomId}/topics`, { title, goalId })).body.id as string;
+  const w1 = await topic('Lower bound', weekly);
+  const w2 = await topic('Upper bound', weekly);
+  const m1 = await topic('Heaps', monthly);
 
-  const progress = async () => Object.fromEntries((await A.get('/goals')).body.goals.map((g: any) => [g.id, g.progress.value]));
+  const progress = async () => Object.fromEntries((await A.get('/goals')).body.goals.map((g: any) => [g.id, `${g.progress.done}/${g.progress.total}`]));
+  assert.deepEqual(await progress().then((p) => [p[weekly], p[monthly], p[yearly]]), ['0/2', '0/3', '0/3']);
+
+  await A.post(`/topics/${w1}/complete`);
+  await A.post(`/topics/${w1}/complete`); // retry: no double count
   let p = await progress();
-  // Topic 0 was completed earlier today in the linked room.
-  assert.equal(p[weekly.body.id], 1);
-  assert.equal(p[monthly], 1);
-  assert.equal(p[yearly], 1);
-  assert.equal(p[unlinked], 0);
-
-  await A.post(`/topics/${topics[1]}/complete`);
-  // Also link the yearly goal directly to the same room: still no double counting.
-  await A.patch(`/goals/${yearly}`, { roomIds: [roomId] });
-  p = await progress();
-  assert.equal(p[weekly.body.id], 2);
-  assert.equal(p[monthly], 2);
-  assert.equal(p[yearly], 2);
-
-  // A task assigned to the weekly goal adds its quantity once to each level.
-  const task = (await A.post('/tasks', { title: 'Solve 5 binary search questions', date: today, goalId: weekly.body.id, quantity: 5 })).body.task;
-  await A.patch(`/tasks/${task.id}`, { completed: true });
-  await A.patch(`/tasks/${task.id}`, { completed: true }); // idempotent
-  p = await progress();
-  assert.equal(p[weekly.body.id], 7);
-  assert.equal(p[monthly], 7);
-  assert.equal(p[yearly], 7);
+  assert.deepEqual([p[weekly], p[monthly], p[yearly]], ['1/2', '1/3', '1/3']);
   const goals = (await A.get('/goals')).body.goals;
-  assert.equal(goals.find((g: any) => g.id === weekly.body.id).progress.percent, 28);
+  assert.equal(goals.find((g: any) => g.id === weekly).progress.percent, 50);
 
-  // Partner's completions never count toward my goals.
-  await B.post(`/topics/${bTopics[1]}/complete`);
-  assert.equal((await progress())[weekly.body.id], 7);
+  // Undoing a mistaken completion takes it back out everywhere.
+  await A.post(`/topics/${w1}/reopen`, { mode: 'undo' });
+  assert.equal((await progress())[yearly], '0/3');
+  await A.post(`/topics/${w1}/complete`);
+  await A.post(`/topics/${m1}/complete`);
+  assert.deepEqual(await progress().then((p) => [p[weekly], p[monthly], p[yearly]]), ['1/2', '2/3', '2/3']);
 
-  // Undoing a mistaken completion removes it everywhere; revision keeps it.
-  await A.post(`/topics/${topics[1]}/reopen`, { mode: 'undo' });
-  assert.equal((await progress())[yearly], 6);
-  await A.post(`/topics/${topics[1]}/complete`);
-  await A.post(`/topics/${topics[1]}/reopen`, { mode: 'revise' });
-  assert.equal((await progress())[yearly], 7);
-  const s = (await A.post('/sessions', { topicId: topics[1] })).body.session;
-  assert.equal(s.isRevision, true);
-  await A.post(`/sessions/${s.id}/finish`, { completeTopic: true });
-  assert.equal((await progress())[yearly], 7);
+  // Archiving a goal moves its topics up to the parent, so nothing is lost.
+  await A.del(`/goals/${weekly}`);
+  const room = (await A.get(`/rooms/${roomId}`)).body;
+  assert.equal(room.topics.find((t: any) => t.id === w2).goalId, monthly);
+  assert.ok(!room.goals.some((g: any) => g.id === weekly));
+  assert.deepEqual(await progress().then((p) => [p[monthly], p[yearly]]), ['2/3', '2/3']);
+
+  // Marking a goal done shows 100%.
+  await A.patch(`/goals/${yearly}`, { status: 'done' });
+  assert.equal((await A.get('/goals')).body.goals.find((g: any) => g.id === yearly).progress.percent, 100);
+
+  // After finishing a topic, the next one comes from the same goal first.
+  const g2 = await goal('Graphs', 'monthly', startOfMonth(today), endOfMonth(today));
+  const g2a = await topic('BFS', g2);
+  await topic('Unrelated topic');
+  const g2b = await topic('DFS', g2);
+  assert.equal((await A.post(`/topics/${g2a}/complete`)).body.nextTopic.id, g2b);
 });
 
-test('the allocation rule blocks unrelated overlapping goals from claiming the same work', async () => {
-  const res = await A.post('/goals', { title: 'Another goal', period: 'monthly', startDate: startOfMonth(today), deadline: endOfMonth(today), measure: 'count', target: 10, topicIds: [topics[0]] });
-  assert.equal(res.status, 400);
-  assert.equal(res.body.error.code, 'DOUBLE_COUNT');
-});
-
-test('time and completion goals use their own units; private goals stay private', async () => {
-  const time = (await A.post('/goals', { title: 'Study 20 hours', period: 'custom', startDate: addDays(today, -1), deadline: addDays(today, 30), measure: 'time', target: 1200, roomIds: [room2Id], visibility: 'friends' })).body.id;
-  const t = (await A.post(`/rooms/${room2Id}/topics`, { title: 'Enzyme kinetics' })).body.id;
-  const s = (await A.post('/sessions', { topicId: t })).body.session;
-  srv.db.prepare('UPDATE study_sessions SET started_at = started_at - ? WHERE id = ?').run(30 * 60_000, s.id);
-  await A.post(`/sessions/${s.id}/finish`, {});
-  const goal = (await A.get('/goals')).body.goals.find((g: any) => g.id === time);
-  assert.equal(goal.progress.value, 30);
-  assert.equal(goal.progress.percent, 3);
-
-  const qual = (await A.post('/goals', { title: 'Feel confident in interviews', period: 'yearly', startDate: `${today.slice(0, 4)}-01-01`, deadline: `${today.slice(0, 4)}-12-31`, measure: 'completion' })).body.id;
-  assert.equal((await A.get('/goals')).body.goals.find((g: any) => g.id === qual).progress.value, 0);
-  await A.patch(`/goals/${qual}`, { status: 'done' });
-  assert.equal((await A.get('/goals')).body.goals.find((g: any) => g.id === qual).progress.percent, 100);
-
-  // B sees only goals A shared.
-  const shared = (await B.get(`/goals/shared/${a.id}`)).body.goals;
-  assert.deepEqual(shared.map((g: any) => g.id), [time]);
-  assert.equal((await C.get(`/goals/shared/${a.id}`)).status, 403);
-});
-
-test('goals hold a checklist of study tasks; ticking them drives progress, and unscheduled tasks stay off the calendar', async () => {
+test('goals are personal: the partner sees them in the room but cannot change them or file topics under them', async () => {
   const year = today.slice(0, 4);
-  const goal = (await A.post('/goals', { title: 'Finish graph basics', period: 'custom', startDate: today, deadline: addDays(today, 30), measure: 'completion', visibility: 'friends' })).body.id;
-  const parent = (await A.post('/goals', { title: 'Graphs this year', period: 'yearly', startDate: `${year}-01-01`, deadline: `${year}-12-31`, measure: 'completion' })).body.id;
-  await A.patch(`/goals/${goal}`, { parentId: parent });
-  const ids: string[] = [];
-  for (const title of ['BFS', 'DFS', 'Topological sort']) {
-    const res = await A.post('/tasks', { title, goalId: goal });
-    assert.equal(res.status, 201);
-    assert.equal(res.body.task.date, null);
-    ids.push(res.body.task.id);
-  }
-  const scheduled = (await A.post('/tasks', { title: 'Dijkstra', goalId: goal, date: addDays(today, 2) })).body.task;
+  const mine = (await A.post('/goals', { roomId, title: 'Interview ready', period: 'yearly', startDate: `${year}-01-01`, deadline: `${year}-12-31` })).body.id;
 
-  const find = async (id: string) => (await A.get('/goals')).body.goals.find((g: any) => g.id === id);
-  let g = await find(goal);
-  assert.deepEqual(g.tasks.map((t: any) => t.title), ['BFS', 'DFS', 'Topological sort', 'Dijkstra']);
-  assert.equal(g.progress.percent, 0);
+  const room = (await B.get(`/rooms/${roomId}`)).body;
+  const seen = room.goals.find((g: any) => g.id === mine);
+  assert.ok(seen);
+  assert.equal(seen.ownerId, a.id);
+  assert.equal(seen.roomName, room.name);
 
-  await A.patch(`/tasks/${ids[0]}`, { completed: true });
-  await A.patch(`/tasks/${ids[1]}`, { completed: true });
-  g = await find(goal);
-  assert.deepEqual(g.progress.tasks, { done: 2, total: 4 });
-  assert.equal(g.progress.percent, 50);
-  // The parent goal sees its sub-goal's checklist too.
-  assert.deepEqual((await find(parent)).progress.tasks, { done: 2, total: 4 });
+  assert.equal((await B.patch(`/goals/${mine}`, { title: 'Hijacked' })).status, 404);
+  assert.equal((await B.del(`/goals/${mine}`)).status, 404);
+  assert.equal((await B.post(`/rooms/${roomId}/topics`, { title: 'Sneaky', goalId: mine })).status, 400);
+  assert.equal((await C.post('/goals', { roomId, title: 'x', period: 'weekly', startDate: today, deadline: today })).status, 404);
 
-  // Only the dated task shows on the calendar.
-  const cal = (await A.get(`/tasks?from=${addDays(today, -40)}&to=${addDays(today, 40)}`)).body.tasks.map((t: any) => t.id);
-  assert.ok(cal.includes(scheduled.id));
-  assert.ok(!ids.some((id) => cal.includes(id)));
+  // Goals and their topics stay within one room.
+  assert.equal((await A.post('/goals', { roomId: room2Id, title: 'Elsewhere', period: 'monthly', startDate: today, deadline: today, parentId: mine })).status, 400);
+  assert.equal((await A.post(`/rooms/${room2Id}/topics`, { title: 'Wrong room', goalId: mine })).status, 400);
 
-  // Removing a task drops it from the checklist; marking the goal done shows 100%.
-  await A.del(`/tasks/${ids[2]}`);
-  g = await find(goal);
-  assert.equal(g.tasks.length, 3);
-  assert.equal(g.progress.percent, 67);
-  await A.patch(`/goals/${goal}`, { status: 'done' });
-  assert.equal((await find(goal)).progress.percent, 100);
-
-  // The friend sees the shared goal's checklist but can't tick it.
-  const shared = (await B.get(`/goals/shared/${a.id}`)).body.goals.find((x: any) => x.id === goal);
-  assert.equal(shared.tasks.length, 3);
-  assert.equal((await B.patch(`/tasks/${ids[1]}`, { completed: false })).status, 404);
+  // Friends see goals in rooms they share; strangers see none.
+  assert.ok((await B.get(`/goals/shared/${a.id}`)).body.goals.some((g: any) => g.id === mine));
+  assert.deepEqual((await C.get(`/goals/shared/${a.id}`)).body.goals, []);
 });
 
 // ───────────── Calendar ─────────────
@@ -493,7 +444,7 @@ test('failed writes are reported accurately', async () => {
   assert.equal(bad.status, 400);
   assert.equal(bad.body.error.code, 'VALIDATION');
   const before = (await A.get(`/rooms/${roomId}`)).body.topics.length;
-  assert.equal((await A.put(`/rooms/${roomId}/topics/order`, { topicIds: [topics[0]] })).status, 400);
+  assert.equal((await A.put(`/rooms/${roomId}/topics/order`, { topicIds: [topics[0], 'not-a-topic'] })).status, 400);
   assert.equal((await A.get(`/rooms/${roomId}`)).body.topics.length, before);
   const cross = await fetch(srv.base + '/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.example', cookie: A.cookie }, body: '{}' });
   assert.equal(cross.status, 403);

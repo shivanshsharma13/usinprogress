@@ -1,48 +1,51 @@
-import { useMemo, useState } from 'react';
+// Every goal you have, grouped by the room it lives in. Topics are added and studied in the room;
+// this page is the overview of how each goal is going.
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { addDays, endOfMonth, formatDate, startOfMonth, startOfWeek } from '@shared/dates';
-import type { Goal, GoalTask, RoomDetail } from '@shared/types';
+import { formatDate } from '@shared/dates';
+import type { Goal } from '@shared/types';
 import { useAction, useFriends, useGoals, useMe, useRooms, useSharedGoals } from '../lib/queries';
-import { api, ApiError } from '../lib/api';
-import { useQueries } from '@tanstack/react-query';
+import { api } from '../lib/api';
 import { personVars } from '../lib/theme';
-import { Empty, ErrorNote, Field, Menu, Modal, ProgressBar, Spinner } from '../components/ui';
-import { goalValueText, PERIOD_LABEL } from '../components/GoalBits';
+import { Empty, ErrorNote, Menu, ProgressBar, Spinner } from '../components/ui';
+import { goalValueText, PERIOD_LABEL, rootGoals } from '../components/GoalBits';
+import { GoalForm } from '../components/GoalForm';
 import { Plant } from '../components/Plant';
-import { ChevronDown, ChevronRight, PlusIcon, XIcon } from '../components/icons';
+import { PlusIcon } from '../components/icons';
+
+interface FormState {
+  goal?: Goal;
+  parent?: Goal;
+}
 
 export function GoalsPage() {
   const { data: me } = useMe();
   const { data: goals, isLoading, error, refetch } = useGoals();
+  const { data: rooms } = useRooms();
   const { data: friends } = useFriends();
   const [params, setParams] = useSearchParams();
-  const [editing, setEditing] = useState<Goal | 'new' | null>(params.get('new') ? 'new' : null);
-  const [newParent, setNewParent] = useState<Goal | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
+  const [form, setForm] = useState<FormState | null>(params.get('new') ? {} : null);
 
   if (isLoading || !me) return <Spinner />;
   if (error || !goals) return <ErrorNote error={error} retry={refetch} />;
 
-  const visible = goals.filter((g) => (showArchived ? true : g.status !== 'archived'));
-  const byId = new Map(visible.map((g) => [g.id, g]));
-  const roots = visible.filter((g) => !g.parentId || !byId.has(g.parentId));
-  const sections: { title: string; period: Goal['period'] }[] = [
-    { title: 'Yearly goals', period: 'yearly' },
-    { title: 'Monthly goals', period: 'monthly' },
-    { title: 'Weekly goals', period: 'weekly' },
-    { title: 'Other goals', period: 'custom' },
-  ];
+  const activeRooms = (rooms ?? []).filter((r) => r.status === 'active');
+  const visible = goals.filter((g) => g.status !== 'archived');
+  const byRoom = new Map<string, Goal[]>();
+  for (const g of visible) byRoom.set(g.roomId ?? '', [...(byRoom.get(g.roomId ?? '') ?? []), g]);
 
   return (
     <div className="stack-lg">
       <div className="page-head">
         <div>
           <h1>Goals</h1>
-          <p className="muted">Yearly → monthly → weekly. Completed topics and tasks count automatically, once.</p>
+          <p className="muted">Each goal lives in a room. Add topics to it there — every topic you finish fills it up.</p>
         </div>
-        <button className="btn primary" onClick={() => setEditing('new')}>
-          <PlusIcon /> New goal
-        </button>
+        {activeRooms.length > 0 && (
+          <button className="btn primary" onClick={() => setForm({})}>
+            <PlusIcon /> New goal
+          </button>
+        )}
       </div>
 
       {!visible.length && (
@@ -51,46 +54,52 @@ export function GoalsPage() {
             title="No goals yet"
             art={<Plant percent={10} size={96} />}
             action={
-              <button className="btn primary big" onClick={() => setEditing('new')}>
-                Add your first goal
-              </button>
+              activeRooms.length ? (
+                <button className="btn primary big" onClick={() => setForm({})}>
+                  Add your first goal
+                </button>
+              ) : (
+                <Link to="/rooms" className="btn primary big">
+                  Go to rooms
+                </Link>
+              )
             }
           >
-            Start with a big yearly goal like “Become confident with DSA” or “Finish the medical syllabus”. You can add monthly and weekly steps beneath it.
+            {activeRooms.length
+              ? 'Start with something big for this year, then break it into monthly and weekly goals with topics under them.'
+              : 'Goals live inside a room you share with your friend. Create a room first.'}
           </Empty>
         </div>
       )}
 
-      {sections.map((s) => {
-        const list = roots.filter((g) => g.period === s.period);
-        if (!list.length) return null;
-        return (
-          <section key={s.period} className="stack">
-            <h2>{s.title}</h2>
-            {list.map((g) => (
-              <GoalNode key={g.id} goal={g} byId={byId} accent={me.accent} today={me.today} onEdit={setEditing} onAddChild={(p) => (setNewParent(p), setEditing('new'))} depth={0} />
-            ))}
-          </section>
-        );
-      })}
+      {[...byRoom.entries()].map(([roomId, list]) => (
+        <section key={roomId || 'none'} className="stack">
+          <div className="row between">
+            <h2>{list[0].roomName ?? 'Not in a room yet'}</h2>
+            {roomId && (
+              <Link to={`/rooms/${roomId}`} className="small muted">
+                Open room
+              </Link>
+            )}
+          </div>
+          {!roomId && <p className="small muted">Edit these to choose a room, so you can add topics to them.</p>}
+          {rootGoals(list).map((g) => (
+            <GoalTree key={g.id} goal={g} all={list} accent={me.accent} onForm={setForm} />
+          ))}
+        </section>
+      ))}
 
-      {goals.some((g) => g.status === 'archived') && (
-        <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setShowArchived((s) => !s)}>
-          {showArchived ? 'Hide archived goals' : 'Show archived goals'}
-        </button>
-      )}
+      {friends?.friends.map((f) => <FriendGoals key={f.user.id} userId={f.user.id} name={f.user.displayName} accent={f.user.accent} />)}
 
-      {friends?.friends.map((f) => <PartnerGoals key={f.user.id} userId={f.user.id} name={f.user.displayName} accent={f.user.accent} />)}
-
-      {editing && (
-        <GoalModal
-          goal={editing === 'new' ? null : editing}
-          parent={editing === 'new' ? newParent : null}
-          goals={goals}
+      {form && (
+        <GoalForm
+          goal={form.goal}
+          parent={form.parent}
+          myGoals={goals}
+          rooms={activeRooms}
           today={me.today}
           onClose={() => {
-            setEditing(null);
-            setNewParent(null);
+            setForm(null);
             if (params.get('new')) setParams({}, { replace: true });
           }}
         />
@@ -99,96 +108,44 @@ export function GoalsPage() {
   );
 }
 
-function GoalNode({
-  goal,
-  byId,
-  accent,
-  today,
-  depth,
-  onEdit,
-  onAddChild,
-}: {
-  goal: Goal;
-  byId: Map<string, Goal>;
-  accent: string;
-  today: string;
-  depth: number;
-  onEdit: (g: Goal) => void;
-  onAddChild: (g: Goal) => void;
-}) {
-  const children = goal.childIds.map((id) => byId.get(id)).filter(Boolean) as Goal[];
-  const [open, setOpen] = useState(depth === 0);
-  const inv = [['goals'], ['rooms'], ['room']];
+/** A goal and the smaller goals under it. Without `onForm` it's read-only (a friend's goals). */
+function GoalTree({ goal, all, accent, onForm }: { goal: Goal; all: Goal[]; accent: string; onForm?: (s: FormState) => void }) {
+  const children = all.filter((g) => g.parentId === goal.id);
+  const inv = [['goals'], ['room'], ['rooms']];
   const update = useAction((body: object) => api.patch(`/goals/${goal.id}`, body), { invalidate: inv });
-  const archive = useAction(() => api.del(`/goals/${goal.id}`), { invalidate: inv, success: 'Goal archived' });
-  const p = goal.progress;
-  const daysLeft = Math.round((Date.parse(goal.deadline) - Date.parse(today)) / 86_400_000);
-  const childPeriod = goal.period === 'yearly' ? 'monthly' : goal.period === 'monthly' ? 'weekly' : null;
-
+  const archive = useAction(() => api.del(`/goals/${goal.id}`), { invalidate: inv, success: 'Goal archived — its topics moved up' });
   return (
-    <div className="goal-card" style={{ opacity: goal.status === 'archived' ? 0.6 : 1 }}>
-      <div className="row top">
-        {children.length > 0 ? (
-          <button className="btn ghost icon small" aria-label={open ? 'Hide steps' : 'Show steps'} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-            {open ? <ChevronDown /> : <ChevronRight />}
-          </button>
-        ) : (
-          <span style={{ width: 34 }} />
-        )}
-        <div className="grow stack" style={{ gap: 6 }}>
-          <div className="row between top">
-            <div>
-              <div className="bold">{goal.title}</div>
-              <div className="tiny muted">
-                {PERIOD_LABEL[goal.period]} · {formatDate(goal.startDate)} – {formatDate(goal.deadline)}
-                {goal.status === 'active' && daysLeft >= 0 ? ` · ${daysLeft} days left` : ''}
-                {goal.visibility === 'friends' ? ' · Shared' : ' · Private'}
-              </div>
+    <div className="goal-card" style={personVars(accent)}>
+      <div className="stack" style={{ gap: 6 }}>
+        <div className="row between top">
+          <div>
+            <div className="bold">{goal.title}</div>
+            <div className="tiny muted">
+              {PERIOD_LABEL[goal.period]} · {formatDate(goal.startDate)} – {formatDate(goal.deadline)}
             </div>
-            <div className="row" style={{ gap: 4 }}>
-              {goal.status === 'done' && <span className="chip done">Done ✨</span>}
+          </div>
+          <div className="row" style={{ gap: 4 }}>
+            <span className="small bold num">{goal.progress.percent}%</span>
+            {onForm && (
               <Menu
                 items={[
-                  { label: 'Edit goal', onClick: () => onEdit(goal) },
-                  { label: `Add a ${childPeriod ?? 'smaller'} step`, onClick: () => onAddChild(goal) },
-                  { label: 'Mark as done', onClick: () => update.mutate({ status: 'done' }), hidden: goal.status !== 'active' },
-                  { label: 'Mark as not done', onClick: () => update.mutate({ status: 'active' }), hidden: goal.status !== 'done' },
-                  { label: 'Restore', onClick: () => update.mutate({ status: 'active' }), hidden: goal.status !== 'archived' },
-                  { label: 'Archive', danger: true, onClick: () => confirm('Archive this goal? Its history stays readable.') && archive.mutate(undefined), hidden: goal.status === 'archived' },
+                  { label: 'Add a smaller goal', onClick: () => onForm({ parent: goal }), hidden: goal.period === 'weekly' || !goal.roomId },
+                  { label: 'Edit goal', onClick: () => onForm({ goal }) },
+                  { label: 'Mark goal done', onClick: () => update.mutate({ status: 'done' }), hidden: goal.status === 'done' },
+                  { label: 'Mark not done', onClick: () => update.mutate({ status: 'active' }), hidden: goal.status !== 'done' },
+                  { label: 'Archive goal', danger: true, onClick: () => confirm(`Archive “${goal.title}”? Its topics move to the goal above it.`) && archive.mutate(undefined) },
                 ]}
               />
-            </div>
-          </div>
-          {goal.description && <p className="small muted">{goal.description}</p>}
-          {p.percent != null && <ProgressBar value={p.percent} max={100} accent={accent} label={goal.title} />}
-          <div className="row between wrap">
-            <span className="small num">
-              {goalValueText(goal)}
-              {p.percent != null && <span className="muted"> · {p.percent}%</span>}
-            </span>
-            {goal.measure === 'completion' && goal.status === 'active' && (!p.tasks.total || p.tasks.done === p.tasks.total) && (
-              <button className="btn small" onClick={() => update.mutate({ status: 'done' })}>
-                Mark done
-              </button>
             )}
           </div>
-          {goal.links.length > 0 && (
-            <div className="row wrap" style={{ gap: 6 }}>
-              {goal.links.map((l) => (
-                <Link key={l.roomId ?? l.topicId} to={l.roomId ? `/rooms/${l.roomId}` : '#'} className="chip outline">
-                  {l.roomId ? '🌿 ' : '• '}
-                  {l.label}
-                </Link>
-              ))}
-            </div>
-          )}
-          {goal.status !== 'archived' && <GoalTasks goal={goal} editable />}
         </div>
+        <ProgressBar value={goal.progress.percent} max={100} label={goal.title} />
+        <span className="small muted num">{goalValueText(goal)}</span>
       </div>
-      {open && children.length > 0 && (
+      {children.length > 0 && (
         <div className="goal-children">
           {children.map((c) => (
-            <GoalNode key={c.id} goal={c} byId={byId} accent={accent} today={today} depth={depth + 1} onEdit={onEdit} onAddChild={onAddChild} />
+            <GoalTree key={c.id} goal={c} all={all} accent={accent} onForm={onForm} />
           ))}
         </div>
       )}
@@ -196,318 +153,20 @@ function GoalNode({
   );
 }
 
-/**
- * The goal's checklist of things to study. Ticking a task updates this goal and every goal above it.
- * Tasks only appear on the calendar if they're given a date.
- */
-function GoalTasks({ goal, editable }: { goal: Goal; editable?: boolean }) {
-  const [title, setTitle] = useState('');
-  const [date, setDate] = useState('');
-  const [qty, setQty] = useState('1');
-  const counts = goal.measure === 'count';
-  const inv = [['goals'], ['tasks'], ['home'], ['progress']];
-  const add = useAction(
-    () => api.post('/tasks', { title, goalId: goal.id, date: date || null, quantity: counts ? Math.max(1, Number(qty) || 1) : 1 }),
-    {
-      invalidate: inv,
-      onSuccess: () => {
-        setTitle('');
-        setDate('');
-        setQty('1');
-      },
-    },
-  );
-  const toggle = useAction((t: GoalTask) => api.patch(`/tasks/${t.id}`, { completed: !t.completed }), { invalidate: inv });
-  const remove = useAction((t: GoalTask) => api.del(`/tasks/${t.id}`), { invalidate: inv });
-  const done = goal.tasks.filter((t) => t.completed).length;
-
-  return (
-    <div className="goal-tasks">
-      {goal.tasks.length > 0 && (
-        <div className="row between">
-          <span className="section-label">To study</span>
-          <span className="tiny muted num">
-            {done} of {goal.tasks.length} done
-          </span>
-        </div>
-      )}
-      {goal.tasks.map((t) => (
-        <div key={t.id} className={`goal-task${t.completed ? ' done' : ''}`}>
-          {editable ? (
-            <input type="checkbox" checked={t.completed} disabled={toggle.isPending} onChange={() => toggle.mutate(t)} aria-label={`Mark “${t.title}” ${t.completed ? 'not done' : 'done'}`} />
-          ) : (
-            <span aria-hidden="true">{t.completed ? '✓' : '○'}</span>
-          )}
-          <span className="grow title">{t.title}</span>
-          {counts && t.quantity !== 1 && <span className="chip outline">×{t.quantity}</span>}
-          {t.date && <span className="chip outline">{formatDate(t.date)}</span>}
-          {editable && (
-            <button className="btn ghost icon small" aria-label={`Remove “${t.title}”`} onClick={() => remove.mutate(t)}>
-              <XIcon />
-            </button>
-          )}
-        </div>
-      ))}
-      {editable && (
-        <form
-          className="goal-task-add"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (title.trim()) add.mutate(undefined);
-          }}
-        >
-          <input className="input grow" placeholder="Add something to study…" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} aria-label={`New task for ${goal.title}`} />
-          {counts && (
-            <input className="input" style={{ width: 72 }} type="number" min="1" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} aria-label={`How many ${goal.unit || 'units'}`} title={`How many ${goal.unit || 'units'} this task counts for`} />
-          )}
-          <input className="input" style={{ width: 150 }} type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date (optional)" title="Optional — puts it on your calendar" />
-          <button className="btn" disabled={!title.trim() || add.isPending}>
-            <PlusIcon /> Add
-          </button>
-        </form>
-      )}
-    </div>
-  );
-}
-
-function PartnerGoals({ userId, name, accent }: { userId: string; name: string; accent: string }) {
+function FriendGoals({ userId, name, accent }: { userId: string; name: string; accent: string }) {
   const { data } = useSharedGoals(userId);
-  const active = (data ?? []).filter((g) => g.status !== 'archived');
+  const goals = data ?? [];
   return (
-    <section className="stack" style={personVars(accent)}>
-      <h2>
-        <span className="dot" style={{ marginRight: 8 }} />
-        {name}'s shared goals
+    <section className="stack">
+      <h2 className="row" style={personVars(accent)}>
+        <span className="dot" />
+        {name}'s goals
       </h2>
-      {active.length ? (
-        <div className="grid-2">
-          {active.map((g) => (
-            <div key={g.id} className="card tint stack" style={{ gap: 6 }}>
-              <div className="bold">{g.title}</div>
-              <div className="tiny muted">
-                {PERIOD_LABEL[g.period]} · until {formatDate(g.deadline)}
-              </div>
-              {g.progress.percent != null && <ProgressBar value={g.progress.percent} max={100} accent={accent} />}
-              <div className="small num">{goalValueText(g)}</div>
-              {g.tasks.length > 0 && <GoalTasks goal={g} />}
-            </div>
-          ))}
-        </div>
+      {goals.length ? (
+        rootGoals(goals).map((g) => <GoalTree key={g.id} goal={g} all={goals} accent={accent} />)
       ) : (
-        <p className="small muted">{name} hasn't shared any goals yet. Goals are private unless their owner shares them.</p>
+        <p className="small muted">{name} hasn't added goals in your rooms yet.</p>
       )}
     </section>
-  );
-}
-
-function defaultDates(period: Goal['period'], today: string) {
-  if (period === 'yearly') return { startDate: `${today.slice(0, 4)}-01-01`, deadline: `${today.slice(0, 4)}-12-31` };
-  if (period === 'monthly') return { startDate: startOfMonth(today), deadline: endOfMonth(today) };
-  if (period === 'weekly') {
-    const s = startOfWeek(today);
-    return { startDate: s, deadline: addDays(s, 6) };
-  }
-  return { startDate: today, deadline: addDays(today, 30) };
-}
-
-function GoalModal({ goal, parent, goals, today, onClose }: { goal: Goal | null; parent: Goal | null; goals: Goal[]; today: string; onClose: () => void }) {
-  const initialPeriod: Goal['period'] = goal?.period ?? (parent ? (parent.period === 'yearly' ? 'monthly' : parent.period === 'monthly' ? 'weekly' : 'custom') : 'yearly');
-  const [f, setF] = useState({
-    title: goal?.title ?? '',
-    description: goal?.description ?? '',
-    period: initialPeriod,
-    ...(goal ? { startDate: goal.startDate, deadline: goal.deadline } : defaultDates(initialPeriod, today)),
-    measure: goal?.measure ?? parent?.measure ?? ('completion' as Goal['measure']),
-    target: goal?.target != null ? String(goal.target) : '',
-    unit: goal?.unit ?? parent?.unit ?? '',
-    parentId: goal?.parentId ?? parent?.id ?? '',
-    visibility: goal?.visibility ?? parent?.visibility ?? ('private' as Goal['visibility']),
-    roomIds: goal?.links.filter((l) => l.roomId).map((l) => l.roomId!) ?? [],
-    topicIds: goal?.links.filter((l) => l.topicId).map((l) => l.topicId!) ?? [],
-  });
-  const [err, setErr] = useState<string | null>(null);
-  const set = (patch: Partial<typeof f>) => setF((x) => ({ ...x, ...patch }));
-  const { data: rooms } = useRooms();
-  const roomDetails = useQueries({
-    queries: (rooms ?? []).map((r) => ({ queryKey: ['room', r.id], queryFn: () => api.get<RoomDetail>(`/rooms/${r.id}`) })),
-  });
-  const { data: me } = useMe();
-  // Only your own topics can count toward your goals.
-  const topicsByRoom = useMemo(
-    () => Object.fromEntries(roomDetails.filter((q) => q.data).map((q) => [q.data!.id, q.data!.topics.filter((t) => t.createdBy === me?.id)])),
-    [roomDetails, me?.id],
-  );
-  const [pickTopicsIn, setPickTopicsIn] = useState<string | null>(null);
-
-  // A goal can't be its own ancestor.
-  const descendants = new Set<string>();
-  if (goal) {
-    const stack = [goal.id];
-    while (stack.length) {
-      const id = stack.pop()!;
-      descendants.add(id);
-      goals.filter((g) => g.parentId === id).forEach((g) => stack.push(g.id));
-    }
-  }
-  const parentOptions = goals.filter((g) => g.status !== 'archived' && !descendants.has(g.id));
-
-  const save = useAction(
-    () => {
-      const body = {
-        title: f.title,
-        description: f.description,
-        period: f.period,
-        startDate: f.startDate,
-        deadline: f.deadline,
-        measure: f.measure,
-        target: f.measure === 'completion' || !f.target ? null : Number(f.target),
-        unit: f.measure === 'count' ? f.unit : '',
-        parentId: f.parentId || null,
-        visibility: f.visibility,
-        roomIds: f.roomIds,
-        topicIds: f.topicIds,
-      };
-      return goal ? api.patch(`/goals/${goal.id}`, body) : api.post('/goals', body);
-    },
-    {
-      invalidate: [['goals'], ['rooms'], ['room']],
-      success: goal ? 'Goal saved' : 'Goal planted 🌱',
-      onSuccess: onClose,
-      onError: (e: ApiError) => {
-        setErr(e.message);
-        return true;
-      },
-    },
-  );
-
-  const toggle = (list: 'roomIds' | 'topicIds', id: string) => set({ [list]: f[list].includes(id) ? f[list].filter((x) => x !== id) : [...f[list], id] } as any);
-
-  return (
-    <Modal
-      title={goal ? 'Edit goal' : parent ? `New step for “${parent.title}”` : 'New goal'}
-      onClose={onClose}
-      wide
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!f.title.trim() || save.isPending} onClick={() => save.mutate(undefined)}>
-            {save.isPending ? 'Saving…' : 'Save goal'}
-          </button>
-        </>
-      }
-    >
-      <div className="form-grid">
-        <Field label="Goal" full>
-          <input className="input" value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. Solve 100 DSA questions in November" maxLength={140} />
-        </Field>
-        <Field label="Description (optional)" full>
-          <textarea className="input" value={f.description} onChange={(e) => set({ description: e.target.value })} style={{ minHeight: 60 }} />
-        </Field>
-        <div className="field full">
-          <span className="label">Time period</span>
-          <div className="row wrap">
-            {(['yearly', 'monthly', 'weekly', 'custom'] as const).map((p) => (
-              <button type="button" key={p} className={`chip-btn${f.period === p ? ' on' : ''}`} onClick={() => set({ period: p, ...(goal ? {} : defaultDates(p, today)) })}>
-                {PERIOD_LABEL[p]}
-              </button>
-            ))}
-          </div>
-        </div>
-        <Field label="Start date">
-          <input className="input" type="date" value={f.startDate} onChange={(e) => set({ startDate: e.target.value })} />
-        </Field>
-        <Field label="Deadline">
-          <input className="input" type="date" value={f.deadline} onChange={(e) => set({ deadline: e.target.value })} />
-        </Field>
-        <div className="field full">
-          <span className="label">How will you measure it?</span>
-          <div className="choice-grid">
-            {(
-              [
-                ['completion', 'Task checklist', 'Done when its tasks are done'],
-                ['count', 'A number', 'Questions, chapters, topics…'],
-                ['time', 'Focused time', 'Minutes from study sessions'],
-              ] as const
-            ).map(([k, t, d]) => (
-              <button type="button" key={k} className={`choice${f.measure === k ? ' on' : ''}`} onClick={() => set({ measure: k })}>
-                <b>{t}</b>
-                <span className="tiny muted">{d}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        {f.measure === 'count' && (
-          <>
-            <Field label="Target (optional)">
-              <input className="input" type="number" min="1" inputMode="numeric" value={f.target} onChange={(e) => set({ target: e.target.value })} placeholder="e.g. 100" />
-            </Field>
-            <Field label="Unit">
-              <input className="input" value={f.unit} onChange={(e) => set({ unit: e.target.value })} placeholder="e.g. questions" maxLength={30} />
-            </Field>
-            <p className="tiny muted full">Each completed topic in a linked room counts as 1. A completed task assigned to this goal counts its own amount (e.g. “Solve 5 questions” counts 5).</p>
-          </>
-        )}
-        {f.measure === 'time' && (
-          <Field label="Target in minutes (optional)" hint="e.g. 1200 = 20 hours" full>
-            <input className="input" type="number" min="1" inputMode="numeric" value={f.target} onChange={(e) => set({ target: e.target.value })} />
-          </Field>
-        )}
-        <Field label="Part of a bigger goal" hint="Progress here also counts toward the bigger goal — once." full>
-          <select className="input" value={f.parentId} onChange={(e) => set({ parentId: e.target.value })}>
-            <option value="">None</option>
-            {parentOptions.map((g) => (
-              <option key={g.id} value={g.id}>
-                {PERIOD_LABEL[g.period]}: {g.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {f.measure !== 'completion' && (
-          <div className="field full">
-            <span className="label">What counts toward it?</span>
-            <span className="hint">Link whole rooms, or only specific topics. Your friend's progress never counts toward your goals.</span>
-            {(rooms ?? []).length === 0 && <span className="small muted">No rooms yet.</span>}
-            {(rooms ?? []).map((r) => (
-              <div key={r.id} className="stack" style={{ gap: 4 }}>
-                <div className="row between">
-                  <label className="check">
-                    <input type="checkbox" checked={f.roomIds.includes(r.id)} onChange={() => toggle('roomIds', r.id)} /> {r.name} <span className="muted small">(all your topics)</span>
-                  </label>
-                  {!f.roomIds.includes(r.id) && (
-                    <button type="button" className="btn ghost small" onClick={() => setPickTopicsIn(pickTopicsIn === r.id ? null : r.id)}>
-                      {pickTopicsIn === r.id ? 'Done' : 'Pick topics'}
-                    </button>
-                  )}
-                </div>
-                {pickTopicsIn === r.id &&
-                  (topicsByRoom[r.id] ?? []).map((t) => (
-                    <label key={t.id} className="check" style={{ marginLeft: 28 }}>
-                      <input type="checkbox" checked={f.topicIds.includes(t.id)} onChange={() => toggle('topicIds', t.id)} /> {t.title}
-                    </label>
-                  ))}
-                {pickTopicsIn !== r.id && f.topicIds.some((id) => (topicsByRoom[r.id] ?? []).some((t) => t.id === id)) && (
-                  <span className="tiny muted" style={{ marginLeft: 28 }}>
-                    {f.topicIds.filter((id) => (topicsByRoom[r.id] ?? []).some((t) => t.id === id)).length} topics selected
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="field full">
-          <label className="check">
-            <input type="checkbox" checked={f.visibility === 'friends'} onChange={(e) => set({ visibility: e.target.checked ? 'friends' : 'private' })} /> Share this goal with my friend
-          </label>
-          <span className="hint">Private goals are only visible to you.</span>
-        </div>
-        {err && (
-          <div className="banner error full" role="alert">
-            {err}
-          </div>
-        )}
-      </div>
-    </Modal>
   );
 }

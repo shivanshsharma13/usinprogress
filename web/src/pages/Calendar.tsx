@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { addDays, addMonths, endOfMonth, formatDate, startOfMonth, startOfWeek } from '@shared/dates';
 import type { PublicUser, RoomDetail, Task } from '@shared/types';
 import { useQuery } from '@tanstack/react-query';
-import { useAction, useFriends, useGoals, useMe, useRooms, useTasks } from '../lib/queries';
+import { useAction, useFriends, useMe, useRooms, useTasks } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { ErrorNote, Field, Menu, Modal, Spinner, Switch } from '../components/ui';
@@ -54,7 +54,7 @@ export function CalendarPage() {
     return map;
   }, [me, friends]);
 
-  const inv = [['tasks'], ['goals'], ['home']];
+  const inv = [['tasks'], ['home']];
   const update = useAction(({ id, body }: { id: string; body: object }) => api.patch(`/tasks/${id}`, body), { invalidate: inv });
   const remove = useAction((id: string) => api.del(`/tasks/${id}`), { invalidate: inv, success: 'Task removed' });
 
@@ -343,7 +343,6 @@ function DayAgenda({ date, today, tasks, people, meId, actions, onAdd, compact }
                 {t.startTime ? `${t.startTime}` : 'Any time'}
                 {t.durationMinutes ? ` · ${t.durationMinutes}m` : ''}
                 {t.topicTitle ? ` · ${t.topicTitle}` : ''}
-                {t.goalTitle ? ` · Goal: ${t.goalTitle}` : ''}
                 {mine && t.shared ? ' · Shared' : ''}
               </div>
               {mine && t.note && <div className="tiny" style={{ marginTop: 4 }}>📝 {t.note}</div>}
@@ -379,7 +378,6 @@ function DayAgenda({ date, today, tasks, people, meId, actions, onAdd, compact }
 function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null; date: string; meId: string; ownerName?: string; onClose: () => void }) {
   const readOnly = Boolean(task && task.ownerId !== meId);
   const { data: rooms } = useRooms();
-  const { data: goals } = useGoals();
   const [f, setF] = useState({
     title: task?.title ?? '',
     description: task?.description ?? '',
@@ -388,8 +386,6 @@ function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null
     durationMinutes: task?.durationMinutes ? String(task.durationMinutes) : '',
     roomId: task?.roomId ?? '',
     topicId: task?.topicId ?? '',
-    goalId: task?.goalId ?? '',
-    quantity: String(task?.quantity ?? 1),
     shared: task?.shared ?? true,
     note: task?.note ?? '',
   });
@@ -407,15 +403,13 @@ function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null
         durationMinutes: f.durationMinutes ? Number(f.durationMinutes) : null,
         roomId: f.roomId || null,
         topicId: f.topicId || null,
-        goalId: f.goalId || null,
-        quantity: Number(f.quantity) > 0 ? Number(f.quantity) : 1,
         shared: f.shared,
         note: f.note,
       };
       return task ? api.patch(`/tasks/${task.id}`, body) : api.post('/tasks', body);
     },
     {
-      invalidate: [['tasks'], ['goals'], ['home']],
+      invalidate: [['tasks'], ['home']],
       success: task ? 'Saved' : 'Added to your calendar',
       onSuccess: onClose,
       onError: (e: ApiError) => {
@@ -434,7 +428,6 @@ function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null
             {task.startTime ? ` at ${task.startTime}` : ''}.
           </p>
           {task.topicTitle && <p>Topic: {task.topicTitle}</p>}
-          {task.goalTitle && <p>Goal: {task.goalTitle}</p>}
           <p>{task.completed ? 'Done ✓' : 'Not done yet'}</p>
           {task.roomId && (
             <Link className="btn" to={`/rooms/${task.roomId}`} onClick={onClose}>
@@ -445,8 +438,6 @@ function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null
       </Modal>
     );
 
-  const activeGoals = (goals ?? []).filter((g) => g.status === 'active');
-  const selectedGoal = activeGoals.find((g) => g.id === f.goalId);
 
   return (
     <Modal
@@ -498,21 +489,6 @@ function TaskModal({ task, date, meId, ownerName, onClose }: { task: Task | null
                 </option>
               ))}
             </select>
-          </Field>
-        )}
-        <Field label="Counts toward a goal (optional)" full>
-          <select className="input" value={f.goalId} onChange={(e) => set({ goalId: e.target.value })}>
-            <option value="">None</option>
-            {activeGoals.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {selectedGoal?.measure === 'count' && (
-          <Field label={`How many ${selectedGoal.unit || 'units'} is this?`} hint="When you tick it off, this amount counts toward the goal (and its bigger goals) once.">
-            <input className="input" type="number" min="1" inputMode="numeric" value={f.quantity} onChange={(e) => set({ quantity: e.target.value })} />
           </Field>
         )}
         <Field label="Private note (optional)" hint="Only you can see this." full>

@@ -3,14 +3,16 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { daysBetween, formatDate } from '@shared/dates';
 import { formatMinutes } from '@shared/timer';
-import type { MemberProgress, RoomDetail, Topic, TopicMemberProgress } from '@shared/types';
+import type { Goal, MemberProgress, RoomDetail, Topic, TopicMemberProgress } from '@shared/types';
 import { useAction, useMe, useRoom, useTopicHistory } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
 import { Plant } from '../components/Plant';
-import { CheckIcon, ChevronLeft, PlayIcon, PlusIcon } from '../components/icons';
+import { GoalForm } from '../components/GoalForm';
+import { goalValueText, PERIOD_LABEL, rootGoals } from '../components/GoalBits';
+import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
 
 // Each person owns the topics they add. Both lists are visible side by side, but only the owner
 // can study, complete or change their own topics (enforced by the server too).
@@ -68,20 +70,25 @@ export function RoomPage() {
 
 function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: MemberProgress; isMe: boolean }) {
   const navigate = useNavigate();
-  const [adding, setAdding] = useState(false);
-  const topics = room.topics.filter((t) => t.createdBy === member.user.id);
+  const { data: me } = useMe();
+  const [goalForm, setGoalForm] = useState<GoalFormState | null>(null);
+  const ownerId = member.user.id;
   const name = isMe ? 'You' : member.user.displayName;
   const active = room.status === 'active';
-  const allDone = topics.length > 0 && member.completed === topics.length;
+  const topics = room.topics.filter((t) => t.createdBy === ownerId);
+  const goals = room.goals.filter((g) => g.ownerId === ownerId);
+  const goalIds = new Set(goals.map((g) => g.id));
+  const loose = topics.filter((t) => !t.goalId || !goalIds.has(t.goalId));
+  const ctx: PlanContext = { roomId: room.id, ownerId, isMe, active, topics, goals, openGoalForm: setGoalForm };
 
   return (
-    <section className="stack" style={personVars(member.user.accent)} aria-label={isMe ? 'Your topics' : `${member.user.displayName}'s topics`}>
+    <section className="stack" style={personVars(member.user.accent)} aria-label={`${name}'s plan`}>
       <div className="card tint stack" style={{ gap: 8 }}>
         <div className="row">
           <Avatar user={member.user} size={40} />
           <div className="grow" style={{ minWidth: 0 }}>
             <div className="row" style={{ gap: 6 }}>
-              <h2>{isMe ? 'Your topics' : `${member.user.displayName}'s topics`}</h2>
+              <h2>{name}</h2>
               <LiveDot status={member.status} accent={member.user.accent} />
             </div>
             <div className="tiny">
@@ -93,7 +100,7 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
         <ProgressBar value={member.completed} max={member.total} accent={member.user.accent} label={`${name}: ${member.completed} of ${member.total}`} />
         <div className="row between small">
           <span className="bold num">
-            {member.completed} of {member.total} done
+            {member.completed} of {member.total} topics done
           </span>
           <span className="muted num">{fmt(member.focusedMs)} focused</span>
         </div>
@@ -104,19 +111,102 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
         )}
       </div>
 
-      {topics.map((t, i) => (
-        <TopicRow key={t.id} topic={t} index={i} ownerId={member.user.id} isMe={isMe} active={active} siblings={topics} />
+      {!goals.length && !topics.length && (
+        <p className="small muted">
+          {isMe ? 'Start with a goal for this year, month or week, then add the topics you’ll study under it.' : `${member.user.displayName} hasn’t planned anything here yet.`}
+        </p>
+      )}
+
+      {rootGoals(goals).map((g) => (
+        <GoalBlock key={g.id} goal={g} depth={0} {...ctx} />
       ))}
 
-      {isMe && active && (adding || topics.length === 0 ? <AddTopic roomId={room.id} firstTime={topics.length === 0} onDone={() => setAdding(false)} /> : (
-        <button className="btn" onClick={() => setAdding(true)}>
-          <PlusIcon /> Add a topic
+      {(loose.length > 0 || (isMe && active && !goals.length && topics.length > 0)) && (
+        <div className="goal-block">
+          <div className="goal-head">
+            <b className="grow">{goals.length ? 'Not in a goal' : 'Topics'}</b>
+          </div>
+          {loose.map((t, i) => (
+            <TopicRow key={t.id} topic={t} index={i} siblings={loose} {...ctx} />
+          ))}
+          {isMe && active && <AddTopic roomId={room.id} goalId={null} />}
+        </div>
+      )}
+
+      {isMe && active && (
+        <button className="btn" onClick={() => setGoalForm({})}>
+          <PlusIcon /> Add a goal
         </button>
-      ))}
+      )}
 
-      {isMe && allDone && <p className="small muted center">Everything here is done 🌸 Add more, or revise one.</p>}
-      {!isMe && topics.length === 0 && <p className="small muted">{member.user.displayName} hasn't added any topics yet.</p>}
+      {goalForm && me && <GoalForm goal={goalForm.goal} parent={goalForm.parent} roomId={room.id} myGoals={goals} today={me.today} onClose={() => setGoalForm(null)} />}
     </section>
+  );
+}
+
+interface GoalFormState {
+  goal?: Goal;
+  parent?: Goal;
+}
+
+/** What a person's goal tree and topic rows need to render (and whether the viewer may act). */
+interface PlanContext {
+  roomId: string;
+  ownerId: string;
+  isMe: boolean;
+  active: boolean;
+  topics: Topic[];
+  goals: Goal[];
+  openGoalForm: (s: GoalFormState) => void;
+}
+
+function GoalBlock({ goal, depth, ...ctx }: { goal: Goal; depth: number } & PlanContext) {
+  const [open, setOpen] = useState(goal.status !== 'done');
+  const topics = ctx.topics.filter((t) => t.goalId === goal.id);
+  const children = ctx.goals.filter((g) => g.parentId === goal.id);
+  const inv = [['room', ctx.roomId], ['goals'], ['rooms']];
+  const update = useAction((body: object) => api.patch(`/goals/${goal.id}`, body), { invalidate: inv });
+  const archive = useAction(() => api.del(`/goals/${goal.id}`), { invalidate: inv, success: 'Goal archived — its topics moved up' });
+
+  return (
+    <div className={`goal-block${depth ? ' nested' : ''}`}>
+      <div className="goal-head">
+        <button className="btn ghost icon small" aria-label={open ? 'Collapse goal' : 'Expand goal'} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          {open ? <ChevronDown /> : <ChevronRight />}
+        </button>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="bold">{goal.title}</div>
+          <div className="tiny muted num">
+            {PERIOD_LABEL[goal.period]} · {goalValueText(goal)} · until {formatDate(goal.deadline)}
+          </div>
+        </div>
+        <span className="small bold num">{goal.progress.percent}%</span>
+        {ctx.isMe && (
+          <Menu
+            label={`More actions for ${goal.title}`}
+            items={[
+              { label: 'Add a smaller goal', onClick: () => ctx.openGoalForm({ parent: goal }), hidden: goal.period === 'weekly' },
+              { label: 'Edit goal', onClick: () => ctx.openGoalForm({ goal }) },
+              { label: 'Mark goal done', onClick: () => update.mutate({ status: 'done' }), hidden: goal.status === 'done' },
+              { label: 'Mark not done', onClick: () => update.mutate({ status: 'active' }), hidden: goal.status !== 'done' },
+              { label: 'Archive goal', danger: true, onClick: () => confirm(`Archive “${goal.title}”? Its topics move to the goal above it.`) && archive.mutate(undefined) },
+            ]}
+          />
+        )}
+      </div>
+      <ProgressBar value={goal.progress.percent} max={100} thin label={goal.title} />
+      {open && (
+        <>
+          {topics.map((t, i) => (
+            <TopicRow key={t.id} topic={t} index={i} siblings={topics} {...ctx} />
+          ))}
+          {ctx.isMe && ctx.active && <AddTopic roomId={ctx.roomId} goalId={goal.id} />}
+          {children.map((c) => (
+            <GoalBlock key={c.id} goal={c} depth={depth + 1} {...ctx} />
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -129,7 +219,7 @@ function statusText(p: TopicMemberProgress | undefined) {
   return 'Not started';
 }
 
-function TopicRow({ topic: t, index, ownerId, isMe, active, siblings }: { topic: Topic; index: number; ownerId: string; isMe: boolean; active: boolean; siblings: Topic[] }) {
+function TopicRow({ topic: t, index, siblings, ownerId, isMe, active, goals }: { topic: Topic; index: number; siblings: Topic[] } & PlanContext) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [history, setHistory] = useState(false);
@@ -184,7 +274,7 @@ function TopicRow({ topic: t, index, ownerId, isMe, active, siblings }: { topic:
           />
         </div>
       )}
-      {editing && <TopicModal topic={t} onClose={() => setEditing(false)} />}
+      {editing && <TopicModal topic={t} goals={goals} onClose={() => setEditing(false)} />}
       {history && <HistoryModal topic={t} onClose={() => setHistory(false)} />}
     </div>
   );
@@ -209,7 +299,8 @@ function ArchivedTopics({ roomId, topics }: { roomId: string; topics: Topic[] })
   );
 }
 
-function AddTopic({ roomId, firstTime, onDone }: { roomId: string; firstTime: boolean; onDone: () => void }) {
+function AddTopic({ roomId, goalId }: { roomId: string; goalId: string | null }) {
+  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [more, setMore] = useState(false);
   const [details, setDetails] = useState({ category: '', estimatedHours: '', target: '', deadline: '' });
@@ -217,43 +308,48 @@ function AddTopic({ roomId, firstTime, onDone }: { roomId: string; firstTime: bo
     () =>
       api.post(`/rooms/${roomId}/topics`, {
         title,
+        goalId,
         category: details.category || undefined,
         estimatedMinutes: details.estimatedHours ? Math.round(Number(details.estimatedHours) * 60) : null,
         sessionTargetMinutes: details.target ? Number(details.target) : null,
         deadline: details.deadline || null,
       }),
     {
-      invalidate: [['room', roomId], ['rooms']],
+      invalidate: [['room', roomId], ['rooms'], ['goals']],
       onSuccess: () => {
         setTitle('');
         setDetails({ category: '', estimatedHours: '', target: '', deadline: '' });
       },
     },
   );
+  if (!open)
+    return (
+      <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>
+        <PlusIcon /> Add a topic
+      </button>
+    );
   return (
     <form
-      className="card stack"
+      className="stack"
+      style={{ gap: 6 }}
       onSubmit={(e) => {
         e.preventDefault();
         if (title.trim()) add.mutate(undefined);
       }}
     >
-      {firstTime && <p className="small muted">Add the things you want to learn here, like “Binary Search” or “Enzyme kinetics”. Your friend will see your list, but only you can work on it.</p>}
       <div className="row">
-        <input className="input grow" placeholder="Topic title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} aria-label="Topic title" autoFocus={!firstTime} />
+        <input className="input grow" placeholder="e.g. Binary Search" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} aria-label="Topic title" autoFocus />
         <button className="btn primary" disabled={!title.trim() || add.isPending}>
           Add
         </button>
       </div>
       <div className="row between">
         <button type="button" className="btn ghost small" onClick={() => setMore((m) => !m)}>
-          {more ? 'Fewer details' : 'More details (optional)'}
+          {more ? 'Fewer details' : 'More details'}
         </button>
-        {!firstTime && (
-          <button type="button" className="btn ghost small" onClick={onDone}>
-            Close
-          </button>
-        )}
+        <button type="button" className="btn ghost small" onClick={() => setOpen(false)}>
+          Done adding
+        </button>
       </div>
       {more && (
         <div className="form-grid">
@@ -275,11 +371,12 @@ function AddTopic({ roomId, firstTime, onDone }: { roomId: string; firstTime: bo
   );
 }
 
-function TopicModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
+function TopicModal({ topic, goals, onClose }: { topic: Topic; goals: Goal[]; onClose: () => void }) {
   const [f, setF] = useState({
     title: topic.title,
     description: topic.description,
     category: topic.category,
+    goalId: topic.goalId ?? '',
     estimatedHours: topic.estimatedMinutes ? String(topic.estimatedMinutes / 60) : '',
     target: topic.sessionTargetMinutes ? String(topic.sessionTargetMinutes) : '',
     deadline: topic.deadline ?? '',
@@ -291,12 +388,13 @@ function TopicModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
         title: f.title,
         description: f.description,
         category: f.category,
+        goalId: f.goalId || null,
         estimatedMinutes: f.estimatedHours ? Math.round(Number(f.estimatedHours) * 60) : null,
         sessionTargetMinutes: f.target ? Number(f.target) : null,
         deadline: f.deadline || null,
       }),
     {
-      invalidate: [['room', topic.roomId], ['rooms']],
+      invalidate: [['room', topic.roomId], ['rooms'], ['goals']],
       success: 'Topic saved',
       onSuccess: onClose,
       onError: (e: ApiError) => {
@@ -324,6 +422,18 @@ function TopicModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
         <Field label="Title" full>
           <input className="input" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} maxLength={140} />
         </Field>
+        {goals.length > 0 && (
+          <Field label="Goal" full>
+            <select className="input" value={f.goalId} onChange={(e) => setF({ ...f, goalId: e.target.value })}>
+              <option value="">Not in a goal</option>
+              {goals.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {PERIOD_LABEL[g.period]}: {g.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label="Subject">
           <input className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} />
         </Field>

@@ -115,6 +115,7 @@ export interface Topic {
   estimatedMinutes: number | null;
   sessionTargetMinutes: number | null;
   deadline: string | null;
+  goalId: string | null;
   position: number;
   createdBy: string;
   status: 'active' | 'archived';
@@ -126,7 +127,7 @@ export interface RoomDetail extends RoomSummary {
   topics: Topic[];
   archivedTopics: Topic[];
   activity: Activity[];
-  linkedGoals: { id: string; title: string; ownerId: string }[];
+  goals: Goal[]; // both members' goals in this room
 }
 
 export interface TopicHistoryEntry {
@@ -153,43 +154,21 @@ export interface SessionRecord {
   corrections: { oldMs: number; newMs: number; reason: string; createdAt: number }[];
 }
 
-export interface GoalProgress {
-  /** count units, minutes for time goals, 0/1 for completion goals */
-  value: number;
-  target: number | null;
-  percent: number | null; // capped at 100 for display; null when not measurable
-  items: number; // distinct completed work items counted
-  /** Tasks in this goal and its sub-goals. */
-  tasks: { done: number; total: number };
-}
-
-/** A study task listed inside a goal. */
-export interface GoalTask {
-  id: string;
-  title: string;
-  date: string | null;
-  quantity: number;
-  completed: boolean;
-}
-
+/** A goal lives in a room; its progress is how many of its topics (and its smaller goals' topics) are done. */
 export interface Goal {
   id: string;
   ownerId: string;
+  roomId: string | null;
+  roomName: string | null;
   title: string;
   description: string;
   period: 'yearly' | 'monthly' | 'weekly' | 'custom';
   startDate: string;
   deadline: string;
-  measure: 'count' | 'time' | 'completion';
-  target: number | null;
-  unit: string;
   parentId: string | null;
-  visibility: 'private' | 'friends';
   status: 'active' | 'done' | 'archived';
   doneAt: number | null;
-  links: { roomId?: string; topicId?: string; label: string }[];
-  progress: GoalProgress;
-  tasks: GoalTask[]; // this goal's own checklist
+  progress: { done: number; total: number; percent: number };
   childIds: string[];
 }
 
@@ -201,13 +180,10 @@ export interface Task {
   date: string | null; // null = not scheduled on the calendar
   startTime: string | null;
   durationMinutes: number | null;
-  goalId: string | null;
-  goalTitle: string | null;
   roomId: string | null;
   roomName: string | null;
   topicId: string | null;
   topicTitle: string | null;
-  quantity: number;
   shared: boolean;
   note: string; // empty for other people
   completed: boolean;

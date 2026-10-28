@@ -134,6 +134,7 @@ export interface TopicRow {
   estimated_minutes: number | null;
   session_target_minutes: number | null;
   deadline: string | null;
+  goal_id: string | null;
   position: number;
   created_by: string;
   status: 'active' | 'archived';
@@ -294,7 +295,7 @@ export function listActivity(db: DB, viewerId: string, opts: { roomId?: string; 
        FROM activities a
        LEFT JOIN rooms r ON r.id = a.room_id
        LEFT JOIN topics t ON t.id = a.ref_id
-       LEFT JOIN goals g ON g.id = a.ref_id AND g.visibility = 'friends'
+       LEFT JOIN goals g ON g.id = a.ref_id
        LEFT JOIN rooms rr ON rr.id = a.ref_id
       WHERE ${where.join(' AND ')}
       ORDER BY a.created_at DESC LIMIT ?`,

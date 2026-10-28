@@ -62,7 +62,6 @@ export const roomCreateSchema = z
     startDate: date,
     endDate: date,
     color: accent.optional(),
-    goalId: z.string().nullable().optional(),
   })
   .refine((r) => r.endDate >= r.startDate, { message: 'The end date must be after the start date', path: ['endDate'] });
 
@@ -82,6 +81,7 @@ export const topicCreateSchema = z.object({
   estimatedMinutes: minutes.nullable().optional(),
   sessionTargetMinutes: minutes.max(600).nullable().optional(),
   deadline: date.nullable().optional(),
+  goalId: z.string().nullable().optional(),
 });
 
 export const topicUpdateSchema = topicCreateSchema.partial().extend({
@@ -114,35 +114,37 @@ export const sessionCorrectSchema = z.object({
   reason: text(200).optional(),
 });
 
-export const goalCreateSchema = z.object({
-  title,
-  description: text(1000).optional(),
-  period: z.enum(['yearly', 'monthly', 'weekly', 'custom']),
-  startDate: date,
-  deadline: date,
-  measure: z.enum(['count', 'time', 'completion']),
-  target: z.number().positive().max(1_000_000).nullable().optional(),
-  unit: text(30).optional(),
-  parentId: z.string().nullable().optional(),
-  visibility: z.enum(['private', 'friends']).optional(),
-  roomIds: z.array(z.string()).max(50).optional(),
-  topicIds: z.array(z.string()).max(500).optional(),
-});
+export const goalCreateSchema = z
+  .object({
+    roomId: z.string().min(1, 'Choose a room'),
+    title,
+    description: text(1000).optional(),
+    period: z.enum(['yearly', 'monthly', 'weekly', 'custom']),
+    startDate: date,
+    deadline: date,
+    parentId: z.string().nullable().optional(),
+  })
+  .refine((g) => g.deadline >= g.startDate, { message: 'The deadline must be after the start date', path: ['deadline'] });
 
-export const goalUpdateSchema = goalCreateSchema.partial().extend({
+export const goalUpdateSchema = z.object({
+  roomId: z.string().min(1).optional(),
+  title: title.optional(),
+  description: text(1000).optional(),
+  period: z.enum(['yearly', 'monthly', 'weekly', 'custom']).optional(),
+  startDate: date.optional(),
+  deadline: date.optional(),
+  parentId: z.string().nullable().optional(),
   status: z.enum(['active', 'done', 'archived']).optional(),
 });
 
 export const taskCreateSchema = z.object({
   title,
   description: text(1000).optional(),
-  date: date.nullable().optional(), // omitted for unscheduled goal tasks
+  date,
   startTime: time.nullable().optional(),
   durationMinutes: minutes.max(24 * 60).nullable().optional(),
-  goalId: z.string().nullable().optional(),
   roomId: z.string().nullable().optional(),
   topicId: z.string().nullable().optional(),
-  quantity: z.number().positive().max(10_000).optional(),
   shared: z.boolean().optional(),
   note: text(1000).optional(),
 });
@@ -160,6 +162,5 @@ export const encourageSchema = z.object({
 });
 
 export type SignUpInput = z.infer<typeof signUpSchema>;
-export type GoalCreateInput = z.infer<typeof goalCreateSchema>;
 export type TaskCreateInput = z.infer<typeof taskCreateSchema>;
 export type TopicCreateInput = z.infer<typeof topicCreateSchema>;

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { addDays, addMonths, formatDate } from '@shared/dates';
-import { useAction, useFriends, useGoals, useMe, useRooms } from '../lib/queries';
+import { useAction, useFriends, useMe, useRooms } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Modal, ProgressBar, Spinner } from '../components/ui';
@@ -125,7 +125,6 @@ const DURATIONS = [3, 4, 5, 6];
 export function CreateRoomModal({ friendId, onClose, onCreated }: { friendId?: string; onClose: () => void; onCreated: (id: string) => void }) {
   const { data: me } = useMe();
   const { data: friends } = useFriends();
-  const { data: goals } = useGoals();
   const today = me?.today ?? new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
     friendId: friendId ?? '',
@@ -135,7 +134,6 @@ export function CreateRoomModal({ friendId, onClose, onCreated }: { friendId?: s
     months: 3 as number | 'custom',
     endDate: addDays(addMonths(today, 3), -1),
     color: 'sage',
-    goalId: '',
   });
   const [err, setErr] = useState<{ field?: string; message: string } | null>(null);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
@@ -151,10 +149,9 @@ export function CreateRoomModal({ friendId, onClose, onCreated }: { friendId?: s
         startDate: form.startDate,
         endDate,
         color: form.color,
-        goalId: form.goalId || null,
       }),
     {
-      invalidate: [['rooms'], ['goals']],
+      invalidate: [['rooms']],
       success: 'Room created 🌱',
       onSuccess: (r) => {
         onClose();
@@ -167,7 +164,6 @@ export function CreateRoomModal({ friendId, onClose, onCreated }: { friendId?: s
     },
   );
 
-  const myGoals = (goals ?? []).filter((g) => g.status === 'active' && (g.period === 'yearly' || g.period === 'monthly'));
 
   return (
     <Modal
@@ -242,18 +238,7 @@ export function CreateRoomModal({ friendId, onClose, onCreated }: { friendId?: s
             ))}
           </div>
         </div>
-        {myGoals.length > 0 && (
-          <Field label="Count toward one of your goals (optional)" full hint="Topics you complete here will count toward this goal. Your friend's progress is separate.">
-            <select className="input" value={form.goalId} onChange={(e) => set({ goalId: e.target.value })}>
-              <option value="">No goal</option>
-              {myGoals.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.title}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
+        
         {err && !err.field && (
           <div className="banner error full" role="alert">
             {err.message}

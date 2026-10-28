@@ -2,39 +2,37 @@ import type { Goal } from '@shared/types';
 import { formatDate } from '@shared/dates';
 import { ProgressBar } from './ui';
 
-export function goalValueText(g: Goal): string {
-  const p = g.progress;
-  if (g.measure === 'completion') {
-    if (g.status === 'done') return 'Done ✨';
-    return p.tasks.total ? `${p.tasks.done} of ${p.tasks.total} tasks done` : 'Not done yet';
-  }
-  if (g.measure === 'time') {
-    const h = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
-    return p.target ? `${h(p.value)} of ${h(p.target)}` : `${h(p.value)} focused`;
-  }
-  const unit = g.unit || 'done';
-  return p.target ? `${trim(p.value)} of ${trim(p.target)} ${unit}` : `${trim(p.value)} ${unit}`;
-}
-
-const trim = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
-
 export const PERIOD_LABEL: Record<Goal['period'], string> = { yearly: 'Yearly', monthly: 'Monthly', weekly: 'Weekly', custom: 'Custom' };
 
+export function goalValueText(g: Goal): string {
+  if (g.status === 'done') return 'Done ✨';
+  const { done, total } = g.progress;
+  return total ? `${done} of ${total} topics done` : 'No topics yet';
+}
+
+/** Compact goal line with its progress bar, used on Home and friend profiles. */
 export function GoalSummary({ goal, accent }: { goal: Goal; accent?: string }) {
-  const p = goal.progress;
   return (
     <div className="stack" style={{ gap: 6 }}>
       <div className="row between top">
         <div className="grow">
           <div className="bold">{goal.title}</div>
           <div className="tiny muted">
-            {PERIOD_LABEL[goal.period]} · until {formatDate(goal.deadline)}
+            {PERIOD_LABEL[goal.period]}
+            {goal.roomName ? ` · ${goal.roomName}` : ''} · until {formatDate(goal.deadline)}
           </div>
         </div>
-        <span className="small num bold">{p.percent != null ? `${p.percent}%` : ''}</span>
+        <span className="small num bold">{goal.progress.percent}%</span>
       </div>
-      {p.percent != null && <ProgressBar value={p.percent} max={100} accent={accent} label={goal.title} />}
+      <ProgressBar value={goal.progress.percent} max={100} accent={accent} label={goal.title} />
       <div className="small muted num">{goalValueText(goal)}</div>
     </div>
   );
+}
+
+/** Top-level goals of a list (whose parent isn't in the list), in yearly → monthly → weekly order. */
+export function rootGoals(goals: Goal[]): Goal[] {
+  const ids = new Set(goals.map((g) => g.id));
+  const order = { yearly: 0, monthly: 1, weekly: 2, custom: 3 };
+  return goals.filter((g) => !g.parentId || !ids.has(g.parentId)).sort((a, b) => order[a.period] - order[b.period]);
 }

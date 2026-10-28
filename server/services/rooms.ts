@@ -18,13 +18,14 @@ import {
   type RoomRow,
   type TopicRow,
 } from './core.ts';
+import { checkTopicGoal, listRoomGoals } from './goals.ts';
 
 // ───────────── Rooms ─────────────
 
 export function createRoom(
   db: DB,
   userId: string,
-  input: { friendId: string; name: string; description?: string; startDate: string; endDate: string; color?: string; goalId?: string | null },
+  input: { friendId: string; name: string; description?: string; startDate: string; endDate: string; color?: string },
 ): string {
   if (input.friendId === userId) throw badRequest('Choose a friend to share this room with.');
   if (!areFriends(db, userId, input.friendId)) throw forbidden('You can only create rooms with accepted friends.');
@@ -46,11 +47,6 @@ export function createRoom(
     );
     run(db, 'INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', id, userId, now);
     run(db, 'INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', id, input.friendId, now);
-    if (input.goalId) {
-      const goal = get<{ owner_id: string }>(db, 'SELECT owner_id FROM goals WHERE id = ?', input.goalId);
-      if (!goal || goal.owner_id !== userId) throw badRequest('That goal could not be found.');
-      run(db, 'INSERT INTO goal_links (goal_id, room_id) VALUES (?, ?)', input.goalId, id);
-    }
     recordActivity(db, { actorId: userId, type: 'room_created', roomId: id, refId: id });
     return id;
   });
@@ -133,6 +129,7 @@ function loadTopics(db: DB, roomIds: string[], includeArchived: boolean): Topic[
       estimatedMinutes: t.estimated_minutes,
       sessionTargetMinutes: t.session_target_minutes,
       deadline: t.deadline,
+      goalId: t.goal_id,
       position: t.position,
       createdBy: t.created_by,
       status: t.status,
@@ -190,24 +187,12 @@ export function roomDetail(db: DB, userId: string, roomId: string): RoomDetail {
   const room = requireRoomMember(db, roomId, userId);
   const topics = loadTopics(db, [roomId], true);
   const memberIds = roomMemberIds(db, roomId);
-  // Goals linked to this room (or its topics) that the viewer may see: their own, or shared ones.
-  const linkedGoals = all<{ id: string; title: string; owner_id: string }>(
-    db,
-    `SELECT DISTINCT g.id, g.title, g.owner_id FROM goals g JOIN goal_links l ON l.goal_id = g.id
-       LEFT JOIN topics t ON t.id = l.topic_id
-      WHERE (l.room_id = ? OR t.room_id = ?) AND g.status != 'archived'
-        AND (g.owner_id = ? OR (g.visibility = 'friends' AND g.owner_id IN (${placeholders(memberIds.length)})))`,
-    roomId,
-    roomId,
-    userId,
-    ...memberIds,
-  );
   return {
     ...summarize(db, userId, room, topics),
     topics: topics.filter((t) => t.status === 'active'),
     archivedTopics: topics.filter((t) => t.status === 'archived'),
     activity: listActivity(db, userId, { roomId, limit: 15 }),
-    linkedGoals: linkedGoals.map((g) => ({ id: g.id, title: g.title, ownerId: g.owner_id })),
+    goals: listRoomGoals(db, roomId, memberIds),
   };
 }
 
@@ -225,18 +210,19 @@ export function createTopic(
   db: DB,
   userId: string,
   roomId: string,
-  input: { title: string; description?: string; category?: string; estimatedMinutes?: number | null; sessionTargetMinutes?: number | null; deadline?: string | null },
+  input: { title: string; description?: string; category?: string; estimatedMinutes?: number | null; sessionTargetMinutes?: number | null; deadline?: string | null; goalId?: string | null },
 ): string {
   const room = requireRoomMember(db, roomId, userId);
   if (room.status === 'archived') throw badRequest('This room is archived. Reopen it to add topics.');
+  checkTopicGoal(db, userId, roomId, input.goalId);
   return transaction(db, () => {
     const id = newId();
     const now = Date.now();
     const last = get<{ p: number | null }>(db, 'SELECT MAX(position) AS p FROM topics WHERE room_id = ?', roomId);
     run(
       db,
-      `INSERT INTO topics (id, room_id, title, description, category, estimated_minutes, session_target_minutes, deadline, position, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO topics (id, room_id, title, description, category, estimated_minutes, session_target_minutes, deadline, goal_id, position, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       roomId,
       input.title,
@@ -245,6 +231,7 @@ export function createTopic(
       input.estimatedMinutes ?? null,
       input.sessionTargetMinutes ?? null,
       input.deadline ?? null,
+      input.goalId ?? null,
       (last?.p ?? 0) + 1,
       userId,
       now,
@@ -260,9 +247,10 @@ export function updateTopic(
   db: DB,
   userId: string,
   topicId: string,
-  input: Partial<{ title: string; description: string; category: string; estimatedMinutes: number | null; sessionTargetMinutes: number | null; deadline: string | null; status: 'active' | 'archived' }>,
+  input: Partial<{ title: string; description: string; category: string; estimatedMinutes: number | null; sessionTargetMinutes: number | null; deadline: string | null; goalId: string | null; status: 'active' | 'archived' }>,
 ) {
   const { topic } = requireOwnTopic(db, topicId, userId);
+  if (input.goalId !== undefined) checkTopicGoal(db, userId, topic.room_id, input.goalId);
   const changes: Record<string, unknown> = {};
   const next = {
     title: input.title ?? topic.title,
@@ -271,6 +259,7 @@ export function updateTopic(
     estimated_minutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : topic.estimated_minutes,
     session_target_minutes: input.sessionTargetMinutes !== undefined ? input.sessionTargetMinutes : topic.session_target_minutes,
     deadline: input.deadline !== undefined ? input.deadline : topic.deadline,
+    goal_id: input.goalId !== undefined ? input.goalId : topic.goal_id,
     status: input.status ?? topic.status,
   };
   for (const [k, v] of Object.entries(next)) if ((topic as any)[k] !== v) changes[k] = { from: (topic as any)[k], to: v };
@@ -278,13 +267,14 @@ export function updateTopic(
   transaction(db, () => {
     run(
       db,
-      `UPDATE topics SET title = ?, description = ?, category = ?, estimated_minutes = ?, session_target_minutes = ?, deadline = ?, status = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE topics SET title = ?, description = ?, category = ?, estimated_minutes = ?, session_target_minutes = ?, deadline = ?, goal_id = ?, status = ?, updated_at = ? WHERE id = ?`,
       next.title,
       next.description,
       next.category,
       next.estimated_minutes,
       next.session_target_minutes,
       next.deadline,
+      next.goal_id,
       next.status,
       Date.now(),
       topicId,
@@ -304,15 +294,22 @@ export function archiveTopic(db: DB, userId: string, topicId: string) {
 
 export function reorderTopics(db: DB, userId: string, roomId: string, topicIds: string[]) {
   requireRoomMember(db, roomId, userId);
-  // Each person orders only their own topics.
-  const existing = new Set(
-    all<{ id: string }>(db, "SELECT id FROM topics WHERE room_id = ? AND created_by = ? AND status = 'active'", roomId, userId).map((r) => r.id),
-  );
-  if (topicIds.length !== existing.size || !topicIds.every((id) => existing.has(id))) {
+  // Reorders a group of your own topics (e.g. one goal's list) among the positions they already hold.
+  const rows = topicIds.length
+    ? all<{ id: string; position: number }>(
+        db,
+        `SELECT id, position FROM topics WHERE room_id = ? AND created_by = ? AND status = 'active' AND id IN (${placeholders(topicIds.length)})`,
+        roomId,
+        userId,
+        ...topicIds,
+      )
+    : [];
+  if (rows.length !== new Set(topicIds).size || rows.length !== topicIds.length) {
     throw badRequest('The topic list changed. Please refresh and try again.', 'STALE_ORDER');
   }
+  const slots = rows.map((r) => r.position).sort((a, b) => a - b);
   transaction(db, () => {
-    topicIds.forEach((id, i) => run(db, 'UPDATE topics SET position = ? WHERE id = ?', i + 1, id));
+    topicIds.forEach((id, i) => run(db, 'UPDATE topics SET position = ? WHERE id = ?', slots[i], id));
   });
 }
 
@@ -375,9 +372,9 @@ export function reopenTopic(db: DB, userId: string, topicId: string, mode: 'revi
 
 /** Next of the user's own topics after `afterTopicId` (wrapping around) that they have not completed. */
 export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afterTopicId?: string): { id: string; title: string } | null {
-  const topics = all<{ id: string; title: string; status: string | null }>(
+  const topics = all<{ id: string; title: string; status: string | null; goal_id: string | null }>(
     db,
-    `SELECT t.id, t.title, p.status FROM topics t
+    `SELECT t.id, t.title, p.status, t.goal_id FROM topics t
        LEFT JOIN topic_progress p ON p.topic_id = t.id AND p.user_id = ?
       WHERE t.room_id = ? AND t.created_by = ? AND t.status = 'active' ORDER BY t.position, t.created_at`,
     userId,
@@ -386,7 +383,10 @@ export function nextIncompleteTopic(db: DB, userId: string, roomId: string, afte
   );
   const start = afterTopicId ? topics.findIndex((t) => t.id === afterTopicId) + 1 : 0;
   const ordered = [...topics.slice(start), ...topics.slice(0, start)];
-  const next = ordered.find((t) => t.id !== afterTopicId && t.status !== 'completed');
+  const open = (t: (typeof topics)[number]) => t.id !== afterTopicId && t.status !== 'completed';
+  // Stay within the same goal first, then move on to the rest of the room.
+  const goalId = topics.find((t) => t.id === afterTopicId)?.goal_id;
+  const next = (goalId && ordered.find((t) => open(t) && t.goal_id === goalId)) || ordered.find(open);
   return next ? { id: next.id, title: next.title } : null;
 }
 

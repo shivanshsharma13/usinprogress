@@ -51,16 +51,26 @@ respondToRequest(db, mira, req.id, true);
 // One shared room; each person keeps their own list of topics inside it.
 const room = createRoom(db, asha, { friendId: mira, name: 'Our 90-Day Growth Plan', description: 'DSA for Asha, biochemistry for Mira.', startDate: today, endDate: addDays(today, 90), color: 'sage' });
 
-const dsaTopics = [
-  ['Arrays', 120],
-  ['Binary Search', 180],
-  ['Linked Lists', 120],
-  ['Trees', 300],
-  ['Graphs', 360],
-].map(([title, est]) => createTopic(db, asha, room, { title: String(title), estimatedMinutes: Number(est), sessionTargetMinutes: 45, category: 'DSA' }));
+// Each person's plan in the room: yearly → monthly → weekly goals, with topics under them.
+const year = today.slice(0, 4);
+const weekStart = startOfWeek(today);
+const thisYear = { startDate: `${year}-01-01`, deadline: `${year}-12-31` };
+const thisMonth = { startDate: startOfMonth(today), deadline: endOfMonth(today) };
+const thisWeek = { startDate: weekStart, deadline: addDays(weekStart, 6) };
+
+const ashaYear = createGoal(db, asha, { roomId: room, title: 'Get interview-ready in DSA', period: 'yearly', ...thisYear });
+const ashaMonth = createGoal(db, asha, { roomId: room, title: 'Core data structures', period: 'monthly', ...thisMonth, parentId: ashaYear });
+const ashaWeek = createGoal(db, asha, { roomId: room, title: 'Searching and lists', period: 'weekly', ...thisWeek, parentId: ashaMonth });
+const miraYear = createGoal(db, mira, { roomId: room, title: 'Finish the medical syllabus', period: 'yearly', ...thisYear });
+const miraMonth = createGoal(db, mira, { roomId: room, title: 'Biochemistry units', period: 'monthly', ...thisMonth, parentId: miraYear });
+
+const dsa = (title: string, est: number, goalId: string) =>
+  createTopic(db, asha, room, { title, estimatedMinutes: est, sessionTargetMinutes: 45, category: 'DSA', goalId });
+const dsaTopics = [dsa('Arrays', 120, ashaWeek), dsa('Binary Search', 180, ashaWeek), dsa('Linked Lists', 120, ashaWeek), dsa('Trees', 300, ashaMonth), dsa('Graphs', 360, ashaMonth)];
 const bioTopics = ['Enzyme kinetics', 'Carbohydrate metabolism', 'Lipid metabolism', 'Amino acids'].map((title) =>
-  createTopic(db, mira, room, { title, estimatedMinutes: 240, sessionTargetMinutes: 50, category: 'Biochemistry' }),
+  createTopic(db, mira, room, { title, estimatedMinutes: 240, sessionTargetMinutes: 50, category: 'Biochemistry', goalId: miraMonth }),
 );
+for (const title of ['Physiology: cardiovascular system', 'Pharmacology flashcards']) createTopic(db, mira, room, { title, goalId: miraYear });
 
 // A few finished sessions so progress screens have something to show.
 function pastSession(userId: string, roomId: string, topicId: string, minutesAgo: number, minutes: number) {
@@ -91,23 +101,10 @@ pastSession(mira, room, bioTopics[1], 3 * 24 * 60, 30);
 completeTopic(db, asha, dsaTopics[0]);
 completeTopic(db, mira, bioTopics[0]);
 
-const year = today.slice(0, 4);
-const yearly = createGoal(db, asha, { title: 'Become confident with DSA for a job change', period: 'yearly', startDate: `${year}-01-01`, deadline: `${year}-12-31`, measure: 'count', target: 1000, unit: 'questions', visibility: 'friends' });
-const monthly = createGoal(db, asha, { title: 'Solve 100 DSA questions this month', period: 'monthly', startDate: startOfMonth(today), deadline: endOfMonth(today), measure: 'count', target: 100, unit: 'questions', parentId: yearly, visibility: 'friends' });
-const weekStart = startOfWeek(today);
-const weekly = createGoal(db, asha, { title: 'Solve 25 questions this week', period: 'weekly', startDate: weekStart, deadline: addDays(weekStart, 6), measure: 'count', target: 25, unit: 'questions', parentId: monthly, roomIds: [room] });
-const miraYear = createGoal(db, mira, { title: 'Complete the planned medical syllabus', period: 'yearly', startDate: `${year}-01-01`, deadline: `${year}-12-31`, measure: 'completion', visibility: 'friends' });
-createGoal(db, mira, { title: 'Complete four biochemistry units', period: 'monthly', startDate: startOfMonth(today), deadline: endOfMonth(today), measure: 'count', target: 4, unit: 'units', parentId: miraYear, roomIds: [room], visibility: 'friends' });
-
-createTask(db, asha, { title: 'Solve 5 binary search questions', date: today, goalId: weekly, quantity: 5, roomId: room, topicId: dsaTopics[1], shared: true });
+createTask(db, asha, { title: 'Solve 5 binary search questions', date: today, roomId: room, topicId: dsaTopics[1], shared: true });
 createTask(db, asha, { title: 'Mock interview prep', date: addDays(today, 2), startTime: '19:00', durationMinutes: 60, shared: true });
 createTask(db, mira, { title: 'Carbohydrate metabolism — first pass', date: today, roomId: room, topicId: bioTopics[1], shared: true, startTime: '18:30' });
 createTask(db, mira, { title: 'Revise enzyme kinetics', date: addDays(today, 1), roomId: room, topicId: bioTopics[0], shared: true });
-
-// A goal's checklist: things to study, ticked off as they're done (no date needed).
-for (const title of ['Revise biochemistry units 1–3', 'Physiology: cardiovascular system', 'Pharmacology flashcards']) {
-  createTask(db, mira, { title, goalId: miraYear });
-}
 
 encourage(db, mira, { recipientId: asha, reaction: 'proud' });
 
