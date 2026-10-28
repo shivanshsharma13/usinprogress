@@ -54,6 +54,12 @@ schema turns on row-level security (with no policies) for every table, so Supaba
 or change any of it. TLS is always on for hosted databases; set `DATABASE_SSL_CA` to Supabase's CA certificate
 to also verify the server's identity.
 
+**Run the app server close to the database.** Each request makes a few dozen small queries, so the network
+distance between the app server and Supabase matters: within the same cloud region a query takes ~1 ms and
+pages are instant, but from another continent (~200 ms per query) the Home screen takes several seconds. Host
+the server in the same region as your Supabase project, and for day-to-day development leave `DATABASE_URL`
+empty to use the local PGlite database.
+
 ### Production build
 
 ```bash

@@ -44,7 +44,7 @@ test('two users can create accounts and sign in', async () => {
   assert.equal(dup.status, 409);
 
   // Passwords are hashed and live outside the application tables.
-  const cols = (await srv.db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")).map((r: any) => r.column_name);
+  const cols = (await srv.db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND table_schema = current_schema()")).map((r: any) => r.column_name);
   assert.ok(!cols.some((n: string) => n.includes('pass')));
   const cred = (await srv.db.query('SELECT password_hash FROM auth_credentials WHERE user_id = ?', [a.id]))[0] as any;
   assert.ok(cred.password_hash.startsWith('scrypt$'));
@@ -194,8 +194,12 @@ test('completing a topic saves the session, marks it complete and selects the ne
   assert.equal(done.body.completedTopic, true);
   assert.equal(done.body.session.id, session.id);
   assert.equal(done.body.session.state, 'finished');
-  // ~150ms of running time; the 400ms pause is excluded.
-  assert.ok(done.body.session.focusedMs >= 100 && done.body.session.focusedMs < 450, `focused ${done.body.session.focusedMs}`);
+  // Focused time is exactly the wall time minus the pause (which lasted at least 400ms), whatever the latency.
+  const { startedAt, endedAt, focusedMs } = done.body.session;
+  const pause = (await srv.db.query('SELECT paused_at, resumed_at FROM session_pauses WHERE session_id = ?', [session.id]))[0];
+  assert.ok(pause.resumed_at - pause.paused_at >= 400);
+  assert.equal(focusedMs, endedAt - startedAt - (pause.resumed_at - pause.paused_at), `focused ${focusedMs}`);
+  assert.ok(focusedMs >= 100, `focused ${focusedMs}`);
   assert.equal(done.body.nextTopic.id, topics[1]);
   assert.equal((await A.get('/sessions/active')).body.session, null);
 
