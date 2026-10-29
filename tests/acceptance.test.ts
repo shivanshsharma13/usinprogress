@@ -563,3 +563,41 @@ test('home summarises the next action', async () => {
   assert.equal(home.friends[0].user.id, a.id);
   assert.ok(home.rooms.length >= 2);
 });
+
+test('a forgotten password is reset through the emailed link', async () => {
+  const { me: r } = await signUp(srv.base, 'rhea', 'custom');
+  const visitor = new Client(srv.base);
+  const redirectTo = 'http://127.0.0.1:5173/reset';
+  // Same answer whether or not the email has an account.
+  assert.equal((await visitor.post('/auth/forgot', { email: 'nobody@example.com', redirectTo })).status, 200);
+  assert.equal((await visitor.post('/auth/forgot', { email: 'not-an-email', redirectTo })).status, 400);
+  assert.equal((await visitor.post('/auth/forgot', { email: emailFor('rhea'), redirectTo })).status, 200);
+
+  // Read the email from the local mail catcher and follow its link like a browser would.
+  const mail = 'http://127.0.0.1:54324/api/v1';
+  let text = '';
+  for (let i = 0; i < 20 && !text; i++) {
+    const found = (await (await fetch(`${mail}/search?query=${encodeURIComponent(`to:${emailFor('rhea')}`)}`)).json()) as any;
+    if (found.messages?.length) text = ((await (await fetch(`${mail}/message/${found.messages[0].ID}`)).json()) as any).Text;
+    else await sleep(250);
+  }
+  const link = text.match(/https?:\/\/\S+verify\S+/)?.[0];
+  assert.ok(link, 'reset email has a link');
+  const landing = (await fetch(link, { redirect: 'manual' })).headers.get('location')!;
+  assert.ok(landing.startsWith(redirectTo), 'the link lands on the reset page');
+  const hash = new URLSearchParams(landing.split('#')[1]);
+  assert.equal(hash.get('type'), 'recovery');
+  await visitor.sb.auth.setSession({ access_token: hash.get('access_token')!, refresh_token: hash.get('refresh_token')! });
+  assert.equal((await visitor.get('/me')).body.me.id, r.id);
+
+  const mismatch = await visitor.put('/auth/password', { password: 'a brand new secret', confirm: 'something else' });
+  assert.equal(mismatch.status, 400);
+  assert.equal(mismatch.body.error.data.field, 'confirm');
+  assert.equal((await visitor.put('/auth/password', { password: 'a brand new secret', confirm: 'a brand new secret' })).status, 200);
+
+  const fresh = new Client(srv.base);
+  assert.equal((await fresh.post('/auth/signin', { email: emailFor('rhea'), password: 'correct horse battery' })).status, 400);
+  assert.equal((await fresh.post('/auth/signin', { email: emailFor('rhea'), password: 'a brand new secret' })).status, 200);
+  // Changing the password needs a signed-in person.
+  assert.equal((await new Client(srv.base).put('/auth/password', { password: 'whatever123', confirm: 'whatever123' })).status, 401);
+});

@@ -8,6 +8,7 @@ import { api } from '../lib/api';
 import { applyScheme, personVars } from '../lib/theme';
 import { Field, Spinner, Switch } from '../components/ui';
 import { Buddy } from '../components/Buddy';
+import { NewPasswordForm } from './Recovery';
 
 const ACCESSORIES: { key: NonNullable<AvatarConfig['accessory']>; label: string }[] = [
   { key: 'none', label: 'None' },
@@ -151,6 +152,12 @@ export function SettingsPage() {
           }}
           label="Dark mode"
         />
+      </div>
+
+      <div className="card stack">
+        <h2>Password</h2>
+        <p className="tiny muted">Change it any time. If you ever forget it, use "Forgot password?" on the sign-in page.</p>
+        <NewPasswordForm submitLabel="Change password" />
       </div>
     </div>
   );

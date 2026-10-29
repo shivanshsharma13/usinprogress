@@ -76,11 +76,27 @@ Demo accounts (local only): `asha@example.com` and `mira@example.com`, password 
    - *Sign In / Providers → Email*: turn **off** "Confirm email" (or keep it on and set the Site URL below,
      so confirmation links open the site).
    - *URL Configuration → Site URL*: `https://<user>.github.io/<repo>/`.
+   - *URL Configuration → Redirect URLs*: add `https://<user>.github.io/<repo>/**`, so password-reset links
+     can open the site's `/reset` page. Without it, reset emails send people to the Site URL instead.
+   - *Emails → SMTP Settings*: Supabase's built-in mailer only delivers to members of your Supabase
+     organisation and sends a few emails an hour. For your friend to get reset emails, add an SMTP provider
+     (Resend, Brevo, a Gmail app password, …).
 3. **GitHub repository variables** (Settings → Secrets and variables → Actions → Variables):
    `VITE_SUPABASE_URL` = `https://<project-ref>.supabase.co`, `VITE_SUPABASE_ANON_KEY` = the project's anon /
    publishable key (Project Settings → API).
 4. **Pages**: Settings → Pages → Source: *GitHub Actions*. Every push to `main` runs
    `.github/workflows/pages.yml`, which builds and publishes the site.
+
+### Forgot your password?
+
+1. On the sign-in page, tap **Forgot password?** and enter the email you signed up with (not your username).
+2. Open the newest email from Supabase Auth. Check spam too. Each link works once, for one hour.
+3. The link signs you in on the **Choose a new password** page. Save a new password and you're back in.
+   Rooms, plans and study history are untouched.
+
+If no email ever arrives, the project owner can open Supabase → Authentication → Users, pick the
+person, and choose **Send password recovery**, then fix SMTP (see above). Signed-in people can change
+their password any time under **Settings → Password**.
 
 ### Tests
 

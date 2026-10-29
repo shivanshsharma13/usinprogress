@@ -9,6 +9,7 @@ import { Layout } from './components/Layout';
 import { Spinner, Toasts } from './components/ui';
 import { AuthPage } from './pages/Auth';
 import { HomePage } from './pages/Home';
+import { ForgotPasswordPage, ResetLinkProblemPage, ResetPasswordPage } from './pages/Recovery';
 
 const RoomsPage = lazy(() => import('./pages/Rooms').then((m) => ({ default: m.RoomsPage })));
 const RoomPage = lazy(() => import('./pages/Room').then((m) => ({ default: m.RoomPage })));
@@ -72,6 +73,8 @@ export function App() {
       {!me ? (
         <Routes>
           <Route path="/signup" element={<AuthPage mode="signup" />} />
+          <Route path="/forgot" element={<ForgotPasswordPage />} />
+          <Route path="/reset" element={<ResetLinkProblemPage />} />
           <Route path="*" element={<AuthPage mode="signin" />} />
         </Routes>
       ) : (
@@ -89,6 +92,8 @@ export function App() {
               <Route path="/friends/:id" element={<FriendPage />} />
               <Route path="/progress" element={<ProgressPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/reset" element={<ResetPasswordPage />} />
+              <Route path="/forgot" element={<Navigate to="/settings" replace />} />
               <Route path="/signin" element={<Navigate to="/" replace />} />
               <Route path="/signup" element={<Navigate to="/" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />

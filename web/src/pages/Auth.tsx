@@ -101,6 +101,11 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
               required
             />
           </Field>
+          {mode === 'signin' && (
+            <p className="small" style={{ marginTop: -6, textAlign: 'right' }}>
+              <Link to="/forgot">Forgot password?</Link>
+            </p>
+          )}
 
           {mode === 'signup' && (
             <>

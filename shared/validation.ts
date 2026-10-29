@@ -46,6 +46,15 @@ export const signInSchema = z.object({
   password: z.string().min(1, 'Please enter your password').max(200),
 });
 
+export const forgotPasswordSchema = z.object({
+  email,
+  redirectTo: z.string().url().max(500),
+});
+
+export const newPasswordSchema = z
+  .object({ password: passwordSchema, confirm: z.string() })
+  .refine((v) => v.password === v.confirm, { message: 'The two passwords do not match', path: ['confirm'] });
+
 export const profileUpdateSchema = z.object({
   displayName: z.string().trim().min(1).max(40).optional(),
   profileType: z.enum(['engineer', 'doctor', 'custom']).optional(),

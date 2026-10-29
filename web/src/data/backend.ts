@@ -626,6 +626,26 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     return { me: await me() };
   }
 
+  // A reset email signs you in through its link, then you choose a new password. We never say whether
+  // an email has an account, so the reply is the same either way.
+  async function forgotPassword(body: unknown): Promise<{ ok: true }> {
+    const input = parse(v.forgotPasswordSchema, body);
+    const { error } = await sb.auth.resetPasswordForEmail(input.email, { redirectTo: input.redirectTo });
+    if (error?.status === 429) throw new ApiError(429, 'TOO_MANY', 'Too many reset emails just now. Please wait a few minutes and try again.');
+    if (error) throw new ApiError(error.status ?? 400, 'RESET_FAILED', 'We could not send the email. Please try again in a moment.');
+    return { ok: true };
+  }
+
+  async function setPassword(body: unknown): Promise<{ ok: true }> {
+    const input = parse(v.newPasswordSchema, body);
+    await myId();
+    const { error } = await sb.auth.updateUser({ password: input.password });
+    if (error?.code === 'same_password') throw new ApiError(400, 'SAME_PASSWORD', 'Choose a password different from your old one.', { field: 'password' });
+    if (error?.code === 'weak_password') throw new ApiError(400, 'WEAK_PASSWORD', 'That password is too easy to guess. Try a longer one.', { field: 'password' });
+    if (error) throw new ApiError(error.status ?? 400, 'PASSWORD_FAILED', 'We could not change your password. Please try again.');
+    return { ok: true };
+  }
+
   // ───────────── router ─────────────
 
   async function request(method: Method, fullPath: string, body?: any): Promise<any> {
@@ -640,6 +660,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return signUp(body);
       case 'POST /auth/signin':
         return signIn(body);
+      case 'POST /auth/forgot':
+        return forgotPassword(body);
+      case 'PUT /auth/password':
+        return setPassword(body);
       case 'POST /auth/signout':
         await sb.auth.signOut();
         return { ok: true };
