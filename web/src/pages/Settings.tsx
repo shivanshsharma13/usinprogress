@@ -5,6 +5,7 @@ import { ACCENTS, DEFAULT_ACCENT, type AvatarConfig, type ProfileType } from '@s
 import type { Me } from '@shared/types';
 import { useAction, useMe } from '../lib/queries';
 import { api } from '../lib/api';
+import { forgetSavedScreens } from '../lib/cache';
 import { applyScheme, personVars } from '../lib/theme';
 import { Field, Spinner, Switch } from '../components/ui';
 import { Buddy } from '../components/Buddy';
@@ -45,6 +46,7 @@ export function SettingsPage() {
     await api.post('/auth/signout');
     qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
     qc.setQueryData<any>(['me'], null);
+    forgetSavedScreens();
     navigate('/', { replace: true });
   };
 

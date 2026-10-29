@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from './api';
 import { toast } from './toast';
+import { noteLocalWrite } from './realtime';
 import type {
   Activity,
   ActiveSession,
@@ -92,7 +93,9 @@ export function useAction<TVars, TResult = any>(
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
+    onMutate: noteLocalWrite,
     onSuccess: (r, v) => {
+      noteLocalWrite();
       for (const k of opts.invalidate ?? [['home']]) void qc.invalidateQueries({ queryKey: k });
       void qc.invalidateQueries({ queryKey: ['home'] });
       const msg = typeof opts.success === 'function' ? opts.success(r) : opts.success;

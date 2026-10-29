@@ -107,6 +107,8 @@ npm test
 Resets the local Supabase and runs the acceptance suite (`tests/acceptance.test.ts`) plus timer unit tests.
 Each simulated person is a separate Supabase client with its own session, driving the real data layer, so
 the tests exercise sign-in, RLS, the database functions and Realtime exactly as the site does.
+`node scripts/measure.ts 300` (after `npm run seed`) shows how many requests each screen makes and how long it
+takes when every request costs 300 ms, roughly what a phone sees against a hosted Supabase project.
 `npm run build` also type-checks and runs a promise-safety lint (no forgotten `await`s in the data layer).
 
 ## Data model

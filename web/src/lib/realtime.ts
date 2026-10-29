@@ -1,6 +1,9 @@
 // Live updates via Supabase Realtime. The database is the source of truth: a change only tells us
 // which screens to refetch. Realtime applies row-level security, so each person only hears about rows
 // they may read. On reconnect we refetch everything, so a dropped connection never leaves stale data.
+//
+// One action touches several tables at once, so changes are gathered for a moment and each screen is
+// refreshed once. A screen that is still loading is never restarted; it is refreshed when it finishes.
 import { useEffect, useState } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import { REACTIONS, type ReactionKey } from '@shared/theme';
@@ -27,6 +30,40 @@ const TABLE_KEYS: Record<string, string[]> = {
 };
 
 export type ConnectionState = 'connecting' | 'online' | 'offline';
+
+// Your own actions already refresh what they change. Their echoes from Realtime only need to refresh
+// screens that were not reloaded since.
+let lastLocalWrite = 0;
+export const noteLocalWrite = () => {
+  lastLocalWrite = Date.now();
+};
+const OWNER_COLUMNS = ['user_id', 'owner_id', 'actor_id', 'created_by', 'creator_id'];
+
+function refresher(qc: QueryClient) {
+  const pending = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const flush = () => {
+    timer = null;
+    for (const key of [...pending]) {
+      if (qc.isFetching({ queryKey: [key] })) continue; // let it finish, then refresh
+      pending.delete(key);
+      void qc.invalidateQueries({ queryKey: [key] }, { cancelRefetch: false });
+    }
+    if (pending.size) timer = setTimeout(flush, 200);
+  };
+  return {
+    queue(keys: string[], ownEcho = false) {
+      for (const key of keys) {
+        const fresh = ownEcho && qc.getQueryCache().findAll({ queryKey: [key] }).every((q) => q.state.fetchStatus === 'fetching' || q.state.dataUpdatedAt >= lastLocalWrite);
+        if (!fresh) pending.add(key);
+      }
+      if (pending.size && !timer) timer = setTimeout(flush, 250);
+    },
+    cancel() {
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
 
 async function displayName(userId: string): Promise<string> {
   const { data } = await supabase.from('profiles').select('display_name').eq('id', userId).maybeSingle();
@@ -60,17 +97,20 @@ export function useRealtime(qc: QueryClient, meId: string | null): ConnectionSta
   useEffect(() => {
     if (!meId) return;
     let wasOffline = false;
+    const refresh = refresher(qc);
     const channel = supabase.channel(`changes-${meId}`);
     for (const table of Object.keys(TABLE_KEYS)) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
-        for (const key of TABLE_KEYS[table]) void qc.invalidateQueries({ queryKey: [key] });
+        const row = (payload.eventType === 'DELETE' ? payload.old : payload.new) as Record<string, any>;
+        const ownEcho = Date.now() - lastLocalWrite < 3000 && OWNER_COLUMNS.some((c) => row?.[c] === meId);
+        refresh.queue(TABLE_KEYS[table], ownEcho);
         void notice(table, payload.eventType, (payload.new ?? {}) as Record<string, any>, meId);
       });
     }
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
         setState('online');
-        if (wasOffline) for (const key of ALL) void qc.invalidateQueries({ queryKey: [key] });
+        if (wasOffline) refresh.queue(ALL);
         wasOffline = false;
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         wasOffline = true;
@@ -79,14 +119,20 @@ export function useRealtime(qc: QueryClient, meId: string | null): ConnectionSta
     });
 
     void syncClock();
+    // Coming back to the app after a while: refresh what's on screen once (window focus doesn't).
+    let hiddenAt = 0;
     const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') {
+        hiddenAt = Date.now();
+        return;
+      }
       void syncClock();
-      void qc.invalidateQueries({ queryKey: ['session'] });
+      refresh.queue(Date.now() - hiddenAt > 60_000 ? ALL : ['session']);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      refresh.cancel();
       void supabase.removeChannel(channel);
     };
   }, [qc, meId]);

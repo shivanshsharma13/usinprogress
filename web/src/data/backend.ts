@@ -72,6 +72,13 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
   const ids = (list: (string | null | undefined)[]) => [...new Set(list.filter(Boolean))] as string[];
 
+  /** Run reads side by side, but report the first failure only after all have settled. */
+  async function together<T extends readonly Promise<unknown>[]>(work: T): Promise<{ values: { -readonly [K in keyof T]: Awaited<T[K]> | undefined }; error: unknown }> {
+    const settled = await Promise.allSettled(work);
+    const failed = settled.find((r) => r.status === 'rejected');
+    return { values: settled.map((r) => (r.status === 'fulfilled' ? r.value : undefined)) as any, error: failed ? (failed as PromiseRejectedResult).reason : null };
+  }
+
   // ───────────── people ─────────────
 
   const toPublicUser = (p: Row): PublicUser => ({
@@ -99,10 +106,14 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     return new Map(found.map((p) => [p.id, p]));
   }
 
+  // Your own profile only changes through PATCH /me, so keep it for a minute instead of asking every time.
+  let meCache: { row: Row; at: number } | null = null;
   async function me(): Promise<Me> {
     const id = await myId();
+    if (meCache?.row.id === id && Date.now() - meCache.at < 60_000) return toMe(meCache.row);
     const p = (await profiles([id])).get(id);
     if (!p) throw unauthenticated();
+    meCache = { row: p, at: Date.now() };
     return toMe(p);
   }
 
@@ -120,17 +131,24 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
   async function loadTopics(roomIds: string[], includeArchived: boolean): Promise<Topic[]> {
     if (!roomIds.length) return [];
-    let query = sb.from('topics').select('*').in('room_id', roomIds).order('position').order('created_at');
+    // One request for topics with their progress and first completions; per-room totals alongside it.
+    let query = sb
+      .from('topics')
+      .select('*, topic_progress(*), topic_completions(topic_id, user_id, completed_at)')
+      .in('room_id', roomIds)
+      .eq('topic_completions.kind', 'first')
+      .is('topic_completions.revoked_at', null)
+      .order('position')
+      .order('created_at');
     if (!includeArchived) query = query.eq('status', 'active');
-    const topics = await rows(query);
-    if (!topics.length) return [];
-    const topicIds = topics.map((t) => t.id);
-    const [progress, firsts, times, planLinks] = await Promise.all([
-      rows(sb.from('topic_progress').select('*').in('topic_id', topicIds)),
-      rows(sb.from('topic_completions').select('topic_id, user_id, completed_at').in('topic_id', topicIds).eq('kind', 'first').is('revoked_at', null)),
+    const [topics, times, planLinks] = await Promise.all([
+      rows(query),
       Promise.all(roomIds.map((r) => rpc<Row[]>('room_topic_time', { p_room: r }))).then((x) => x.flat()),
       Promise.all(roomIds.map((r) => rpc<Row[]>('room_plan_topics', { p_room: r }))).then((x) => x.flat()),
     ]);
+    if (!topics.length) return [];
+    const progress = topics.flatMap((t) => t.topic_progress ?? []);
+    const firsts = topics.flatMap((t) => t.topic_completions ?? []);
     const key = (t: string, u: string) => `${t}:${u}`;
     const progressMap = new Map(progress.map((p) => [key(p.topic_id, p.user_id), p]));
     const firstMap = new Map(firsts.map((f) => [key(f.topic_id, f.user_id), f.completed_at as number]));
@@ -170,7 +188,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
   const isDone = (p: TopicMemberProgress | undefined) => Boolean(p && (p.status === 'completed' || p.firstCompletedAt));
 
-  async function summarize(viewerId: string, room: Row, topics: Topic[], members: string[], users: Map<string, Row>, statuses: Record<string, LiveStatus>): Promise<RoomSummary> {
+  function summarize(viewerId: string, room: Row, topics: Topic[], members: string[], users: Map<string, Row>, statuses: Record<string, LiveStatus>, nextTopic: RoomSummary['nextTopic']): RoomSummary {
     const ordered = [...members].sort((a, b) => (a === viewerId ? -1 : b === viewerId ? 1 : 0));
     const active = topics.filter((t) => t.status === 'active');
     return {
@@ -192,32 +210,50 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
           focusedMs: topics.reduce((sum, t) => sum + (t.progress[uid]?.focusedMs ?? 0), 0),
           status: statuses[uid] ?? { state: 'idle', todayFocusedMs: 0 },
         })),
-      nextTopic: room.status === 'active' ? await rpc('room_next_topic', { p_room: room.id }) : null,
+      nextTopic: room.status === 'active' ? nextTopic : null,
     };
   }
 
   async function roomsData(roomFilter?: string): Promise<{ viewer: string; summaries: RoomSummary[]; topics: Topic[]; rooms: Row[] }> {
     const viewer = await myId();
-    let query = sb.from('rooms').select('*').order('status').order('updated_at', { ascending: false });
+    // Rooms come with their members' profiles. For a single room we already know its id, so its topics
+    // and next topic load at the same time; for the list they follow once the room ids are known.
+    let query = sb
+      .from('rooms')
+      .select('*, room_members(user_id, joined_at, profiles(*))')
+      .eq('room_members.status', 'active')
+      .order('status')
+      .order('updated_at', { ascending: false })
+      .order('joined_at', { referencedTable: 'room_members' });
     if (roomFilter) query = query.eq('id', roomFilter);
-    const rooms = await rows(query);
-    const roomIds = rooms.map((r) => r.id);
-    const [topics, memberRows] = await Promise.all([
-      loadTopics(roomIds, true),
-      roomIds.length ? rows(sb.from('room_members').select('room_id, user_id, joined_at').in('room_id', roomIds).eq('status', 'active').order('joined_at')) : Promise.resolve([] as Row[]),
-    ]);
-    const everyone = ids(memberRows.map((m) => m.user_id));
-    const [users, statuses] = await Promise.all([profiles(everyone), liveStatuses(everyone)]);
-    const summaries = await Promise.all(
-      rooms.map((r) =>
-        summarize(
-          viewer,
-          r,
-          topics.filter((t) => t.roomId === r.id),
-          memberRows.filter((m) => m.room_id === r.id).map((m) => m.user_id),
-          users,
-          statuses,
-        ),
+    const roomExtras = (roomIds: string[]) =>
+      Promise.all([loadTopics(roomIds, true), Promise.all(roomIds.map((r) => rpc<RoomSummary['nextTopic']>('room_next_topic', { p_room: r })))]);
+    let rooms: Row[];
+    let topics: Topic[];
+    let next: RoomSummary['nextTopic'][];
+    if (roomFilter) {
+      // Someone outside the room gets "not found", never an error from the room's details.
+      const { values, error } = await together([rows(query), roomExtras([roomFilter])] as const);
+      rooms = values[0] ?? [];
+      if (!rooms.length) return { viewer, summaries: [], topics: [], rooms };
+      if (error) throw error;
+      [topics, next] = values[1]!;
+    } else {
+      rooms = await rows(query);
+      [topics, next] = await roomExtras(rooms.map((r) => r.id));
+    }
+    const memberRows = rooms.flatMap((r) => (r.room_members ?? []).map((m: Row) => ({ ...m, room_id: r.id })));
+    const users = new Map<string, Row>(memberRows.filter((m) => m.profiles).map((m) => [m.user_id, m.profiles]));
+    const statuses = await liveStatuses(ids(memberRows.map((m) => m.user_id)));
+    const summaries = rooms.map((r, i) =>
+      summarize(
+        viewer,
+        r,
+        topics.filter((t) => t.roomId === r.id),
+        memberRows.filter((m) => m.room_id === r.id).map((m) => m.user_id),
+        users,
+        statuses,
+        next[i] ?? null,
       ),
     );
     return { viewer, summaries, topics, rooms };
@@ -228,9 +264,11 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   }
 
   async function roomDetail(roomId: string): Promise<RoomDetail> {
-    const { viewer, summaries, topics } = await roomsData(roomId);
-    if (!summaries.length) throw notFound('That room could not be found.');
-    const [activity, sprints] = await Promise.all([listActivity(viewer, { roomId, limit: 15 }), sharedSprints(roomId)]);
+    const { values, error } = await together([roomsData(roomId), myId().then((id) => listActivity(id, { roomId, limit: 15 })), sharedSprints(roomId)] as const);
+    const [data, activity, sprints] = values as unknown as [Awaited<ReturnType<typeof roomsData>> | undefined, Activity[], RoomSprint[]];
+    if (data && !data.summaries.length) throw notFound('That room could not be found.');
+    if (error) throw error;
+    const { summaries, topics } = data!;
     return {
       ...summaries[0],
       topics: topics.filter((t) => t.status === 'active'),
@@ -243,18 +281,26 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   // ───────────── goals (plans) ─────────────
 
   /** Tasks with done state and time. `timeFor` supplies focused time per topic. */
-  async function planTasks(planIds: string[], timeFor: (topicIds: string[]) => Promise<Map<string, number>>, days?: { min: number; max: number }): Promise<Map<string, PlanTask[]>> {
+  const PLAN_TASK_COLUMNS = '*, topics(topic_completions(local_date))';
+
+  async function planTasks(planIds: string[], timeFor: (topicIds: string[]) => Promise<Map<string, number>>, days?: { min: number; max: number }, loaded?: Row[]): Promise<Map<string, PlanTask[]>> {
     const byPlan = new Map<string, PlanTask[]>(planIds.map((id) => [id, []]));
     if (!planIds.length) return byPlan;
-    let query = sb.from('plan_tasks').select('*').in('plan_id', planIds).eq('status', 'active').order('day', { nullsFirst: false }).order('position').order('created_at');
+    let query = sb
+      .from('plan_tasks')
+      .select(PLAN_TASK_COLUMNS)
+      .in('plan_id', planIds)
+      .eq('status', 'active')
+      .eq('topics.topic_completions.kind', 'first')
+      .is('topics.topic_completions.revoked_at', null)
+      .order('day', { nullsFirst: false })
+      .order('position')
+      .order('created_at');
     if (days) query = query.or(`and(day.gte.${days.min},day.lte.${days.max}),and(planned_day.gte.${days.min},planned_day.lte.${days.max})`);
-    const list = await rows(query);
+    const list = loaded ?? (await rows(query));
     const topicIds = ids(list.map((t) => t.topic_id));
-    const [completions, time] = await Promise.all([
-      topicIds.length ? rows(sb.from('topic_completions').select('topic_id, local_date').in('topic_id', topicIds).eq('kind', 'first').is('revoked_at', null)) : Promise.resolve([] as Row[]),
-      topicIds.length ? timeFor(topicIds) : Promise.resolve(new Map<string, number>()),
-    ]);
-    const doneOn = new Map(completions.map((c) => [c.topic_id, c.local_date as string]));
+    const time = topicIds.length ? await timeFor(topicIds) : new Map<string, number>();
+    const doneOn = new Map(list.filter((t) => t.topics?.topic_completions?.length).map((t) => [t.topic_id, t.topics.topic_completions[0].local_date as string]));
     for (const t of list) {
       const doneDate = t.topic_id ? (doneOn.get(t.topic_id) ?? null) : null;
       byPlan.get(t.plan_id)!.push({
@@ -277,20 +323,32 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
   async function ownPlans(): Promise<{ me: Me; plans: PlanRow[]; spans: Map<string, SprintSpan[]>; tasks: Map<string, PlanTask[]> }> {
     const viewer = await me();
-    const plans = await rows<PlanRow>(sb.from('plans').select('*').eq('owner_id', viewer.id).order('status').order('start_date', { ascending: false }));
+    // Goals arrive with their sprints and active tasks in one request.
+    const plans = await rows<PlanRow & { plan_sprints: Row[]; plan_tasks: Row[] }>(
+      sb
+        .from('plans')
+        .select(`*, plan_sprints(*, rooms(name)), plan_tasks(${PLAN_TASK_COLUMNS})`)
+        .eq('owner_id', viewer.id)
+        .eq('plan_tasks.status', 'active')
+        .eq('plan_tasks.topics.topic_completions.kind', 'first')
+        .is('plan_tasks.topics.topic_completions.revoked_at', null)
+        .order('status')
+        .order('start_date', { ascending: false })
+        .order('day', { referencedTable: 'plan_tasks', nullsFirst: false })
+        .order('position', { referencedTable: 'plan_tasks' })
+        .order('created_at', { referencedTable: 'plan_tasks' }),
+    );
     const planIds = plans.map((p) => p.id);
-    const [sprintRows, tasks] = await Promise.all([
-      planIds.length ? rows(sb.from('plan_sprints').select('*, rooms(name)').in('plan_id', planIds)) : Promise.resolve([] as Row[]),
-      planTasks(planIds, myTime),
-    ]);
+    const sprintRows = plans.flatMap((p) => p.plan_sprints ?? []);
+    const tasks = await planTasks(planIds, myTime, undefined, plans.flatMap((p) => p.plan_tasks ?? []));
     const spans = new Map(planIds.map((id) => [id, spansOf(sprintRows.filter((s) => s.plan_id === id).map(toSprintRow))]));
     return { me: viewer, plans, spans, tasks };
   }
 
   const toSprintRow = (s: Row): SprintRow => ({ plan_id: s.plan_id, number: s.number, days: s.days, room_id: s.room_id, room_name: s.rooms?.name ?? null, completed_at: s.completed_at });
 
-  async function listPlans() {
-    const { me: viewer, plans, spans, tasks } = await ownPlans();
+  async function listPlans(own = ownPlans()) {
+    const { me: viewer, plans, spans, tasks } = await own;
     return plans.map((p) => summarizePlan(p, spans.get(p.id)!, tasks.get(p.id)!, viewer.today));
   }
 
@@ -316,15 +374,16 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   }
 
   async function sharedSprints(roomId: string): Promise<RoomSprint[]> {
-    const list = await visibleSprints(roomId);
+    const [list, roomTime] = await Promise.all([visibleSprints(roomId), rpc<Row[]>('room_topic_time', { p_room: roomId }).then((r) => new Map(r.map((x) => [x.topic_id, Number(x.ms)])))]);
     if (!list.length) return [];
     const planIds = ids(list.map((s) => s.plan.id));
-    const roomTime = new Map((await rpc<Row[]>('room_topic_time', { p_room: roomId })).map((r) => [r.topic_id, Number(r.ms)]));
-    const tasks = await planTasks(planIds, async () => roomTime, {
-      min: Math.min(...list.map((s) => s.span.first)),
-      max: Math.max(...list.map((s) => s.span.last)),
-    });
-    const owners = await profiles(ids(list.map((s) => s.plan.owner_id)));
+    const [tasks, owners] = await Promise.all([
+      planTasks(planIds, async () => roomTime, {
+        min: Math.min(...list.map((s) => s.span.first)),
+        max: Math.max(...list.map((s) => s.span.last)),
+      }),
+      profiles(ids(list.map((s) => s.plan.owner_id))),
+    ]);
     return list.map(({ plan, span }) => {
       // Day status follows the owner's own calendar day.
       const today = localDate(now(), owners.get(plan.owner_id)?.timezone ?? 'UTC');
@@ -333,11 +392,13 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   }
 
   /** Goal tasks and sprint markers for a date range: all of yours, plus friends' pulled sprints. */
-  async function calendarPlanItems(viewer: Me, from: string, to: string, friends: boolean): Promise<{ items: CalendarPlanItem[]; sprints: SprintMark[] }> {
-    const own = await ownPlans();
-    const shared = friends ? (await visibleSprints()).filter((s) => s.plan.owner_id !== viewer.id) : [];
-    const friendPlanIds = ids(shared.map((s) => s.plan.id));
-    const friendTasks = await planTasks(friendPlanIds, async () => new Map());
+  async function calendarPlanItems(viewer: Me, from: string, to: string, friends: boolean, ownLoad = ownPlans()): Promise<{ items: CalendarPlanItem[]; sprints: SprintMark[] }> {
+    const friendsLoad = async () => {
+      const shared = friends ? (await visibleSprints()).filter((s) => s.plan.owner_id !== viewer.id) : [];
+      const planIds = ids(shared.map((s) => s.plan.id));
+      return { shared, planIds, tasks: await planTasks(planIds, async () => new Map()) };
+    };
+    const [own, { shared, planIds: friendPlanIds, tasks: friendTasks }] = await Promise.all([ownLoad, friendsLoad()]);
     const items: CalendarPlanItem[] = [];
     const marks: SprintMark[] = [];
     const add = (plan: PlanRow, spans: SprintSpan[], tasks: PlanTask[], mine: boolean) => {
@@ -379,11 +440,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   // ───────────── calendar tasks ─────────────
 
   async function listTasks(viewerId: string, from: string, to: string, includeFriends = true): Promise<Task[]> {
-    let query = sb.from('tasks').select('*, rooms(name), topics(title)').eq('status', 'active').gte('date', from).lte('date', to).order('date').order('start_time', { nullsFirst: false }).order('created_at');
+    let query = sb.from('tasks').select('*, rooms(name), topics(title), task_notes(note)').eq('status', 'active').gte('date', from).lte('date', to).order('date').order('start_time', { nullsFirst: false }).order('created_at');
     if (!includeFriends) query = query.eq('owner_id', viewerId);
     const list = await rows(query);
-    const mineIds = list.filter((t) => t.owner_id === viewerId).map((t) => t.id);
-    const notes = mineIds.length ? new Map((await rows(sb.from('task_notes').select('task_id, note').in('task_id', mineIds))).map((n) => [n.task_id, n.note])) : new Map();
+    const noteOf = (t: Row): string => (t.owner_id === viewerId ? ([t.task_notes].flat()[0]?.note ?? '') : '');
     return list.map((t) => ({
       id: t.id,
       ownerId: t.owner_id,
@@ -397,7 +457,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       topicId: t.topics ? t.topic_id : null,
       topicTitle: t.topics?.title ?? null,
       shared: t.shared,
-      note: notes.get(t.id) ?? '',
+      note: noteOf(t),
       completed: t.completed_at !== null,
       completedAt: t.completed_at,
       status: t.status,
@@ -416,13 +476,13 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   // ───────────── activity & friends ─────────────
 
   async function listActivity(viewerId: string, opts: { roomId?: string; withUserId?: string; limit?: number } = {}): Promise<Activity[]> {
-    let query = sb.from('activities').select('*, rooms(name)').order('created_at', { ascending: false }).limit(opts.limit ?? 30);
+    let query = sb.from('activities').select('*, rooms(name), actor:profiles!actor_id(*)').order('created_at', { ascending: false }).limit(opts.limit ?? 30);
     if (opts.roomId) query = query.eq('room_id', opts.roomId);
     if (opts.withUserId) query = query.or(`actor_id.eq.${opts.withUserId},recipient_id.eq.${opts.withUserId}`);
     const list = await rows(query);
     const refIds = ids(list.map((a) => a.ref_id));
-    const [actors, topics, rooms] = await Promise.all([
-      profiles(ids(list.map((a) => a.actor_id))),
+    const actors = new Map<string, Row>(list.filter((a) => a.actor).map((a) => [a.actor_id, a.actor]));
+    const [topics, rooms] = await Promise.all([
       refIds.length ? rows(sb.from('topics').select('id, title').in('id', refIds)) : Promise.resolve([] as Row[]),
       refIds.length ? rows(sb.from('rooms').select('id, name').in('id', refIds)) : Promise.resolve([] as Row[]),
     ]);
@@ -460,22 +520,20 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
   async function friendsAndRequests(): Promise<{ friends: Friend[]; requests: FriendRequest[] }> {
     const viewer = await myId();
-    const list = await rows(sb.from('friendships').select('*').in('status', ['accepted', 'pending']).order('created_at', { ascending: false }));
-    const other = (f: Row) => (f.requester_id === viewer ? f.recipient_id : f.requester_id);
-    const accepted = list.filter((f) => f.status === 'accepted').sort((a, b) => (a.responded_at ?? 0) - (b.responded_at ?? 0));
-    const users = await profiles(ids(list.map(other)));
-    const statuses = await liveStatuses(accepted.map(other));
-    const friends = await Promise.all(
-      accepted
-        .filter((f) => users.has(other(f)))
-        .map(async (f) => ({
-          friendshipId: f.id,
-          since: f.responded_at ?? f.created_at,
-          user: toPublicUser(users.get(other(f))!),
-          status: statuses[other(f)] ?? { state: 'idle' as const, todayFocusedMs: 0 },
-          recentCompletions: await recentCompletions(other(f)),
-        })),
+    const list = await rows(
+      sb.from('friendships').select('*, requester:profiles!requester_id(*), recipient:profiles!recipient_id(*)').in('status', ['accepted', 'pending']).order('created_at', { ascending: false }),
     );
+    const other = (f: Row) => (f.requester_id === viewer ? f.recipient_id : f.requester_id);
+    const users = new Map<string, Row>(list.map((f) => [other(f), f.requester_id === viewer ? f.recipient : f.requester] as const).filter(([, u]) => u));
+    const accepted = list.filter((f) => f.status === 'accepted' && users.has(other(f))).sort((a, b) => (a.responded_at ?? 0) - (b.responded_at ?? 0));
+    const [statuses, recent] = await Promise.all([liveStatuses(accepted.map(other)), Promise.all(accepted.map((f) => recentCompletions(other(f))))]);
+    const friends = accepted.map((f, i) => ({
+      friendshipId: f.id,
+      since: f.responded_at ?? f.created_at,
+      user: toPublicUser(users.get(other(f))!),
+      status: statuses[other(f)] ?? { state: 'idle' as const, todayFocusedMs: 0 },
+      recentCompletions: recent[i],
+    }));
     const requests = list
       .filter((f) => f.status === 'pending' && users.has(other(f)))
       .map((f) => ({ id: f.id, direction: (f.requester_id === viewer ? 'outgoing' : 'incoming') as FriendRequest['direction'], user: toPublicUser(users.get(other(f))!), createdAt: f.created_at }));
@@ -500,15 +558,19 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
   async function friendProfile(friendId: string) {
     const viewer = await myId();
-    if (!(await friendIds(viewer)).includes(friendId)) throw notFound('That person is not in your friends list.');
-    const user = (await profiles([friendId])).get(friendId)!;
-    const [status, recent, rooms, activity, stats] = await Promise.all([
+    const { values, error } = await together([
+      friendIds(viewer),
+      profiles([friendId]),
       liveStatuses([friendId]),
       recentCompletions(friendId, 10),
       listRooms(),
       listActivity(viewer, { withUserId: friendId, limit: 20 }),
       rpc<ProgressStats>('progress_stats', { p_user: friendId }),
-    ]);
+    ] as const);
+    if (!values[0]?.includes(friendId)) throw error && !values[0] ? error : notFound('That person is not in your friends list.');
+    if (error) throw error;
+    const [, people, status, recent, rooms, activity, stats] = values as unknown as [string[], Map<string, Row>, Record<string, LiveStatus>, CompletionSummary[], RoomSummary[], Activity[], ProgressStats];
+    const user = people.get(friendId)!;
     return {
       user: toPublicUser(user),
       status: status[friendId],
@@ -553,11 +615,12 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   async function home(): Promise<HomeData> {
     const viewer = await me();
     const today = viewer.today;
+    const own = ownPlans();
     const [roomsAll, tasks, plans, planned, friends, stats, completedToday, tasksDone, unread, activeSession] = await Promise.all([
       listRooms(),
       listTasks(viewer.id, addDays(today, -1), addDays(today, 14), false),
-      listPlans(),
-      calendarPlanItems(viewer, today, addDays(today, 14), false),
+      listPlans(own),
+      calendarPlanItems(viewer, today, addDays(today, 14), false, own),
       friendsAndRequests(),
       rpc<ProgressStats>('progress_stats', { p_user: viewer.id }),
       rows(sb.from('topic_completions').select('topic_id, completed_at, topics(title, room_id, rooms(name))').eq('user_id', viewer.id).eq('local_date', today).is('revoked_at', null).order('completed_at', { ascending: false })),
@@ -665,6 +728,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       case 'PUT /auth/password':
         return setPassword(body);
       case 'POST /auth/signout':
+        meCache = null;
         await sb.auth.signOut();
         return { ok: true };
       case 'GET /me':
@@ -684,6 +748,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         if (input.timezone !== undefined) patch.timezone = input.timezone;
         if (input.shareStatus !== undefined) patch.share_status = input.shareStatus;
         await rows(sb.from('profiles').update(patch).eq('id', id).select('id'));
+        meCache = null;
         return { me: await me() };
       }
       case 'GET /home':
@@ -712,7 +777,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       }
       case 'GET /activity': {
         const viewer = await myId();
-        return { activity: await listActivity(viewer, { limit: 40 }), unread: await unreadCount(viewer) };
+        const [activity, unread] = await Promise.all([listActivity(viewer, { limit: 40 }), unreadCount(viewer)]);
+        return { activity, unread };
       }
       case 'POST /activity/read':
         await rpc('mark_activity_read');

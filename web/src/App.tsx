@@ -5,6 +5,7 @@ import { useMe } from './lib/queries';
 import { setUnauthenticatedHandler } from './lib/api';
 import { configured, supabase, takeRecoveryArrival } from './lib/supabase';
 import { applyMyAccent, applyScheme } from './lib/theme';
+import { forgetSavedScreens } from './lib/cache';
 import { Layout } from './components/Layout';
 import { Spinner, Toasts } from './components/ui';
 import { AuthPage } from './pages/Auth';
@@ -43,6 +44,7 @@ export function App() {
       if (event === 'SIGNED_OUT') {
         qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
         qc.setQueryData<any>(['me'], null);
+        forgetSavedScreens();
       }
     });
     return () => data.subscription.unsubscribe();

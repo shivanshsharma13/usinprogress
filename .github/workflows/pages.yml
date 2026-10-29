@@ -22,6 +22,7 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       VITE_BASE: /${{ github.event.repository.name }}/
+      VITE_BUILD_ID: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - name: Check Supabase settings
