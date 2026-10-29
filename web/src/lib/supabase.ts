@@ -9,7 +9,17 @@ export const configured = Boolean(url && key);
 
 // A password-reset link that has expired or was already used comes back with an error in the URL
 // hash. Read it before the client tidies the URL.
-export const linkError = new URLSearchParams(location.hash.slice(1)).get('error_description');
+const linkParams = new URLSearchParams(location.hash.slice(1));
+export const linkError = linkParams.get('error_description');
+
+// If Supabase sends a reset link to the Site URL instead of /reset, we still need to ask for the new
+// password. True only on the first check after arriving from a reset link.
+let recoveryArrival = linkParams.get('type') === 'recovery';
+export function takeRecoveryArrival(): boolean {
+  const arrived = recoveryArrival;
+  recoveryArrival = false;
+  return arrived;
+}
 
 /** Where reset emails send people: the /reset page of this site, wherever it is hosted. */
 export const resetUrl = () => new URL(`${import.meta.env.BASE_URL}reset`, location.origin).href;

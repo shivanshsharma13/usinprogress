@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMe } from './lib/queries';
 import { setUnauthenticatedHandler } from './lib/api';
-import { configured, supabase } from './lib/supabase';
+import { configured, supabase, takeRecoveryArrival } from './lib/supabase';
 import { applyMyAccent, applyScheme } from './lib/theme';
 import { Layout } from './components/Layout';
 import { Spinner, Toasts } from './components/ui';
@@ -21,6 +21,16 @@ const FriendsPage = lazy(() => import('./pages/Friends').then((m) => ({ default:
 const FriendPage = lazy(() => import('./pages/Friend').then((m) => ({ default: m.FriendPage })));
 const ProgressPage = lazy(() => import('./pages/Progress').then((m) => ({ default: m.ProgressPage })));
 const SettingsPage = lazy(() => import('./pages/Settings').then((m) => ({ default: m.SettingsPage })));
+
+/** Arrived from a reset link on some other page: go and choose the new password first. */
+function RecoveryRedirect() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (takeRecoveryArrival() && pathname !== '/reset') navigate('/reset', { replace: true });
+  }, []);
+  return null;
+}
 
 export function App() {
   const qc = useQueryClient();
@@ -79,6 +89,7 @@ export function App() {
         </Routes>
       ) : (
         <Layout me={me}>
+          <RecoveryRedirect />
           <Suspense fallback={<Spinner />}>
             <Routes>
               <Route path="/" element={<HomePage />} />
