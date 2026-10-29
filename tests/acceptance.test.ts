@@ -502,7 +502,8 @@ test('encouragement reaches the friend in real time; strangers cannot send it', 
   const stream = await B.listen();
   const r = await A.post('/encourage', { recipientId: b.id, reaction: 'keep_going' });
   assert.equal(r.status, 201);
-  const e = await stream.waitFor((ev) => ev.table === 'activities' && ev.eventType === 'INSERT');
+  // Earlier tests' activity (completions) can still be in flight, so wait for this reaction specifically.
+  const e = await stream.waitFor((ev) => ev.table === 'activities' && ev.eventType === 'INSERT' && ev.row.type === 'reaction');
   assert.equal(e.row.reaction, 'keep_going');
   assert.equal(e.row.recipient_id, b.id);
   stream.stop();

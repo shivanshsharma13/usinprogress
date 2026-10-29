@@ -31,9 +31,24 @@ export interface TestServer {
 }
 
 /** Direct database access for the few checks that need raw rows (as the database owner). */
+// `supabase db reset` restarts the API containers; wait until auth and the database functions answer.
+async function untilReady() {
+  const headers = { apikey: local.ANON_KEY, 'content-type': 'application/json' };
+  for (let i = 0; i < 120; i++) {
+    try {
+      const auth = await fetch(`${local.API_URL}/auth/v1/health`, { headers });
+      const rpc = await fetch(`${local.API_URL}/rest/v1/rpc/username_available`, { method: 'POST', headers, body: '{"p_username":"ready"}' });
+      if (auth.ok && rpc.ok) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error('Local Supabase did not become ready. Is `npm run db:start` running?');
+}
+
 export async function startServer(): Promise<TestServer> {
   const client = new pg.Client({ connectionString: local.DB_URL });
   await client.connect();
+  await untilReady();
   return {
     base: local.API_URL,
     db: {
