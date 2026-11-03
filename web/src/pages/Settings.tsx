@@ -10,6 +10,7 @@ import { applyScheme, personVars } from '../lib/theme';
 import { Field, Spinner, Switch } from '../components/ui';
 import { Buddy } from '../components/Buddy';
 import { NewPasswordForm } from './Recovery';
+import { FocusSettingsCard } from '../components/FocusSettingsCard';
 
 const ACCESSORIES: { key: NonNullable<AvatarConfig['accessory']>; label: string }[] = [
   { key: 'none', label: 'None' },
@@ -155,6 +156,8 @@ export function SettingsPage() {
           label="Dark mode"
         />
       </div>
+
+      <FocusSettingsCard />
 
       <div className="card stack">
         <h2>Password</h2>
