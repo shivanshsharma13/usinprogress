@@ -9,6 +9,8 @@ import { useRealtime, type ConnectionState } from '../lib/realtime';
 import { toast } from '../lib/toast';
 import { applyScheme } from '../lib/theme';
 import { Avatar, useNow } from './ui';
+import { FocusCompanion } from './FocusCompanion';
+import { notify } from '../lib/notifications';
 import { CalendarIcon, ChartIcon, FriendsIcon, GoalIcon, HomeIcon, MoonIcon, PauseIcon, PlayIcon, RoomIcon, SunIcon } from './icons';
 
 // Served under a sub-path on GitHub Pages, so public files are addressed from the base URL.
@@ -92,6 +94,7 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
 
       {/* Home and the timer page already show the running session in full. */}
       <SessionWatcher hideMini={pathname === '/study' || pathname === '/'} />
+      <FocusCompanion />
     </div>
   );
 }
@@ -157,9 +160,8 @@ function SessionWatcher({ hideMini }: { hideMini: boolean }) {
     } catch {}
     const text = `🌿 You've focused for an hour on “${session.topicTitle}”. Maybe stretch and drink some water?`;
     toast(text, 'notice', 15_000);
-    if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
-      new Notification('Us in Progress', { body: text, icon: LOGO });
-    }
+    // Through the background worker: phones don't allow notifications any other way.
+    if (document.visibilityState !== 'visible') void notify('Us in Progress', text, 'uip-reminder');
   }, [session?.id, session?.remindAfterHour, elapsed >= ONE_HOUR_MS]);
 
   if (!session || hideMini) return null;

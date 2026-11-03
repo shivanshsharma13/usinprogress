@@ -98,6 +98,18 @@ If no email ever arrives, the project owner can open Supabase → Authentication
 person, and choose **Send password recovery**, then fix SMTP (see above). Signed-in people can change
 their password any time under **Settings → Password**.
 
+### Focus sound and timer controls (Settings → Focus)
+
+Both are off by default and saved per device, so the timer works exactly as before until you turn them on.
+
+- **Focus sound** (rain, brown noise, ocean waves) plays while the timer runs and pauses with it. The sounds
+  are generated in the browser. While one plays, the phone's lock screen shows the topic with play/pause,
+  which pause and resume the timer (Android and iPhone).
+- **Timer controls in notifications**: when you leave the app during a session, a notification offers
+  Pause / Resume (Android and desktop browsers; iPhone Safari doesn't support it). `web/public/sw.js`
+  handles the buttons; it calls the database with your current short-lived sign-in, so it works even when
+  the phone has frozen the tab, and opens the app instead if that sign-in has expired.
+
 ### Tests
 
 ```bash

@@ -413,6 +413,7 @@ textarea.input { min-height: 80px; resize: vertical; }
 /* ── Misc ── */
 .tabs { display: inline-flex; background: var(--mint); padding: 4px; border-radius: 12px; gap: 2px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
+.range { accent-color: var(--me, var(--blue)); min-width: 0; }
 .tabs button { white-space: nowrap; flex-shrink: 0; }
 /* Long labels inside buttons wrap instead of pushing the page sideways. */
 .pick-row { justify-content: space-between; flex-wrap: wrap; white-space: normal; text-align: left; height: auto; padding-block: 10px; }
