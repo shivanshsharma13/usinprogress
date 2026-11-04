@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { formatDate } from '@shared/dates';
 import type { ProgressStats, PublicUser, SessionRecord } from '@shared/types';
 import { useAction, useActivity, useFriends, useMe, usePlans, useProgress, useRooms, useSessions } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
@@ -8,6 +7,7 @@ import { personVars } from '../lib/theme';
 import { ErrorNote, Field, fmt, Menu, Modal, ProgressBar, Spinner } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
 import { PlanLine } from '../components/PlanBits';
+import { HoursReport } from '../components/HoursReport';
 
 export function ProgressPage() {
   const { data: me } = useMe();
@@ -27,7 +27,6 @@ export function ProgressPage() {
 
   const people: PublicUser[] = [me, ...(friend ? [friend] : [])];
   const statsBy: Record<string, ProgressStats | undefined> = { [me.id]: mine.data, ...(friend ? { [friend.id]: theirs.data } : {}) };
-  const maxDay = Math.max(1, ...people.flatMap((p) => statsBy[p.id]?.daily.map((d) => d.ms) ?? [0]));
 
   return (
     <div className="stack-lg">
@@ -60,33 +59,7 @@ export function ProgressPage() {
         })}
       </div>
 
-      <div className="card">
-        <div className="card-head">
-          <h2>Last 7 days</h2>
-          <div className="legend">
-            {people.map((p) => (
-              <span key={p.id} style={personVars(p.accent)}>
-                <span className="dot" /> {p.id === me.id ? 'You' : p.displayName}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="bars7" role="img" aria-label="Focused time per day for the last 7 days">
-          {mine.data.daily.map((d, i) => (
-            <div key={d.date} className="col">
-              {people.map((p) => {
-                const ms = statsBy[p.id]?.daily[i]?.ms ?? 0;
-                return <i key={p.id} style={{ ...personVars(p.accent), height: `${(ms / maxDay) * 100}%` }} title={`${p.displayName}: ${fmt(ms)}`} />;
-              })}
-            </div>
-          ))}
-        </div>
-        <div className="bars7-labels">
-          {mine.data.daily.map((d) => (
-            <span key={d.date}>{formatDate(d.date, { weekday: 'short' })}</span>
-          ))}
-        </div>
-      </div>
+      <HoursReport me={me} friend={friend} today={me.today} />
 
       <div className="grid-2" style={{ alignItems: 'start' }}>
         <div className="card">
@@ -168,12 +141,12 @@ export function ProgressPage() {
             {!(sessions ?? []).length && <p className="small muted">No sessions yet. Press Start studying on any topic.</p>}
           </div>
         </div>
-        <div className="card">
-          <div className="card-head">
-            <h2>Recent activity</h2>
+        <details className="card">
+          <summary>Recent activity</summary>
+          <div style={{ marginTop: 12 }}>
+            <ActivityFeed items={activity?.activity ?? []} meId={me.id} />
           </div>
-          <ActivityFeed items={activity?.activity ?? []} meId={me.id} />
-        </div>
+        </details>
       </div>
 
       {correcting && <CorrectModal session={correcting} onClose={() => setCorrecting(null)} />}

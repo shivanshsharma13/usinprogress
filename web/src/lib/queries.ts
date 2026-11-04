@@ -11,6 +11,7 @@ import type {
   LiveStatus,
   Me,
   ProgressStats,
+  HoursReport,
   CalendarPlanItem,
   Plan,
   PlanSummary,
@@ -69,6 +70,13 @@ export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: asy
 export const useActivity = () => useQuery({ queryKey: ['activity'], queryFn: () => api.get<{ activity: Activity[]; unread: number }>('/activity') });
 export const useProgress = (userId?: string) =>
   useQuery({ queryKey: ['progress', userId ?? 'me'], queryFn: async () => (await api.get<{ stats: ProgressStats }>(`/progress${userId ? `?userId=${userId}` : ''}`)).stats });
+export const useHoursReport = (userId: string | undefined, from: string, to: string) =>
+  useQuery({
+    queryKey: ['progress', 'hours', userId, from, to],
+    enabled: Boolean(userId),
+    queryFn: async () => (await api.get<{ report: HoursReport }>(`/progress/hours?userId=${userId}&from=${from}&to=${to}`)).report,
+    placeholderData: (prev) => (prev?.userId === userId ? prev : undefined),
+  });
 export const useTopicHistory = (id: string | null) =>
   useQuery({
     queryKey: ['topicHistory', id],

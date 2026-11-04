@@ -264,8 +264,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   }
 
   async function roomDetail(roomId: string): Promise<RoomDetail> {
-    const { values, error } = await together([roomsData(roomId), myId().then((id) => listActivity(id, { roomId, limit: 15 })), sharedSprints(roomId)] as const);
-    const [data, activity, sprints] = values as unknown as [Awaited<ReturnType<typeof roomsData>> | undefined, Activity[], RoomSprint[]];
+    const { values, error } = await together([roomsData(roomId), myId().then((id) => listActivity(id, { roomId, limit: 15 })), sharedSprints(roomId), rpc<Row[]>('room_forest', { p_room: roomId })] as const);
+    const [data, activity, sprints, forest] = values as unknown as [Awaited<ReturnType<typeof roomsData>> | undefined, Activity[], RoomSprint[], Row[]];
     if (data && !data.summaries.length) throw notFound('That room could not be found.');
     if (error) throw error;
     const { summaries, topics } = data!;
@@ -275,6 +275,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       archivedTopics: topics.filter((t) => t.status === 'archived'),
       activity,
       sprints,
+      forest: Object.fromEntries(forest.map((f) => [f.user_id, f.full_days])),
     };
   }
 
@@ -940,6 +941,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       case 'GET /progress': {
         const userId = query.get('userId') ?? (await myId());
         return { stats: await rpc('progress_stats', { p_user: userId }) };
+      }
+      case 'GET /progress/hours': {
+        const userId = query.get('userId') ?? (await myId());
+        return { report: await rpc('hours_report', { p_user: userId, p_from: query.get('from'), p_to: query.get('to') }) };
       }
     }
     throw notFound('Unknown route.');

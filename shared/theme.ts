@@ -10,14 +10,16 @@ export interface Accent {
   surface: string;    // light-mode pale surface
   solidDark: string;  // dark-mode accent (slightly softer)
   surfaceDark: string;
+  chart: string;      // stronger shade for chart marks (checked for contrast and colour-blind separation)
+  chartDark: string;
 }
 
 export const ACCENTS: Record<string, Accent> = {
-  blue: { key: 'blue', label: 'Calm blue', solid: '#6B91D8', surface: '#EAF1FC', solidDark: '#86A6E2', surfaceDark: '#27303F' },
-  pink: { key: 'pink', label: 'Soft pink', solid: '#D98EAE', surface: '#FBEAF1', solidDark: '#E3A3BE', surfaceDark: '#3A2A31' },
-  lavender: { key: 'lavender', label: 'Lavender', solid: '#9C95D6', surface: '#EFEDFA', solidDark: '#B2ACE2', surfaceDark: '#2F2D3E' },
-  sage: { key: 'sage', label: 'Sage', solid: '#7FA67A', surface: '#EAF2E6', solidDark: '#97BC92', surfaceDark: '#2A3529' },
-  peach: { key: 'peach', label: 'Peach', solid: '#D9A07A', surface: '#FBEFE6', solidDark: '#E4B593', surfaceDark: '#3A3029' },
+  blue: { key: 'blue', label: 'Calm blue', solid: '#6B91D8', surface: '#EAF1FC', solidDark: '#86A6E2', surfaceDark: '#27303F', chart: '#4C7BD0', chartDark: '#5E88DD' },
+  pink: { key: 'pink', label: 'Soft pink', solid: '#D98EAE', surface: '#FBEAF1', solidDark: '#E3A3BE', surfaceDark: '#3A2A31', chart: '#C9588A', chartDark: '#DB6592' },
+  lavender: { key: 'lavender', label: 'Lavender', solid: '#9C95D6', surface: '#EFEDFA', solidDark: '#B2ACE2', surfaceDark: '#2F2D3E', chart: '#7F6FD3', chartDark: '#8C7DE0' },
+  sage: { key: 'sage', label: 'Sage', solid: '#7FA67A', surface: '#EAF2E6', solidDark: '#97BC92', surfaceDark: '#2A3529', chart: '#4E9558', chartDark: '#56A062' },
+  peach: { key: 'peach', label: 'Peach', solid: '#D9A07A', surface: '#FBEFE6', solidDark: '#E4B593', surfaceDark: '#3A3029', chart: '#C27838', chartDark: '#C47A41' },
 };
 
 export const DEFAULT_ACCENT: Record<ProfileType, string> = {

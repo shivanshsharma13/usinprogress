@@ -440,3 +440,43 @@ details > summary::-webkit-details-marker { display: none; }
 .menu-pop button { border: none; background: transparent; text-align: left; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
 .menu-pop button:hover { background: var(--mint); }
 .menu-pop button.danger { color: var(--danger); }
+
+/* Today's tree and the forest (room). */
+.today-tree { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.today-tree svg { max-width: 100%; height: auto; }
+.forest-card { display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+details.rest > summary { display: flex; align-items: center; gap: 6px; }
+details.rest > summary::after { content: '▾'; margin-left: auto; color: var(--text-2); transition: transform .2s; }
+details.rest[open] > summary::after { transform: rotate(180deg); }
+.tree-sway { transform-origin: 100px 168px; transform-box: view-box; animation: tree-sway 7s ease-in-out infinite; }
+@keyframes tree-sway { 0%, 100% { rotate: -1deg; } 50% { rotate: 1.4deg; } }
+.twinkle path { transform-box: fill-box; transform-origin: center; animation: twinkle 2.4s ease-in-out infinite; }
+.twinkle path:nth-child(2) { animation-delay: .8s; }
+.twinkle path:nth-child(3) { animation-delay: 1.6s; }
+@keyframes twinkle { 0%, 100% { opacity: .3; scale: .7; } 50% { opacity: 1; scale: 1.1; } }
+@media (prefers-reduced-motion: reduce) { .tree-sway, .twinkle path { animation: none; } }
+
+/* Progress → Hours. Chart marks use the validated --c-chart shade; the friend's marks are striped. */
+.hours-summary { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 12px; background: var(--c-soft); }
+.swatch-mark { width: 12px; height: 12px; border-radius: 3px; background: var(--c-chart); display: inline-block; flex-shrink: 0; }
+.hatched, .swatch-mark.hatched { background: repeating-linear-gradient(135deg, var(--c-chart) 0 3px, color-mix(in srgb, var(--c-chart) 40%, transparent) 3px 6px); }
+.hbars { display: grid; gap: 2px; align-items: end; height: 150px; border-bottom: 1px solid var(--border); }
+.hbars-group { position: relative; display: flex; gap: 2px; align-items: flex-end; justify-content: center; height: 100%; outline: none; border-radius: 6px; }
+.hbars-group:hover, .hbars-group:focus-visible { background: var(--surface-2); }
+.hbars-group i { flex: 1 1 0; max-width: 18px; min-width: 2px; border-radius: 4px 4px 0 0; background: var(--c-chart); }
+.hbars-group i.hatched { background: repeating-linear-gradient(135deg, var(--c-chart) 0 3px, color-mix(in srgb, var(--c-chart) 40%, transparent) 3px 6px); }
+.hbars-group:hover::after, .hbars-group:focus-visible::after {
+  content: attr(data-tip); white-space: pre; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--surface); font-size: 0.75rem; font-weight: 600; line-height: 1.4; padding: 6px 9px; border-radius: 8px;
+  z-index: 5; pointer-events: none; box-shadow: var(--shadow);
+}
+.hbars-group:nth-child(-n+3):hover::after, .hbars-group:nth-child(-n+3):focus-visible::after { left: 0; transform: none; }
+.hbars-group:nth-last-child(-n+3):hover::after, .hbars-group:nth-last-child(-n+3):focus-visible::after { left: auto; right: 0; transform: none; }
+.hbars-labels { display: grid; gap: 2px; text-align: center; font-size: 0.72rem; color: var(--text-2); }
+.hbars-labels span { white-space: nowrap; overflow: visible; }
+.topic-bar { display: flex; flex-direction: column; gap: 4px; }
+.topic-bar-track { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.topic-bar-track i { display: block; height: 100%; border-radius: 4px; background: var(--c-chart); }
+.hours-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.hours-table th, .hours-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.hours-table th { color: var(--text-2); font-weight: 700; }
