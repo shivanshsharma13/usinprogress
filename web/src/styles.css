@@ -504,3 +504,50 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .hours-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .hours-table th, .hours-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .hours-table th { color: var(--text-2); font-weight: 700; }
+
+/* ── Friends: profile headers and friend cards ── */
+.social-hero { padding: 0; overflow: visible; position: relative; }
+.social-hero > .social-cover { border-radius: var(--radius) var(--radius) 0 0; }
+.social-actions { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; }
+.social-actions .btn.ghost { background: var(--surface); }
+.social-cover {
+  height: 96px;
+  background:
+    radial-gradient(circle at 18% 120%, color-mix(in srgb, var(--c, var(--me)) 45%, transparent) 0 38%, transparent 39%),
+    radial-gradient(circle at 78% -20%, color-mix(in srgb, var(--c, var(--me)) 30%, transparent) 0 42%, transparent 43%),
+    var(--c-soft, var(--me-soft));
+}
+.social-cover.small { height: 64px; margin: -18px -18px 0; border-radius: var(--radius) var(--radius) 0 0; }
+.social-hero-body { display: flex; align-items: flex-end; gap: 16px; padding: 0 20px 18px; margin-top: -40px; flex-wrap: wrap; }
+.social-hero-body > .avatar { border: 4px solid var(--surface); box-sizing: content-box; }
+.social-hero-body h1 { overflow-wrap: anywhere; }
+.social-stats { display: flex; gap: 20px; }
+.social-stats > div, .friend-stats > div { display: flex; flex-direction: column; line-height: 1.2; }
+.social-stats b { font-size: 1.35rem; }
+.social-stats span, .friend-stats span { font-size: 0.78rem; color: var(--text-2); }
+@media (max-width: 560px) { .social-stats { width: 100%; } }
+
+.social-tabs { align-self: flex-start; }
+.tab-count { margin-left: 6px; font-size: 0.75rem; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
+.tabs button.on .tab-count { background: var(--me-soft); color: var(--text); }
+.tab-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--me); vertical-align: middle; }
+.request-nudge { width: 100%; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.avatar-stack { display: flex; }
+.avatar-stack > .avatar + .avatar { margin-left: -10px; }
+.avatar-stack > .avatar { border: 2px solid var(--surface); }
+
+.friend-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 16px; align-items: start; }
+.friend-card { display: flex; flex-direction: column; gap: 12px; overflow: visible; }
+.friend-card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-top: -40px; }
+.friend-card-top .menu { margin-top: 46px; }
+.friend-avatar { position: relative; display: inline-block; border-radius: 50%; border: 4px solid var(--surface); background: var(--surface); }
+.friend-live { position: absolute; right: 2px; bottom: 2px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); }
+.friend-name { color: inherit; text-decoration: none; }
+.friend-name:hover h2 { text-decoration: underline; }
+.friend-bio { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.friend-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--c-soft); }
+.friend-stats b { font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* A ⋯ menu sitting on top of a card that is itself a link. */
+.has-card-menu { position: relative; }
+.card-menu { position: absolute; top: 12px; right: 12px; }
