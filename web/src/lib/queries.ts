@@ -12,6 +12,7 @@ import type {
   Me,
   ProgressStats,
   RevisionDue,
+  WeekRecap,
   HoursReport,
   CalendarPlanItem,
   Plan,
@@ -71,6 +72,8 @@ export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: asy
 export const useActivity = () => useQuery({ queryKey: ['activity'], queryFn: () => api.get<{ activity: Activity[]; unread: number }>('/activity') });
 export const useProgress = (userId?: string) =>
   useQuery({ queryKey: ['progress', userId ?? 'me'], queryFn: async () => (await api.get<{ stats: ProgressStats }>(`/progress${userId ? `?userId=${userId}` : ''}`)).stats });
+export const useWeekRecap = (enabled: boolean, from: string, to: string) =>
+  useQuery({ queryKey: ['recap', from, to], enabled, staleTime: 60_000, queryFn: async () => (await api.get<{ people: WeekRecap[] }>(`/recap?from=${from}&to=${to}`)).people });
 // Fetched fresh on each visit: your own completions don't come back through Realtime.
 export const useRevisions = (enabled: boolean) =>
   useQuery({ queryKey: ['revisions'], enabled, staleTime: 0, queryFn: async () => (await api.get<{ revisions: RevisionDue[] }>('/revisions?ahead=7')).revisions });

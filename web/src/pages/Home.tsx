@@ -10,6 +10,7 @@ import { PlanLine } from '../components/PlanBits';
 import { Buddy } from '../components/Buddy';
 import { Plant } from '../components/Plant';
 import { RevisionsDue } from '../components/Revisions';
+import { StreaksAndRecap } from '../components/Streaks';
 import { CheckIcon, PlayIcon } from '../components/icons';
 
 function greeting() {
@@ -51,6 +52,8 @@ export function HomePage() {
           <p className="muted">{formatDate(me.today, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
         </div>
       </div>
+
+      <StreaksAndRecap me={me} friends={friends.map((f) => f.user)} today={me.today} />
 
       <div className="home-grid">
         <div className="stack-lg">

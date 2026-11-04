@@ -19,6 +19,12 @@ export function MotivationSettings() {
         <PrefSwitch k="revisions" label="Revision reminders">
           After you finish a topic, it comes back to revise 1, 3, 7 and 21 days later, on Home and in the room's Today.
         </PrefSwitch>
+        <PrefSwitch k="streaks" label="Streaks">
+          Counts days in a row you study at least 5 minutes, for you and your friend, on Home.
+        </PrefSwitch>
+        <PrefSwitch k="recap" label="Sunday recap">
+          On Sunday (and Monday, looking back), a card sums up both your weeks: hours, best day, topics finished and trees planted.
+        </PrefSwitch>
       </div>
       <FocusSettingsCard />
       <InstallCard />
