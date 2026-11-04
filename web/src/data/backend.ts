@@ -949,6 +949,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         const userId = query.get('userId') ?? (await myId());
         return { stats: await rpc('progress_stats', { p_user: userId }) };
       }
+      case 'GET /recap':
+        return { people: (await rpc('week_recap', { p_from: query.get('from'), p_to: query.get('to') })) ?? [] };
       case 'GET /revisions':
         return { revisions: await rpc('due_revisions', { p_days_ahead: Number(query.get('ahead') ?? 0) || 0 }) };
       case 'GET /progress/hours': {

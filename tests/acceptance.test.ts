@@ -715,3 +715,28 @@ test('revision reminders come back 1, 3, 7 and 21 days after finishing a topic',
   assert.equal((await due())[0].step, 2, 'a missed step waits for you');
   assert.equal((await B.get('/revisions?ahead=30')).body.revisions.some((r: any) => r.topicId === topicId), false, 'only your own');
 });
+
+test('streaks count days in a row with 5+ minutes; the recap covers you and your friends only', async () => {
+  const studied = (daysAgo: number, minutes: number) =>
+    srv.db.query(
+      `INSERT INTO study_sessions (user_id, room_id, topic_id, state, started_at, ended_at, focused_ms, measured_ms, local_date, created_at)
+       VALUES (?, ?, ?, 'finished', ?, ?, ?, ?, ?, ?)`,
+      [b.id, room2Id, bTopics[0], Date.now(), Date.now(), minutes * 60000, minutes * 60000, addDays(today, -daysAgo), Date.now()],
+    );
+  await studied(1, 10);
+  await studied(2, 10);
+  await studied(3, 4); // too short to count
+  await studied(4, 10);
+  await studied(5, 10);
+  const from = addDays(today, -6);
+  const recap = await B.get(`/recap?from=${from}&to=${today}`);
+  assert.equal(recap.status, 200);
+  const mine = recap.body.people[0];
+  assert.equal(mine.userId, b.id, 'you come first');
+  assert.ok(mine.streak.current >= 2 && mine.streak.current <= 3, `streak ${mine.streak.current}: yesterday and the day before, plus today if studied`);
+  assert.ok(mine.streak.best >= 2);
+  assert.ok(mine.totalMs >= 44 * 60000);
+  assert.ok(recap.body.people.some((p: any) => p.userId === a.id), 'your friend is included');
+  assert.equal((await C.get(`/recap?from=${from}&to=${today}`)).body.people.some((p: any) => p.userId === b.id), false, 'strangers are not');
+  assert.equal((await B.get(`/recap?from=2020-01-01&to=${today}`)).status, 400);
+});

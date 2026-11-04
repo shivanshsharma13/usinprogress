@@ -556,3 +556,22 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .revisions-card { border-left: 4px solid var(--me); }
 .revision-row { display: flex; align-items: center; gap: 10px; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Streaks and the weekly recap ── */
+.streak-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; }
+.streak-people { display: flex; gap: 22px; flex-wrap: wrap; }
+.streak-person { display: flex; align-items: center; gap: 8px; }
+.streak-flame { font-size: 1.6rem; line-height: 1; filter: drop-shadow(0 2px 4px color-mix(in srgb, var(--c) 40%, transparent)); }
+.streak-flame.out { filter: grayscale(1); opacity: 0.45; }
+@media (prefers-reduced-motion: no-preference) {
+  .streak-flame:not(.out) { animation: flicker 2.4s ease-in-out infinite; transform-origin: 50% 90%; }
+}
+@keyframes flicker { 0%, 100% { scale: 1; rotate: -2deg; } 50% { scale: 1.08; rotate: 3deg; } }
+
+.recap-card { background: linear-gradient(135deg, var(--me-soft), var(--surface) 70%); }
+.recap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.recap-person { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); border-top: 4px solid var(--c); }
+.recap-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 10px 0 0; }
+.recap-stats div { display: flex; flex-direction: column; }
+.recap-stats dt { font-size: 0.75rem; color: var(--text-2); }
+.recap-stats dd { margin: 0; font-weight: 800; }

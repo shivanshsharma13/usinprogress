@@ -27,6 +27,16 @@ export interface RevisionDue {
   firstDoneDate: string;
 }
 
+/** One person's week (or any range up to a month), for streaks and the weekly recap. */
+export interface WeekRecap {
+  userId: string;
+  streak: { current: number; best: number; studiedToday: boolean };
+  totalMs: number;
+  bestDay: { date: string; ms: number } | null;
+  topicsDone: number;
+  trees: number;
+}
+
 export interface Me extends PublicUser {
   colorScheme: 'light' | 'dark';
   timezone: string;
