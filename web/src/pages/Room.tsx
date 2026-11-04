@@ -11,6 +11,7 @@ import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar
 import { ActivityFeed } from '../components/Encourage';
 import { Forest, TodayPlant } from '../components/Garden';
 import { LeaveRoomModal } from '../components/Social';
+import { RevisionsDue } from '../components/Revisions';
 import { DAY_STATUS_LABEL } from '../components/PlanBits';
 import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
 
@@ -150,6 +151,8 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
           </button>
         )}
       </div>
+
+      {isMe && active && <RevisionsDue roomId={room.id} />}
 
       {!sprints.length && !topics.length && (
         <p className="small muted">

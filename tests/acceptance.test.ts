@@ -693,3 +693,25 @@ test('feature switches are saved to your account, merged, and only by you', asyn
   assert.equal((await A.get('/me')).body.me.prefs.revisions, true, 'nobody else can change them');
   await A.patch('/me', { prefs: { revisions: false, streaks: false } });
 });
+
+test('revision reminders come back 1, 3, 7 and 21 days after finishing a topic', async () => {
+  const topicId = (await A.post(`/rooms/${roomId}/topics`, { title: 'Spaced repetition' })).body.id;
+  await A.post(`/topics/${topicId}/complete`);
+  const due = async (ahead = 0) => (await A.get(`/revisions?ahead=${ahead}`)).body.revisions.filter((r: any) => r.topicId === topicId);
+  assert.equal((await due()).length, 0, 'nothing due on the day you finish');
+  assert.deepEqual((await due(7)).map((r: any) => [r.step, r.dueDate]), [[1, addDays(today, 1)]]);
+
+  const backdate = (days: number) =>
+    srv.db.query(`UPDATE topic_completions SET local_date = ? WHERE topic_id = ? AND kind = 'first'`, [addDays(today, -days), topicId]);
+  await backdate(1);
+  assert.equal((await due())[0].step, 1, 'due the next day');
+
+  await A.post(`/topics/${topicId}/reopen`, { mode: 'revise' });
+  await A.post(`/topics/${topicId}/complete`);
+  assert.equal((await due()).length, 0, 'reviewed today');
+  assert.deepEqual((await due(7)).map((r: any) => [r.step, r.dueDate]), [[2, addDays(today, 2)]], 'step 2 is 3 days after the first finish');
+
+  await backdate(30);
+  assert.equal((await due())[0].step, 2, 'a missed step waits for you');
+  assert.equal((await B.get('/revisions?ahead=30')).body.revisions.some((r: any) => r.topicId === topicId), false, 'only your own');
+});

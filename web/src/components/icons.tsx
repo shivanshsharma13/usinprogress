@@ -27,4 +27,5 @@ export const BellIcon = (p: P) => (<svg {...base} {...p}><path d="M6 16.5V11a6 6
 export const SearchIcon = (p: P) => (<svg {...base} {...p}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></svg>);
 export const ArrowUp = (p: P) => (<svg {...base} {...p}><path d="M12 19V5M6 11l6-6 6 6" /></svg>);
 export const ArrowDown = (p: P) => (<svg {...base} {...p}><path d="M12 5v14M6 13l6 6 6-6" /></svg>);
+export const RefreshIcon = (p: P) => (<svg {...base} {...p}><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" /><path d="M19.5 4.5v4h-4" /></svg>);
 export const NextIcon = (p: P) => (<svg {...base} {...p}><path d="M6 5.5v13l9-6.5Z" fill="currentColor" stroke="none" /><path d="M18 5.5v13" /></svg>);

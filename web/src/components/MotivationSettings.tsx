@@ -1,7 +1,9 @@
 // Settings → Motivation & focus. Every extra is optional and off until you switch it on here.
+import type { PrefKey } from '@shared/types';
 import { setFocusSettings, useFocusSettings } from '../lib/focusSettings';
 import { installApp, useInstallState } from '../lib/install';
 import { setWorkerFastStart } from '../lib/notifications';
+import { usePref } from '../lib/prefs';
 import { toast } from '../lib/toast';
 import { Switch } from './ui';
 import { FocusSettingsCard } from './FocusSettingsCard';
@@ -9,8 +11,27 @@ import { FocusSettingsCard } from './FocusSettingsCard';
 export function MotivationSettings() {
   return (
     <div className="stack-lg">
+      <div className="card stack">
+        <div>
+          <h2>Motivation</h2>
+          <p className="tiny muted">Saved to your account, so they follow you to every device. Turning one off hides it; nothing is deleted.</p>
+        </div>
+        <PrefSwitch k="revisions" label="Revision reminders">
+          After you finish a topic, it comes back to revise 1, 3, 7 and 21 days later, on Home and in the room's Today.
+        </PrefSwitch>
+      </div>
       <FocusSettingsCard />
       <InstallCard />
+    </div>
+  );
+}
+
+function PrefSwitch({ k, label, children }: { k: PrefKey; label: string; children: React.ReactNode }) {
+  const [on, set] = usePref(k);
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <Switch checked={on} onChange={set} label={label} />
+      <p className="tiny muted">{children}</p>
     </div>
   );
 }

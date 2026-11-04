@@ -345,10 +345,12 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
   const qc = useQueryClient();
 
   // Only your own topics can be studied; your friend's list is view-only.
-  // Only your own topics; goal tasks only while they're scheduled for today or later (not the backlog).
+  // Only your own topics; goal tasks only while they're scheduled for today or later (not the backlog),
+  // or when you've reopened one to revise it.
   const myTopics = useMemo(() => {
     const scheduled = new Set((room?.sprints ?? []).flatMap((s) => s.days.filter((d) => d.date >= (me?.today ?? '')).flatMap((d) => d.tasks.map((t) => t.topicId))));
-    return (room?.topics ?? []).filter((t) => t.createdBy === me?.id && (!t.planTaskId || scheduled.has(t.id)));
+    const revising = (t: Topic) => t.progress[me?.id ?? '']?.status === 'revising';
+    return (room?.topics ?? []).filter((t) => t.createdBy === me?.id && (!t.planTaskId || scheduled.has(t.id) || revising(t)));
   }, [room, me?.id, me?.today]);
   const selected: Topic | undefined = useMemo(() => myTopics.find((t) => t.id === topicId), [myTopics, topicId]);
   const partnersTopic = Boolean(topicId && room && !selected && room.topics.some((t) => t.id === topicId));

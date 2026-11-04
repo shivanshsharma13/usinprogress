@@ -11,6 +11,7 @@ import type {
   LiveStatus,
   Me,
   ProgressStats,
+  RevisionDue,
   HoursReport,
   CalendarPlanItem,
   Plan,
@@ -70,6 +71,9 @@ export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: asy
 export const useActivity = () => useQuery({ queryKey: ['activity'], queryFn: () => api.get<{ activity: Activity[]; unread: number }>('/activity') });
 export const useProgress = (userId?: string) =>
   useQuery({ queryKey: ['progress', userId ?? 'me'], queryFn: async () => (await api.get<{ stats: ProgressStats }>(`/progress${userId ? `?userId=${userId}` : ''}`)).stats });
+// Fetched fresh on each visit: your own completions don't come back through Realtime.
+export const useRevisions = (enabled: boolean) =>
+  useQuery({ queryKey: ['revisions'], enabled, staleTime: 0, queryFn: async () => (await api.get<{ revisions: RevisionDue[] }>('/revisions?ahead=7')).revisions });
 export const useHoursReport = (userId: string | undefined, from: string, to: string) =>
   useQuery({
     queryKey: ['progress', 'hours', userId, from, to],
