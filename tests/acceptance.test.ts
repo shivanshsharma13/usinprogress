@@ -602,3 +602,36 @@ test('a forgotten password is reset through the emailed link', async () => {
   // Changing the password needs a signed-in person.
   assert.equal((await new Client(srv.base).put('/auth/password', { password: 'whatever123', confirm: 'whatever123' })).status, 401);
 });
+
+test('the room forest grows a tree for each day everything planned was finished', async () => {
+  const planId = (await A.post('/plans', { title: 'Forest check', startDate: today, sprintDays: 3 })).body.id;
+  for (const title of ['Tree one', 'Tree two']) await A.post(`/plans/${planId}/tasks`, { day: 0, title });
+  assert.equal((await A.post(`/plans/${planId}/sprints/1/pull`, { roomId })).status, 200);
+  const forest = async (who: Client) => (await who.get(`/rooms/${roomId}`)).body.forest?.[a.id] ?? 0;
+  const before = await forest(A);
+
+  const todays = (await A.get(`/plans/${planId}`)).body.plan.sprints[0].days[0].tasks;
+  await A.post(`/topics/${todays[0].topicId}/complete`);
+  assert.equal(await forest(A), before, 'half of today is not a full day yet');
+  await A.post(`/topics/${todays[1].topicId}/complete`);
+  assert.equal(await forest(A), before + 1, 'finishing today plants a tree');
+  assert.equal(await forest(B), before + 1, 'the room partner sees the same count');
+
+  // Only room members can count it.
+  const { data, error } = await C.sb.rpc('room_forest', { p_room: roomId });
+  assert.ok(error || !data.length);
+});
+
+test('the hours report gives daily and per-topic totals to you and your friend only', async () => {
+  const from = addDays(today, -6);
+  const mine = await A.get(`/progress/hours?userId=${a.id}&from=${from}&to=${today}`);
+  assert.equal(mine.status, 200);
+  assert.equal(mine.body.report.daily.length, 7);
+  assert.ok(mine.body.report.topics.every((t: any) => t.title && t.roomName && t.ms >= 0));
+  const total = mine.body.report.daily.reduce((n: number, d: any) => n + d.ms, 0);
+  assert.equal(total, mine.body.report.topics.reduce((n: number, t: any) => n + t.ms, 0) + mine.body.report.otherMs);
+
+  assert.equal((await A.get(`/progress/hours?userId=${b.id}&from=${from}&to=${today}`)).status, 200); // a friend
+  assert.equal((await C.get(`/progress/hours?userId=${a.id}&from=${from}&to=${today}`)).status, 404); // a stranger
+  assert.equal((await A.get(`/progress/hours?userId=${a.id}&from=2020-01-01&to=${today}`)).status, 400); // over a year
+});

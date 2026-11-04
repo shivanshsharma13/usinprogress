@@ -9,7 +9,7 @@ import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
-import { Plant } from '../components/Plant';
+import { Forest, GrowingTree } from '../components/Garden';
 import { DAY_STATUS_LABEL } from '../components/PlanBits';
 import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
 
@@ -79,9 +79,23 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
   const goals = [...new Set(sprints.map((s) => s.planId))].map((planId) => sprints.filter((s) => s.planId === planId));
   const ctx: RowContext = { ownerId, isMe, active };
 
+  // Today's work: the "today" day of each sprint in this room.
+  const byId = new Map(topics.map((t) => [t.id, t]));
+  const today = sprints.flatMap((s) =>
+    s.days
+      .filter((d) => d.status === 'today')
+      .flatMap((d) => d.tasks.map((task) => ({ task, sprint: s, topic: byId.get(task.topicId ?? '') }))),
+  );
+  const todayTopics = today.map((x) => x.topic).filter(Boolean) as Topic[];
+  const doneToday = today.filter((x) => x.task.done).length;
+  const percent = today.length ? (doneToday / today.length) * 100 : 0;
+  const allDone = today.length > 0 && doneToday === today.length;
+  const trees = room.forest[ownerId] ?? 0;
+  const showLabels = new Set(today.map((x) => `${x.sprint.planId}:${x.sprint.number}`)).size > 1;
+
   return (
     <section className="stack" style={personVars(member.user.accent)} aria-label={`${name}'s plan`}>
-      <div className="card tint stack" style={{ gap: 8 }}>
+      <div className="card tint stack" style={{ gap: 10 }}>
         <div className="row">
           <Avatar user={member.user} size={40} />
           <div className="grow" style={{ minWidth: 0 }}>
@@ -93,15 +107,25 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
               {isMe ? (member.status.state === 'idle' ? 'Not studying right now' : member.status.state === 'paused' ? 'Paused' : `Studying ${member.status.topicTitle ?? ''}`) : <StatusLine status={member.status} name={member.user.displayName} />}
             </div>
           </div>
-          <Plant percent={member.total ? (member.completed / member.total) * 100 : 0} size={44} color="var(--c)" />
         </div>
-        <ProgressBar value={member.completed} max={member.total} accent={member.user.accent} label={`${name}: ${member.completed} of ${member.total}`} />
-        <div className="row between small">
-          <span className="bold num">
-            {member.completed} of {member.total} done
-          </span>
-          <span className="muted num">{fmt(member.focusedMs)} focused</span>
-        </div>
+
+        {sprints.length > 0 && (
+          <div className="today-tree">
+            <GrowingTree percent={percent} color="var(--c)" />
+            <div className="stack" style={{ gap: 6, alignItems: 'center', textAlign: 'center' }}>
+              <b className="num">{today.length ? `${doneToday} of ${today.length} done today` : 'Nothing planned today'}</b>
+              <span className="tiny muted">
+                {allDone
+                  ? `All done for today. A new tree is growing in ${isMe ? 'your' : 'the'} forest 🌳`
+                  : today.length
+                    ? `${isMe ? 'Your' : 'The'} tree grows with every task and blossoms when today is finished.`
+                    : 'A rest day. Enjoy it.'}
+              </span>
+            </div>
+            {today.length > 0 && <ProgressBar value={doneToday} max={today.length} accent={member.user.accent} label={`${name}: ${doneToday} of ${today.length} today`} />}
+          </div>
+        )}
+
         {isMe && active && room.nextTopic && (
           <button className="btn primary" onClick={() => navigate(`/study?topic=${room.nextTopic!.id}`)}>
             <PlayIcon /> Study next: {room.nextTopic.title}
@@ -121,20 +145,70 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
         </p>
       )}
 
-      {goals.map((list) => (
-        <GoalGroup key={list[0].planId} sprints={list} topics={topics} {...ctx} />
-      ))}
-
-      {(loose.length > 0 || (isMe && active && !sprints.length)) && (
+      {sprints.length > 0 && (
         <div className="goal-block">
           <div className="goal-head">
-            <b className="grow">{sprints.length ? 'Other topics' : 'Topics'}</b>
+            <b className="grow">Today</b>
+            <span className="tiny muted num">{timeVsEstimate(today.reduce((n, x) => n + x.task.focusedMs, 0), today.reduce((n, x) => n + (x.task.estMinutes ?? 0), 0))}</span>
           </div>
-          {loose.map((t, i) => (
-            <TopicRow key={t.id} topic={t} index={i} siblings={loose} {...ctx} />
-          ))}
-          {isMe && active && <AddTopic roomId={room.id} />}
+          {todayTopics.length ? (
+            todayTopics.map((t, i) => (
+              <div key={t.id}>
+                {showLabels && <div className="tiny muted">{today.find((x) => x.topic?.id === t.id)?.sprint.planTitle}</div>}
+                <TopicRow topic={t} index={i} siblings={todayTopics} planned {...ctx} />
+              </div>
+            ))
+          ) : (
+            <p className="small muted">Nothing planned for today.</p>
+          )}
         </div>
+      )}
+
+      {sprints.length > 0 && (
+        <div className="card forest-card">
+          <div className="row between">
+            <b>{isMe ? 'Your forest' : `${member.user.displayName}’s forest`}</b>
+            <span className="tiny muted num">
+              {trees} {trees === 1 ? 'tree' : 'trees'}
+            </span>
+          </div>
+          <Forest count={trees} color="var(--c)" />
+          <span className="tiny muted">{trees ? 'One tree for every day everything planned was finished.' : 'Finish everything planned for a day to plant the first tree.'}</span>
+        </div>
+      )}
+
+      {sprints.length > 0 ? (
+        <details className="goal-block rest">
+          <summary>Rest of the sprint</summary>
+          <div className="stack" style={{ gap: 8, marginTop: 8 }}>
+            {goals.map((list) => (
+              <GoalGroup key={list[0].planId} sprints={list} topics={topics} {...ctx} />
+            ))}
+            {(loose.length > 0 || (isMe && active)) && (
+              <div className="goal-block nested">
+                <div className="goal-head">
+                  <b className="grow">Other topics</b>
+                </div>
+                {loose.map((t, i) => (
+                  <TopicRow key={t.id} topic={t} index={i} siblings={loose} {...ctx} />
+                ))}
+                {isMe && active && <AddTopic roomId={room.id} />}
+              </div>
+            )}
+          </div>
+        </details>
+      ) : (
+        (loose.length > 0 || (isMe && active)) && (
+          <div className="goal-block">
+            <div className="goal-head">
+              <b className="grow">Topics</b>
+            </div>
+            {loose.map((t, i) => (
+              <TopicRow key={t.id} topic={t} index={i} siblings={loose} {...ctx} />
+            ))}
+            {isMe && active && <AddTopic roomId={room.id} />}
+          </div>
+        )
       )}
     </section>
   );
@@ -232,7 +306,7 @@ function SprintBlock({ sprint, topics, ...ctx }: { sprint: RoomSprint; topics: T
 }
 
 function SprintDay({ day, topics, ...ctx }: { day: PlanDay; topics: Topic[] } & RowContext) {
-  const [open, setOpen] = useState(day.status === 'today');
+  const [open, setOpen] = useState(false); // today is already shown at the top of the column
   const ms = day.tasks.reduce((n, t) => n + t.focusedMs, 0);
   const est = day.tasks.reduce((n, t) => n + (t.estMinutes ?? 0), 0);
   return (

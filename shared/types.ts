@@ -128,6 +128,7 @@ export interface RoomDetail extends RoomSummary {
   archivedTopics: Topic[];
   activity: Activity[];
   sprints: RoomSprint[]; // both members' sprints pulled into this room
+  forest: Record<string, number>; // per member: days they finished everything planned in this room
 }
 
 export interface TopicHistoryEntry {
@@ -291,6 +292,17 @@ export interface ProgressStats {
   completedTasks: number;
   sessions: number;
   daily: { date: string; ms: number }[]; // last 7 days
+}
+
+/** Focused time per day and per topic over a date range (yours, or a friend's: topic names only for shared rooms). */
+export interface HoursReport {
+  userId: string;
+  from: string;
+  to: string;
+  today: string;
+  daily: { date: string; ms: number }[];
+  topics: { topicId: string; title: string; roomId: string; roomName: string; ms: number; sessions: number }[];
+  otherMs: number;
 }
 
 export interface HomeData {

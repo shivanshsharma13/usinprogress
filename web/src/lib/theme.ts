@@ -22,8 +22,8 @@ export function applyScheme(scheme: Scheme) {
 
 /** Defines --acc-<key> / --acc-<key>-soft for every accent, with dark-mode variants. */
 export function installAccentVariables() {
-  const light = Object.values(ACCENTS).map((a) => `--acc-${a.key}: ${a.solid}; --acc-${a.key}-soft: ${a.surface};`).join(' ');
-  const dark = Object.values(ACCENTS).map((a) => `--acc-${a.key}: ${a.solidDark}; --acc-${a.key}-soft: ${a.surfaceDark};`).join(' ');
+  const light = Object.values(ACCENTS).map((a) => `--acc-${a.key}: ${a.solid}; --acc-${a.key}-soft: ${a.surface}; --acc-${a.key}-chart: ${a.chart};`).join(' ');
+  const dark = Object.values(ACCENTS).map((a) => `--acc-${a.key}: ${a.solidDark}; --acc-${a.key}-soft: ${a.surfaceDark}; --acc-${a.key}-chart: ${a.chartDark};`).join(' ');
   const style = document.createElement('style');
   style.textContent = `:root { ${light} } :root[data-theme='dark'] { ${dark} }`;
   document.head.appendChild(style);
@@ -34,7 +34,7 @@ const key = (accentKey: string | undefined) => accentOf(accentKey).key;
 /** A person's identity colour as CSS variables --c / --c-soft (theme-aware). */
 export function personVars(accentKey: string | undefined): CSSProperties {
   const k = key(accentKey);
-  return { ['--c' as any]: `var(--acc-${k})`, ['--c-soft' as any]: `var(--acc-${k}-soft)` };
+  return { ['--c' as any]: `var(--acc-${k})`, ['--c-soft' as any]: `var(--acc-${k}-soft)`, ['--c-chart' as any]: `var(--acc-${k}-chart)` };
 }
 
 export const accentVar = (accentKey: string | undefined) => `var(--acc-${key(accentKey)})`;
