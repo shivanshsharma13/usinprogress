@@ -1,6 +1,7 @@
-// Us in Progress background worker. It only handles notifications: the timer notification (shown
-// while you're away from the app, with Pause/Resume) and the one-hour reminder. It does not cache or
-// intercept any page loads.
+// Us in Progress background worker. It shows notifications (the timer notification, shown while you're
+// away from the app with Pause/Resume, and the one-hour reminder) and, unless "Fast start" is off in
+// Settings, keeps the app's own files on the device so it opens quickly on a weak connection. Your data
+// never goes through this cache: it comes from Supabase, which the worker doesn't touch.
 //
 // Pause/Resume call the database directly with your current sign-in, so they work even when the
 // phone has frozen the app's tab. If that sign-in has expired, the app opens and does it instead.
@@ -9,7 +10,14 @@ const TAG = 'uip-timer';
 const scope = self.registration.scope;
 
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (event) =>
+  event.waitUntil(
+    (async () => {
+      for (const key of await caches.keys()) if (key !== CACHE) await caches.delete(key);
+      await self.clients.claim();
+    })(),
+  ),
+);
 
 // ───────────── sign-in, kept in IndexedDB so it survives the worker restarting ─────────────
 
@@ -30,6 +38,66 @@ async function kv(key, value) {
     req.onerror = () => reject(req.error);
   });
 }
+
+// ───────────── fast start ─────────────
+
+const CACHE = 'uip-app-v1';
+const SHELL = scope; // every page of the app is the same index.html
+const STATIC = ['manifest.webmanifest', 'favicon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'];
+const NETWORK_WAIT_MS = 3500; // after this, a slow network loses to the copy on the device
+
+let fastStart = kv('fastStart').then((v) => v !== false, () => true);
+
+function setFastStart(on) {
+  fastStart = Promise.resolve(on);
+  return Promise.all([kv('fastStart', on), on ? null : caches.delete(CACHE)]);
+}
+
+// Built files have a content hash in their name, so a copy never goes stale. Once a new index.html
+// arrives, files it no longer mentions are dropped (others reload the next time they're needed).
+async function keepShell(response) {
+  const cache = await caches.open(CACHE);
+  await cache.put(SHELL, response.clone());
+  const html = await response.text();
+  for (const req of await cache.keys()) {
+    const path = new URL(req.url).pathname;
+    if (path.includes('/assets/') && !html.includes(path.slice(path.lastIndexOf('/assets/') + 1))) await cache.delete(req);
+  }
+}
+
+async function page(event) {
+  const network = fetch(event.request).then((res) => {
+    if (res.ok || res.status === 404) event.waitUntil(keepShell(res.clone())); // GitHub Pages serves app routes as 404 + index.html
+    return res;
+  });
+  const saved = await caches.match(SHELL);
+  if (!saved) return network;
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(saved), NETWORK_WAIT_MS));
+  return Promise.race([network.catch(() => saved), timeout]);
+}
+
+async function file(event) {
+  const cache = await caches.open(CACHE);
+  const saved = await cache.match(event.request);
+  if (saved && event.request.url.includes('/assets/')) return saved;
+  const fresh = fetch(event.request).then((res) => {
+    if (res.ok) event.waitUntil(cache.put(event.request, res.clone()));
+    return res;
+  });
+  if (!saved) return fresh;
+  fresh.catch(() => null); // icons and the manifest refresh in the background
+  return saved;
+}
+
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET' || !req.url.startsWith(scope)) return;
+  const rel = req.url.slice(scope.length).split(/[?#]/)[0];
+  const isPage = req.mode === 'navigate';
+  const isFile = rel.startsWith('assets/') || STATIC.includes(rel);
+  if (!isPage && !isFile) return;
+  event.respondWith(fastStart.then((on) => (on ? (isPage ? page(event) : file(event)) : fetch(req))));
+});
 
 // ───────────── the timer notification ─────────────
 
@@ -115,6 +183,7 @@ self.addEventListener('notificationclick', (event) => {
 
 self.addEventListener('message', (event) => {
   const m = event.data || {};
+  if (m.type === 'fastStart') event.waitUntil(setFastStart(m.on !== false));
   if (m.type === 'auth') event.waitUntil(kv('auth', m.token ? { url: m.url, key: m.key, token: m.token } : null));
   if (m.type === 'show') event.waitUntil(showTimer(m.session));
   if (m.type === 'close') event.waitUntil(closeTimer());

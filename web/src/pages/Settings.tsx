@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { ACCENTS, DEFAULT_ACCENT, type AvatarConfig, type ProfileType } from '@shared/theme';
 import type { Me } from '@shared/types';
@@ -10,7 +10,7 @@ import { applyScheme, personVars } from '../lib/theme';
 import { Field, Spinner, Switch } from '../components/ui';
 import { Buddy } from '../components/Buddy';
 import { NewPasswordForm } from './Recovery';
-import { FocusSettingsCard } from '../components/FocusSettingsCard';
+import { MotivationSettings } from '../components/MotivationSettings';
 
 const ACCESSORIES: { key: NonNullable<AvatarConfig['accessory']>; label: string }[] = [
   { key: 'none', label: 'None' },
@@ -30,6 +30,8 @@ export function SettingsPage() {
   const { data: me } = useMe();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'motivation' ? 'motivation' : 'profile';
   const [f, setF] = useState<Me | null>(null);
   useEffect(() => {
     if (me && !f) setF(me);
@@ -67,103 +69,117 @@ export function SettingsPage() {
         </button>
       </div>
 
-      <div className="card stack" style={personVars(f.accent)}>
-        <div className="row">
-          <span className="avatar" style={{ width: 88, height: 88 }}>
-            <Buddy accent={f.accent} avatar={f.avatar} size={80} />
-          </span>
-          <div className="grow stack" style={{ gap: 8 }}>
-            <Field label="Your name">
-              <input className="input" value={f.displayName} onChange={(e) => set({ displayName: e.target.value })} maxLength={40} />
-            </Field>
-          </div>
-        </div>
-        <Field label="About you">
-          <input className="input" value={f.bio} onChange={(e) => set({ bio: e.target.value })} maxLength={200} />
-        </Field>
-        <div className="field">
-          <span className="label">What best describes you?</span>
-          <div className="row wrap">
-            {(['engineer', 'doctor', 'custom'] as ProfileType[]).map((t) => (
-              <button
-                key={t}
-                className={`chip-btn${f.profileType === t ? ' on' : ''}`}
-                onClick={() => set({ profileType: t, accent: t === 'custom' ? f.accent : DEFAULT_ACCENT[t] })}
-              >
-                {t === 'engineer' ? 'Engineer' : t === 'doctor' ? 'Doctor' : 'Custom'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="field">
-          <span className="label">Your colour</span>
-          <div className="row wrap">
-            {Object.values(ACCENTS).map((a) => (
-              <button key={a.key} className={`swatch${f.accent === a.key ? ' on' : ''}`} style={{ background: `var(--acc-${a.key})` }} aria-label={a.label} aria-pressed={f.accent === a.key} onClick={() => set({ accent: a.key })} />
-            ))}
-          </div>
-          <span className="hint">Your friend sees you in this colour everywhere. Changing it never changes your study records.</span>
-        </div>
-        <div className="field">
-          <span className="label">Study buddy</span>
-          <div className="row wrap">
-            {ACCESSORIES.map((a) => (
-              <button key={a.key} className={`chip-btn${(f.avatar.accessory ?? 'none') === a.key ? ' on' : ''}`} onClick={() => set({ avatar: { ...f.avatar, accessory: a.key } })}>
-                {a.label}
-              </button>
-            ))}
-          </div>
-          <div className="row wrap">
-            {MOODS.map((m) => (
-              <button key={m.key} className={`chip-btn${(f.avatar.mood ?? 'happy') === m.key ? ' on' : ''}`} onClick={() => set({ avatar: { ...f.avatar, mood: m.key } })}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <Field label="Time zone" hint="Used to decide what counts as “today”.">
+      <div className="tabs" role="tablist" aria-label="Settings sections" style={{ alignSelf: 'flex-start' }}>
+        <button role="tab" aria-selected={tab === 'profile'} className={tab === 'profile' ? 'on' : ''} onClick={() => setParams({}, { replace: true })}>
+          Profile
+        </button>
+        <button role="tab" aria-selected={tab === 'motivation'} className={tab === 'motivation' ? 'on' : ''} onClick={() => setParams({ tab: 'motivation' }, { replace: true })}>
+          Motivation & focus
+        </button>
+      </div>
+
+      {tab === 'motivation' ? (
+        <MotivationSettings />
+      ) : (
+        <>
+
+        <div className="card stack" style={personVars(f.accent)}>
           <div className="row">
-            <input className="input grow" value={f.timezone} onChange={(e) => set({ timezone: e.target.value })} />
-            <button className="btn small" onClick={() => set({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })}>
-              Use this device's
+            <span className="avatar" style={{ width: 88, height: 88 }}>
+              <Buddy accent={f.accent} avatar={f.avatar} size={80} />
+            </span>
+            <div className="grow stack" style={{ gap: 8 }}>
+              <Field label="Your name">
+                <input className="input" value={f.displayName} onChange={(e) => set({ displayName: e.target.value })} maxLength={40} />
+              </Field>
+            </div>
+          </div>
+          <Field label="About you">
+            <input className="input" value={f.bio} onChange={(e) => set({ bio: e.target.value })} maxLength={200} />
+          </Field>
+          <div className="field">
+            <span className="label">What best describes you?</span>
+            <div className="row wrap">
+              {(['engineer', 'doctor', 'custom'] as ProfileType[]).map((t) => (
+                <button
+                  key={t}
+                  className={`chip-btn${f.profileType === t ? ' on' : ''}`}
+                  onClick={() => set({ profileType: t, accent: t === 'custom' ? f.accent : DEFAULT_ACCENT[t] })}
+                >
+                  {t === 'engineer' ? 'Engineer' : t === 'doctor' ? 'Doctor' : 'Custom'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <span className="label">Your colour</span>
+            <div className="row wrap">
+              {Object.values(ACCENTS).map((a) => (
+                <button key={a.key} className={`swatch${f.accent === a.key ? ' on' : ''}`} style={{ background: `var(--acc-${a.key})` }} aria-label={a.label} aria-pressed={f.accent === a.key} onClick={() => set({ accent: a.key })} />
+              ))}
+            </div>
+            <span className="hint">Your friend sees you in this colour everywhere. Changing it never changes your study records.</span>
+          </div>
+          <div className="field">
+            <span className="label">Study buddy</span>
+            <div className="row wrap">
+              {ACCESSORIES.map((a) => (
+                <button key={a.key} className={`chip-btn${(f.avatar.accessory ?? 'none') === a.key ? ' on' : ''}`} onClick={() => set({ avatar: { ...f.avatar, accessory: a.key } })}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+            <div className="row wrap">
+              {MOODS.map((m) => (
+                <button key={m.key} className={`chip-btn${(f.avatar.mood ?? 'happy') === m.key ? ' on' : ''}`} onClick={() => set({ avatar: { ...f.avatar, mood: m.key } })}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Field label="Time zone" hint="Used to decide what counts as “today”.">
+            <div className="row">
+              <input className="input grow" value={f.timezone} onChange={(e) => set({ timezone: e.target.value })} />
+              <button className="btn small" onClick={() => set({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })}>
+                Use this device's
+              </button>
+            </div>
+          </Field>
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn" disabled={!dirty} onClick={() => setF(me)}>
+              Reset
+            </button>
+            <button
+              className="btn primary"
+              disabled={!dirty || save.isPending || !f.displayName.trim()}
+              onClick={() => save.mutate({ displayName: f.displayName, bio: f.bio, profileType: f.profileType, accent: f.accent, avatar: f.avatar, timezone: f.timezone })}
+            >
+              Save profile
             </button>
           </div>
-        </Field>
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button className="btn" disabled={!dirty} onClick={() => setF(me)}>
-            Reset
-          </button>
-          <button
-            className="btn primary"
-            disabled={!dirty || save.isPending || !f.displayName.trim()}
-            onClick={() => save.mutate({ displayName: f.displayName, bio: f.bio, profileType: f.profileType, accent: f.accent, avatar: f.avatar, timezone: f.timezone })}
-          >
-            Save profile
-          </button>
         </div>
-      </div>
 
-      <div className="card stack">
-        <h2>Privacy & display</h2>
-        <Switch checked={me.shareStatus} onChange={(v) => save.mutate({ shareStatus: v })} label="Show my live study status to friends" />
-        <p className="tiny muted">When off, friends only see that your status is private. Your goals are private unless you share each one.</p>
-        <Switch
-          checked={me.colorScheme === 'dark'}
-          onChange={(v) => {
-            applyScheme(v ? 'dark' : 'light');
-            save.mutate({ colorScheme: v ? 'dark' : 'light' });
-          }}
-          label="Dark mode"
-        />
-      </div>
+        <div className="card stack">
+          <h2>Privacy & display</h2>
+          <Switch checked={me.shareStatus} onChange={(v) => save.mutate({ shareStatus: v })} label="Show my live study status to friends" />
+          <p className="tiny muted">When off, friends only see that your status is private. Your goals are private unless you share each one.</p>
+          <Switch
+            checked={me.colorScheme === 'dark'}
+            onChange={(v) => {
+              applyScheme(v ? 'dark' : 'light');
+              save.mutate({ colorScheme: v ? 'dark' : 'light' });
+            }}
+            label="Dark mode"
+          />
+        </div>
 
-      <FocusSettingsCard />
-
-      <div className="card stack">
-        <h2>Password</h2>
-        <p className="tiny muted">Change it any time. If you ever forget it, use "Forgot password?" on the sign-in page.</p>
-        <NewPasswordForm submitLabel="Change password" />
-      </div>
+        <div className="card stack">
+          <h2>Password</h2>
+          <p className="tiny muted">Change it any time. If you ever forget it, use "Forgot password?" on the sign-in page.</p>
+          <NewPasswordForm submitLabel="Change password" />
+        </div>
+        </>
+      )}
     </div>
   );
 }

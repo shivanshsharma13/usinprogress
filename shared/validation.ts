@@ -64,6 +64,7 @@ export const profileUpdateSchema = z.object({
   colorScheme: z.enum(['light', 'dark']).optional(),
   timezone: z.string().max(64).optional(),
   shareStatus: z.boolean().optional(),
+  prefs: z.record(z.string().regex(/^[a-zA-Z]{1,40}$/), z.boolean()).optional(),
 });
 
 export const roomCreateSchema = z

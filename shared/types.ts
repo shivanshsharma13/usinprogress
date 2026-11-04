@@ -12,10 +12,15 @@ export interface PublicUser {
   avatar: AvatarConfig;
 }
 
+/** Optional features, switched on in Settings → Motivation & focus. A missing key means off. */
+export type PrefKey = string;
+export type Prefs = Partial<Record<PrefKey, boolean>>;
+
 export interface Me extends PublicUser {
   colorScheme: 'light' | 'dark';
   timezone: string;
   shareStatus: boolean;
+  prefs: Prefs; // Settings → Motivation & focus
   createdAt: number;
   today: string; // user's current local date
 }

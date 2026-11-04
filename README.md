@@ -98,6 +98,24 @@ If no email ever arrives, the project owner can open Supabase → Authentication
 person, and choose **Send password recovery**, then fix SMTP (see above). Signed-in people can change
 their password any time under **Settings → Password**.
 
+### Settings → Motivation & focus
+
+Optional extras live in their own Settings tab and are off until switched on. Account-wide switches are
+saved in `profiles.prefs` (`web/src/lib/prefs.ts`), so they follow you between devices; device-only ones
+(timer notifications, fast start) stay in the browser (`web/src/lib/focusSettings.ts`).
+
+**Install as an app.** `web/public/manifest.webmanifest` and the icons make the site installable (Chrome:
+⋮ → Install app; iPhone Safari: Share → Add to Home Screen); the tab shows an Install button when the
+browser offers one. **Fast start** (on by default, per device) lets `web/public/sw.js` keep the app's own
+files: pages try the network first and fall back to the saved copy after 3.5 s or when offline; built files
+are hashed, so they're kept until a new version stops using them. Data never goes through this cache.
+
+### Rolling back a release
+
+Each feature is its own PR, so revert it on GitHub (PR → Revert) and Pages redeploys. If the PR added a file
+to `supabase/migrations/`, also run its twin in `supabase/rollbacks/` (newest first) in the SQL editor,
+after the app is rolled back. To return to a release tag at once: `git revert --no-edit <tag>..main`.
+
 ### Timer controls in notifications (Settings → Focus)
 
 Off by default and saved per device, so the timer works exactly as before until you turn it on. When you
