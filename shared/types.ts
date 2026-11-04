@@ -70,6 +70,20 @@ export interface ActiveSession {
   remindAfterHour: boolean;
   isRevision: boolean;
   taskId: string | null;
+  togetherId?: string | null; // studying together with a friend (see Together)
+}
+
+/** Two friends studying at the same time: a shared timer, and a break either can call for both. */
+export interface Together {
+  id: string;
+  hostId: string;
+  guestId: string;
+  startedAt: number;
+  breakStartedAt: number | null;
+  breakBy: string | null;
+  breakMs: number;
+  live: boolean; // false once either of you finishes
+  people: Record<string, { state: 'running' | 'paused' | 'finished' | 'discarded'; topicTitle: string | null }>;
 }
 
 /** What a friend is allowed to see about someone's live activity. */
@@ -310,7 +324,7 @@ export interface Task {
 
 export interface Activity {
   id: string;
-  type: 'reaction' | 'message' | 'topic_completed' | 'room_created' | 'friend_accepted' | 'topic_added' | 'challenge_set' | 'challenge_won';
+  type: 'reaction' | 'message' | 'topic_completed' | 'room_created' | 'friend_accepted' | 'topic_added' | 'challenge_set' | 'challenge_won' | 'together_joined';
   actor: PublicUser;
   recipientId: string | null;
   roomId: string | null;

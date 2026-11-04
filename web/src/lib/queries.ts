@@ -13,6 +13,7 @@ import type {
   ProgressStats,
   RevisionDue,
   Challenge,
+  Together,
   WeekRecap,
   HoursReport,
   CalendarPlanItem,
@@ -73,6 +74,8 @@ export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: asy
 export const useActivity = () => useQuery({ queryKey: ['activity'], queryFn: () => api.get<{ activity: Activity[]; unread: number }>('/activity') });
 export const useProgress = (userId?: string) =>
   useQuery({ queryKey: ['progress', userId ?? 'me'], queryFn: async () => (await api.get<{ stats: ProgressStats }>(`/progress${userId ? `?userId=${userId}` : ''}`)).stats });
+export const useTogether = (id: string | null | undefined) =>
+  useQuery({ queryKey: ['together', id], enabled: Boolean(id), staleTime: 0, queryFn: async () => (await api.get<{ together: Together }>(`/together/${id}`)).together });
 export const useChallenge = (enabled: boolean, friendId: string | undefined, week: string) =>
   useQuery({
     queryKey: ['challenge', friendId, week],

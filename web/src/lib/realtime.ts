@@ -28,6 +28,7 @@ const TABLE_KEYS: Record<string, string[]> = {
   tasks: ['tasks', 'home'],
   activities: ['activity', 'friend', 'home', 'room'],
   challenges: ['challenge', 'room'],
+  together_sessions: ['together', 'session', 'friends'],
 };
 
 export type ConnectionState = 'connecting' | 'online' | 'offline';
@@ -81,6 +82,8 @@ async function notice(table: string, event: string, row: Record<string, any>, me
       if (r) toast(`${r.emoji} ${who}: ${r.label}`, 'notice');
     } else if (row.recipient_id === meId && row.type === 'message') {
       toast(`💌 ${who}: ${row.message}`, 'notice');
+    } else if (row.recipient_id === meId && row.type === 'together_joined') {
+      toast(`🌱 ${who} joined you — you're studying together`, 'notice');
     } else if (row.type === 'topic_completed' && row.ref_id) {
       const { data } = await supabase.from('topics').select('title').eq('id', row.ref_id).maybeSingle();
       if (data) toast(`🌼 ${who} completed “${data.title}”`, 'notice');

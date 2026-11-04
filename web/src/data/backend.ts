@@ -950,6 +950,17 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         const userId = query.get('userId') ?? (await myId());
         return { stats: await rpc('progress_stats', { p_user: userId }) };
       }
+      case 'POST /together/join': {
+        const input = parse(v.joinStudySchema, body);
+        return { session: await rpc('join_study', { p_friend: input.friendId, p_topic: input.topicId, p_target: input.targetMinutes ?? null }) };
+      }
+      case 'GET /together/:id': {
+        const together = await rpc('together_json', { p_id: p[0] });
+        if (!together) throw notFound('That study-together session could not be found.');
+        return { together };
+      }
+      case 'POST /together/:id/break':
+        return { together: await rpc('together_break', { p_id: p[0], p_on: Boolean(body?.on) }) };
       case 'GET /challenge':
         return rpc('current_challenge', { p_friend: query.get('friendId'), p_week: query.get('week') });
       case 'POST /challenge': {
