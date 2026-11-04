@@ -52,6 +52,8 @@ function describe(a: Activity, meId: string): string {
       return `${who} planted a new room: ${a.roomName}`;
     case 'friend_accepted':
       return `${who} ${a.actor.id === meId ? 'became friends 🌱' : 'accepted your friend request 🌱'}`;
+    case 'together_joined':
+      return `${who} studied together with ${a.actor.id === meId ? 'your friend' : 'you'} 🌱`;
     case 'challenge_set':
       return `${who} set a challenge for the week: ${a.message} 🎯`;
     case 'challenge_won':

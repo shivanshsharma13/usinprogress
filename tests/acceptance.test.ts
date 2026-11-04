@@ -771,3 +771,40 @@ test('a weekly challenge is won when both reach the target, and plants a sunflow
   assert.equal((await A.post(`/challenge/${won.challenge.id}/cancel`)).status, 409);
   assert.equal((await C.get(`/challenge?friendId=${a.id}&week=${week}`)).status, 404);
 });
+
+test('studying together: join a friend, share breaks, and part ways when one finishes', async () => {
+  for (const who of [A, B]) {
+    const s = (await who.get('/sessions/active')).body.session;
+    if (s) await who.post(`/sessions/${s.id}/discard`);
+  }
+  assert.equal((await A.post('/together/join', { friendId: b.id, topicId: topics[1] })).status, 409, 'nobody to join yet');
+  const host = (await B.post('/sessions', { topicId: bTopics[1] })).body.session;
+  assert.equal((await C.post('/together/join', { friendId: b.id, topicId: topics[1] })).status, 404, 'friends only');
+
+  const joined = await A.post('/together/join', { friendId: b.id, topicId: topics[1] });
+  assert.equal(joined.status, 200);
+  const togetherId = joined.body.session.togetherId;
+  assert.ok(togetherId);
+  assert.equal((await B.get('/sessions/active')).body.session.togetherId, togetherId, 'both sessions are linked');
+  const view = (await B.get(`/together/${togetherId}`)).body.together;
+  assert.equal(view.live, true);
+  assert.equal(view.people[a.id].topicTitle, 'Binary Search', 'they share a room, so the topic shows');
+  assert.equal((await C.get(`/together/${togetherId}`)).status, 404);
+  assert.ok((await B.get('/activity')).body.activity.some((x: any) => x.type === 'together_joined'));
+
+  const state = async (who: Client) => (await who.get('/sessions/active')).body.session.state;
+  await B.post(`/together/${togetherId}/break`, { on: true });
+  assert.deepEqual([await state(A), await state(B)], ['paused', 'paused'], 'a break pauses both');
+  await A.post(`/together/${togetherId}/break`, { on: false });
+  assert.deepEqual([await state(A), await state(B)], ['running', 'running'], 'either can end it');
+
+  await A.post(`/sessions/${joined.body.session.id}/pause`);
+  await B.post(`/together/${togetherId}/break`, { on: true });
+  await B.post(`/together/${togetherId}/break`, { on: false });
+  assert.deepEqual([await state(A), await state(B)], ['paused', 'running'], 'your own pause from before the break stays');
+
+  await B.post(`/sessions/${host.id}/finish`, {});
+  assert.equal((await A.get(`/together/${togetherId}`)).body.together.live, false);
+  assert.equal((await A.post(`/together/${togetherId}/break`, { on: true })).status, 409);
+  await A.post(`/sessions/${joined.body.session.id}/discard`);
+});

@@ -5,13 +5,15 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { focusedMs, formatClock, formatCountdown, formatMinutes } from '@shared/timer';
 import type { ActiveSession, SessionRecord, Topic } from '@shared/types';
-import { useAction, useActiveSession, useMe, useRoom, useRooms } from '../lib/queries';
+import { useAction, useActiveSession, useFriends, useMe, useRoom, useRooms } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { toast } from '../lib/toast';
 import { personVars } from '../lib/theme';
 import { Empty, ErrorNote, Field, fmt, Modal, Spinner, Switch, useNow } from '../components/ui';
 import { Plant } from '../components/Plant';
 import { CheckIcon, ChevronLeft, NextIcon, PauseIcon, PlayIcon, StopIcon } from '../components/icons';
+import { TogetherPanel } from '../components/Together';
+import { usePref } from '../lib/prefs';
 
 interface FinishResult {
   session: SessionRecord | null;
@@ -157,6 +159,8 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           You're already studying “{session.topicTitle}”. Finish or complete it first, then start the next topic.
         </div>
       )}
+
+      {session.togetherId && me && <TogetherPanel session={session} me={me} />}
 
       <div className={`card stack focus-card${paused ? ' is-paused' : ''}${reached ? ' is-reached' : ''}`} style={{ alignItems: 'center', textAlign: 'center', ...(me ? personVars(me.accent) : {}) }}>
         <div className="row wrap" style={{ justifyContent: 'center' }}>
@@ -335,11 +339,20 @@ function useTopicRoom(topicId: string | null) {
 
 function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: string | null; taskId: string | null; outcome: Outcome | null; clearOutcome: () => void }) {
   const navigate = useNavigate();
-  const [, setParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const { data: me } = useMe();
   const { data: rooms } = useRooms();
   const lookup = useTopicRoom(topicId);
   const [roomChoice, setRoomChoice] = useState<string | null>(null);
+  // Studying together: ?join=<friend id>, offered while a friend is studying (Settings → Motivation & focus).
+  const [togetherOn] = usePref('together');
+  const { data: friendsData } = useFriends();
+  const studyingFriend = togetherOn ? friendsData?.friends.find((f) => f.status.state === 'studying' || f.status.state === 'paused') : undefined;
+  const joinId = params.get('join');
+  const joining = joinId && studyingFriend?.user.id === joinId ? studyingFriend : undefined;
+  useEffect(() => {
+    if (joining?.status.roomId && !topicId && !roomChoice) setRoomChoice(joining.status.roomId);
+  }, [joining?.status.roomId, topicId, roomChoice]);
   const roomId = lookup.data?.roomId ?? roomChoice ?? outcome?.result.roomId ?? null;
   const { data: room, isLoading: roomLoading } = useRoom(roomId ?? undefined);
   const qc = useQueryClient();
@@ -362,12 +375,18 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
 
   const start = useAction(
     () =>
-      api.post<{ session: ActiveSession }>('/sessions', {
-        topicId: selected!.id,
-        targetMinutes: targetText ? Math.round(Number(targetText)) : null,
-        remindAfterHour: remind,
-        taskId,
-      }),
+      joining
+        ? api.post<{ session: ActiveSession }>('/together/join', {
+            friendId: joining.user.id,
+            topicId: selected!.id,
+            targetMinutes: targetText ? Math.round(Number(targetText)) : null,
+          })
+        : api.post<{ session: ActiveSession }>('/sessions', {
+            topicId: selected!.id,
+            targetMinutes: targetText ? Math.round(Number(targetText)) : null,
+            remindAfterHour: remind,
+            taskId,
+          }),
     {
       invalidate: [['session'], ['room', roomId ?? ''], ['rooms']],
       onSuccess: (r) => {
@@ -380,13 +399,20 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
           toast('You already have a session running — here it is.', 'notice');
           return true;
         }
+        if (e.code === 'FRIEND_NOT_STUDYING') void qc.invalidateQueries({ queryKey: ['friends'] });
       },
     },
   );
 
   const select = (id: string) => {
     clearOutcome();
-    setParams({ topic: id }, { replace: true });
+    setParams(joinId ? { topic: id, join: joinId } : { topic: id }, { replace: true });
+  };
+  const setJoin = (friendId: string | null) => {
+    const next = new URLSearchParams(params);
+    if (friendId) next.set('join', friendId);
+    else next.delete('join');
+    setParams(next, { replace: true });
   };
 
   if (!me) return <Spinner />;
@@ -403,6 +429,28 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
           <p className="muted">Pick a topic and press start. We'll keep track of the time.</p>
         </div>
       </div>
+
+      {studyingFriend &&
+        (joining ? (
+          <div className="card tint row wrap together-join" style={personVars(joining.user.accent)}>
+            <span className="grow small">
+              🌱 <b>Studying together with {joining.user.displayName}</b>
+              {joining.status.topicTitle ? ` (on “${joining.status.topicTitle}”)` : ''}. Pick your topic and start — you'll share a timer, and either of you can call a break for both.
+            </span>
+            <button className="btn ghost small" onClick={() => setJoin(null)}>
+              Study alone
+            </button>
+          </div>
+        ) : (
+          <div className="card row wrap together-join">
+            <span className="grow small">
+              <b>{studyingFriend.user.displayName}</b> is studying right now.
+            </span>
+            <button className="btn small" onClick={() => setJoin(studyingFriend.user.id)}>
+              Study together
+            </button>
+          </div>
+        ))}
 
       {outcome && <OutcomeCard outcome={outcome} onStartNext={() => outcome.result.nextTopic && select(outcome.result.nextTopic.id)} />}
 
@@ -453,7 +501,7 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
           </div>
           {myProgress?.status === 'completed' && <p className="small muted">You've completed this one. Starting again records a revision session — your completion stays.</p>}
           <button className="btn primary big block" disabled={start.isPending || room.status !== 'active'} onClick={() => start.mutate(undefined)}>
-            <PlayIcon /> {start.isPending ? 'Starting…' : 'Start studying'}
+            <PlayIcon /> {start.isPending ? 'Starting…' : joining ? `Start with ${joining.user.displayName}` : 'Start studying'}
           </button>
         </div>
       )}

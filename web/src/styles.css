@@ -579,3 +579,19 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 /* ── Weekly challenge ── */
 .challenge-card { border-top: 4px solid #F6C945; }
 .chip.sunflower { background: #FDF1C7; color: #6B4A16; font-weight: 800; }
+
+/* ── Study together ── */
+.together-card { border-left: 4px solid var(--c, var(--me)); }
+.together-card.on-break { background: color-mix(in srgb, #F6D57A 18%, var(--surface)); }
+.together-clock { font-size: 1.5rem; font-weight: 800; }
+.together-join { align-items: center; }
+.together-nudge {
+  position: fixed; left: 50%; translate: -50% 0; bottom: 20px; z-index: 30; width: min(560px, calc(100% - 32px));
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 16px;
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--c); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+}
+@media (max-width: 720px) { .together-nudge { bottom: calc(76px + env(safe-area-inset-bottom)); } }
+@media (prefers-reduced-motion: no-preference) {
+  .together-nudge { animation: nudge-in 0.35s ease-out; }
+}
+@keyframes nudge-in { from { opacity: 0; translate: -50% 12px; } }
