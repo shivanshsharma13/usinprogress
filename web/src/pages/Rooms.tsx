@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { addDays, addMonths, formatDate } from '@shared/dates';
+import type { RoomSummary } from '@shared/types';
 import { useAction, useFriends, useMe, useRooms } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
-import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Modal, ProgressBar, Spinner } from '../components/ui';
+import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner } from '../components/ui';
+import { LeaveRoomModal } from '../components/Social';
 import { Plant } from '../components/Plant';
 import { PlusIcon } from '../components/icons';
 
@@ -15,12 +17,29 @@ export function RoomsPage() {
   const { data: friends } = useFriends();
   const [params, setParams] = useSearchParams();
   const [creating, setCreating] = useState(params.get('new') === '1');
+  const [leaving, setLeaving] = useState<RoomSummary | null>(null);
   const navigate = useNavigate();
+  const setStatus = useAction(({ id, status }: { id: string; status: 'active' | 'archived' }) => api.patch(`/rooms/${id}`, { status }), {
+    invalidate: [['rooms'], ['room'], ['friend']],
+    success: (_r) => undefined,
+  });
   if (isLoading || !me) return <Spinner />;
   if (error || !rooms) return <ErrorNote error={error} retry={refetch} />;
   const hasFriend = Boolean(friends?.friends.length);
   const active = rooms.filter((r) => r.status === 'active');
   const archived = rooms.filter((r) => r.status === 'archived');
+  const roomMenu = (r: RoomSummary) => (
+    <div className="card-menu">
+      <Menu
+        label={`More for ${r.name}`}
+        items={[
+          { label: 'Archive room', onClick: () => setStatus.mutate({ id: r.id, status: 'archived' }), hidden: r.status !== 'active' },
+          { label: 'Restore room', onClick: () => setStatus.mutate({ id: r.id, status: 'active' }), hidden: r.status === 'active' },
+          { label: 'Remove from my rooms', danger: true, onClick: () => setLeaving(r) },
+        ]}
+      />
+    </div>
+  );
 
   return (
     <div className="stack-lg">
@@ -64,31 +83,34 @@ export function RoomsPage() {
           const total = r.members[0]?.total ?? 0;
           const together = r.members.reduce((s, m) => s + m.completed, 0);
           return (
-            <Link key={r.id} to={`/rooms/${r.id}`} className="card stack" style={{ textDecoration: 'none', ...personVars(r.color) }}>
-              <div className="row top">
-                <div className="grow">
-                  <h2>{r.name}</h2>
-                  <div className="small muted">
-                    {formatDate(r.startDate)} – {formatDate(r.endDate, { month: 'short', day: 'numeric', year: 'numeric' })} · {total} topics
+            <div key={r.id} className="has-card-menu">
+              <Link to={`/rooms/${r.id}`} className="card stack" style={{ textDecoration: 'none', height: '100%', ...personVars(r.color) }}>
+                <div className="row top" style={{ paddingRight: 36 }}>
+                  <div className="grow">
+                    <h2>{r.name}</h2>
+                    <div className="small muted">
+                      {formatDate(r.startDate)} – {formatDate(r.endDate, { month: 'short', day: 'numeric', year: 'numeric' })} · {total} topics
+                    </div>
                   </div>
+                  <Plant percent={total ? (together / (total * Math.max(1, r.members.length))) * 100 : 0} size={52} color="var(--c)" />
                 </div>
-                <Plant percent={total ? (together / (total * Math.max(1, r.members.length))) * 100 : 0} size={52} color="var(--c)" />
-              </div>
-              {r.members.map((m) => (
-                <div key={m.user.id} className="stack" style={{ gap: 4 }}>
-                  <div className="row between small">
-                    <span className="row" style={{ gap: 6 }}>
-                      <LiveDot status={m.status} accent={m.user.accent} />
-                      <b>{m.user.id === me.id ? 'You' : m.user.displayName}</b>
-                    </span>
-                    <span className="muted num">
-                      {m.completed} of {m.total} · {fmt(m.focusedMs)}
-                    </span>
+                {r.members.map((m) => (
+                  <div key={m.user.id} className="stack" style={{ gap: 4 }}>
+                    <div className="row between small">
+                      <span className="row" style={{ gap: 6 }}>
+                        <LiveDot status={m.status} accent={m.user.accent} />
+                        <b>{m.user.id === me.id ? 'You' : m.user.displayName}</b>
+                      </span>
+                      <span className="muted num">
+                        {m.completed} of {m.total} · {fmt(m.focusedMs)}
+                      </span>
+                    </div>
+                    <ProgressBar value={m.completed} max={m.total} accent={m.user.accent} label={`${m.user.displayName}: ${m.completed} of ${m.total}`} />
                   </div>
-                  <ProgressBar value={m.completed} max={m.total} accent={m.user.accent} label={`${m.user.displayName}: ${m.completed} of ${m.total}`} />
-                </div>
-              ))}
-            </Link>
+                ))}
+              </Link>
+              {roomMenu(r)}
+            </div>
           );
         })}
       </div>
@@ -98,15 +120,19 @@ export function RoomsPage() {
           <summary className="muted">Archived rooms ({archived.length})</summary>
           <div className="grid-2" style={{ marginTop: 12 }}>
             {archived.map((r) => (
-              <Link key={r.id} to={`/rooms/${r.id}`} className="card soft" style={{ textDecoration: 'none' }}>
-                <b>{r.name}</b>
-                <div className="small muted">Archived · history kept</div>
-              </Link>
+              <div key={r.id} className="has-card-menu">
+                <Link to={`/rooms/${r.id}`} className="card soft" style={{ textDecoration: 'none', display: 'block', paddingRight: 52 }}>
+                  <b>{r.name}</b>
+                  <div className="small muted">Archived · history kept</div>
+                </Link>
+                {roomMenu(r)}
+              </div>
             ))}
           </div>
         </details>
       )}
 
+      {leaving && <LeaveRoomModal room={leaving} meId={me.id} onClose={() => setLeaving(null)} />}
       {creating && (
         <CreateRoomModal
           onClose={() => {

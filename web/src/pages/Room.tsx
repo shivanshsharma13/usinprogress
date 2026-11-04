@@ -10,6 +10,7 @@ import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
 import { Forest, TodayPlant } from '../components/Garden';
+import { LeaveRoomModal } from '../components/Social';
 import { DAY_STATUS_LABEL } from '../components/PlanBits';
 import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
 
@@ -20,6 +21,12 @@ export function RoomPage() {
   const { data: me } = useMe();
   const { data: room, isLoading, error, refetch } = useRoom(id);
   const [editing, setEditing] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const navigate = useNavigate();
+  const setStatus = useAction((status: 'active' | 'archived') => api.patch(`/rooms/${id}`, { status }), {
+    invalidate: [['room'], ['rooms'], ['friend']],
+    success: (_r) => undefined,
+  });
 
   if (isLoading || !me) return <Spinner />;
   if (error || !room) return <ErrorNote error={error} retry={refetch} />;
@@ -42,9 +49,19 @@ export function RoomPage() {
           </p>
           {room.description && <p className="small">{room.description}</p>}
         </div>
-        <button className="btn" onClick={() => setEditing(true)}>
-          Edit room
-        </button>
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn" onClick={() => setEditing(true)}>
+            Edit room
+          </button>
+          <Menu
+            label="More for this room"
+            items={[
+              { label: 'Archive room', onClick: () => confirm('Archive this room? Everything is kept and you can reopen it.') && setStatus.mutate('archived'), hidden: room.status !== 'active' },
+              { label: 'Restore room', onClick: () => setStatus.mutate('active'), hidden: room.status === 'active' },
+              { label: 'Remove from my rooms', danger: true, onClick: () => setLeaving(true) },
+            ]}
+          />
+        </div>
       </div>
 
       <div className="grid-2" style={{ alignItems: 'start' }}>
@@ -63,6 +80,7 @@ export function RoomPage() {
       </details>
 
       {editing && <EditRoomModal room={room} onClose={() => setEditing(false)} />}
+      {leaving && <LeaveRoomModal room={room} meId={me.id} onClose={() => setLeaving(false)} onDone={() => navigate('/rooms', { replace: true })} />}
     </div>
   );
 }

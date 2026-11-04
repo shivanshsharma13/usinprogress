@@ -635,3 +635,49 @@ test('the hours report gives daily and per-topic totals to you and your friend o
   assert.equal((await C.get(`/progress/hours?userId=${a.id}&from=${from}&to=${today}`)).status, 404); // a stranger
   assert.equal((await A.get(`/progress/hours?userId=${a.id}&from=2020-01-01&to=${today}`)).status, 400); // over a year
 });
+
+test('removing a room takes it off your list only; it waits while you study there', async () => {
+  const req = await C.post('/friends/requests', { userId: a.id });
+  assert.equal((await A.post(`/friends/requests/${req.body.id}/accept`)).status, 200);
+  const shared = (await A.post('/rooms', { friendId: c.id, name: 'Short-lived', startDate: today, endDate: addDays(today, 30) })).body.id;
+  const mine = (await A.post(`/rooms/${shared}/topics`, { title: 'Leaving soon' })).body.id;
+  await C.post(`/rooms/${shared}/topics`, { title: 'Staying' });
+
+  const active = (await A.get('/sessions/active')).body.session;
+  if (active) await A.post(`/sessions/${active.id}/discard`);
+  const session = (await A.post('/sessions', { topicId: mine })).body.session;
+  assert.equal((await A.post(`/rooms/${shared}/leave`)).status, 409, 'not while studying there');
+  await A.post(`/sessions/${session.id}/discard`);
+
+  assert.equal((await C.post(`/rooms/${shared}/leave`, {})).status, 200);
+  assert.ok(!(await C.get('/rooms')).body.rooms.some((r: any) => r.id === shared));
+  assert.equal((await C.get(`/rooms/${shared}`)).status, 404);
+  const left = (await A.get(`/rooms/${shared}`)).body;
+  assert.equal(left.status, 'active', 'the friend keeps the room');
+  assert.deepEqual(left.members.map((m: any) => m.user.id), [a.id]);
+  assert.equal((await C.post(`/rooms/${shared}/leave`)).status, 404, 'already gone');
+});
+
+test('unfriending ends the friendship quietly, archives shared rooms and can be undone by a new request', async () => {
+  const shared = (await A.post('/rooms', { friendId: c.id, name: 'Before goodbye', startDate: today, endDate: addDays(today, 30) })).body.id;
+  assert.equal((await B.post(`/friends/${c.id}/remove`)).status, 404, 'only friends can be removed');
+
+  const res = await C.post(`/friends/${a.id}/remove`, { leaveRooms: false });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.rooms, 1);
+  assert.ok(!(await A.get('/friends')).body.friends.some((f: any) => f.user.id === c.id));
+  assert.ok(!(await C.get('/friends')).body.friends.some((f: any) => f.user.id === a.id));
+  assert.equal((await C.get(`/friends/${a.id}`)).status, 404);
+  assert.equal((await C.post('/encourage', { recipientId: a.id, reaction: 'proud' })).status, 404);
+  assert.equal((await A.get(`/rooms/${shared}`)).body.status, 'archived', 'kept, but archived for both');
+  assert.equal((await C.get(`/rooms/${shared}`)).body.status, 'archived');
+  assert.equal((await A.get('/friends')).body.friends.some((f: any) => f.user.id === b.id), true, 'other friendships are untouched');
+
+  const again = await A.post('/friends/requests', { userId: c.id });
+  assert.equal(again.body.status, 'pending');
+  await C.post(`/friends/requests/${again.body.id}/accept`);
+  const gone = await A.post(`/friends/${c.id}/remove`, { leaveRooms: true });
+  assert.equal(gone.status, 200);
+  assert.ok(!(await A.get('/rooms')).body.rooms.some((r: any) => r.id === shared), 'and can take the rooms off your list too');
+  assert.equal((await C.get(`/rooms/${shared}`)).status, 200);
+});

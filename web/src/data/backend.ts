@@ -772,6 +772,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { ok: true };
       case 'GET /friends/:id':
         return friendProfile(p[0]);
+      case 'POST /friends/:id/remove':
+        return rpc('unfriend', { p_user: p[0], p_leave_rooms: Boolean(body?.leaveRooms) });
       case 'POST /encourage': {
         const input = parse(v.encourageSchema, body);
         return { id: await rpc('encourage', { p_recipient: input.recipientId, p_reaction: input.reaction ?? null, p_message: input.message ?? null, p_room: input.roomId ?? null }) };
@@ -806,6 +808,9 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         if (!updated.length) throw notFound('That room could not be found.');
         return { ok: true };
       }
+      case 'POST /rooms/:id/leave':
+        await rpc('leave_room', { p_room: p[0] });
+        return { ok: true };
       case 'POST /rooms/:id/topics': {
         const input = parse(v.topicCreateSchema, body);
         return {
