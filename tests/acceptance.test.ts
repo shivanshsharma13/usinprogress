@@ -681,3 +681,15 @@ test('unfriending ends the friendship quietly, archives shared rooms and can be 
   assert.ok(!(await A.get('/rooms')).body.rooms.some((r: any) => r.id === shared), 'and can take the rooms off your list too');
   assert.equal((await C.get(`/rooms/${shared}`)).status, 200);
 });
+
+test('feature switches are saved to your account, merged, and only by you', async () => {
+  const on = await A.patch('/me', { prefs: { revisions: true } });
+  assert.equal(on.status, 200);
+  assert.equal(on.body.me.prefs.revisions, true);
+  const both = await A.patch('/me', { prefs: { streaks: true } });
+  assert.deepEqual({ revisions: both.body.me.prefs.revisions, streaks: both.body.me.prefs.streaks }, { revisions: true, streaks: true }, 'earlier switches are kept');
+  assert.equal((await A.patch('/me', { prefs: { 'bad key!': true } })).status, 400);
+  await C.sb.from('profiles').update({ prefs: { revisions: false } }).eq('id', a.id);
+  assert.equal((await A.get('/me')).body.me.prefs.revisions, true, 'nobody else can change them');
+  await A.patch('/me', { prefs: { revisions: false, streaks: false } });
+});

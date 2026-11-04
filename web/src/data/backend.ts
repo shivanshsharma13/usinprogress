@@ -96,6 +96,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     colorScheme: p.color_scheme,
     timezone: p.timezone,
     shareStatus: p.share_status,
+    prefs: p.prefs ?? {},
     createdAt: p.created_at,
     today: localDate(now(), p.timezone),
   });
@@ -748,6 +749,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         if (input.colorScheme !== undefined) patch.color_scheme = input.colorScheme;
         if (input.timezone !== undefined) patch.timezone = input.timezone;
         if (input.shareStatus !== undefined) patch.share_status = input.shareStatus;
+        if (input.prefs !== undefined) patch.prefs = { ...(await profiles([id])).get(id)?.prefs, ...input.prefs }; // fresh, not the cached copy
         await rows(sb.from('profiles').update(patch).eq('id', id).select('id'));
         meCache = null;
         return { me: await me() };

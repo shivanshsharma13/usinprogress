@@ -7,7 +7,7 @@ export const notificationsSupported = () => typeof window !== 'undefined' && 'No
 
 let worker: Promise<ServiceWorkerRegistration | null> | null = null;
 
-/** Registers the worker the first time a notification is needed. */
+/** Registers the worker (once). It starts with the app so "Fast start" and installing work too. */
 export function notificationWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!notificationsSupported()) return Promise.resolve(null);
   worker ??= navigator.serviceWorker
@@ -27,6 +27,9 @@ export async function notify(title: string, body: string, tag?: string) {
   if (!notificationsSupported() || Notification.permission !== 'granted') return;
   await post({ type: 'notify', title, body, tag });
 }
+
+/** Tells the worker whether to keep the app's files on this device. */
+export const setWorkerFastStart = (on: boolean) => post({ type: 'fastStart', on });
 
 export const showTimerNotification = (session: ActiveSession) => post({ type: 'show', session });
 export const closeTimerNotification = () => (notificationsSupported() && worker ? post({ type: 'close' }) : Promise.resolve());
