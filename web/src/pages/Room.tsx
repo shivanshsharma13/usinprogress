@@ -9,7 +9,7 @@ import { api, ApiError } from '../lib/api';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
-import { Forest, GrowingTree } from '../components/Garden';
+import { Forest, TodayPlant } from '../components/Garden';
 import { DAY_STATUS_LABEL } from '../components/PlanBits';
 import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
 
@@ -111,15 +111,15 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
 
         {sprints.length > 0 && (
           <div className="today-tree">
-            <GrowingTree percent={percent} color="var(--c)" />
+            <TodayPlant percent={percent} color="var(--c)" />
             <div className="stack" style={{ gap: 6, alignItems: 'center', textAlign: 'center' }}>
               <b className="num">{today.length ? `${doneToday} of ${today.length} done today` : 'Nothing planned today'}</b>
               <span className="tiny muted">
                 {allDone
                   ? `All done for today. A new tree is growing in ${isMe ? 'your' : 'the'} forest 🌳`
                   : today.length
-                    ? `${isMe ? 'Your' : 'The'} tree grows with every task and blossoms when today is finished.`
-                    : 'A rest day. Enjoy it.'}
+                    ? `${isMe ? 'Your' : 'The'} plant grows a leaf with every task and blooms when today is finished.`
+                    : 'A rest day. The plant is napping, and so can you.'}
               </span>
             </div>
             {today.length > 0 && <ProgressBar value={doneToday} max={today.length} accent={member.user.accent} label={`${name}: ${doneToday} of ${today.length} today`} />}
