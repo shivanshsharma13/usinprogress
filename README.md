@@ -110,6 +110,25 @@ browser offers one. **Fast start** (on by default, per device) lets `web/public/
 files: pages try the network first and fall back to the saved copy after 3.5 s or when offline; built files
 are hashed, so they're kept until a new version stops using them. Data never goes through this cache.
 
+### Phone notifications (one-time setup)
+
+News from your friend (encouragement, "started studying", "finished today's plan") reaches phones with
+the app closed. The database decides who wants which news (`migrations/20261111000000_push_notifications.sql`)
+and posts it to the `push` edge function, which encrypts and delivers it (`supabase/functions/push`, plain
+Web Crypto, checked against RFC 8291's test vector). Until it's set up, the switch says "Not set up yet".
+
+1. Make a key pair: `node scripts/vapid-keys.mjs .env.push` (prints the public key; both go into the
+   git-ignored file).
+2. Repository variable `VITE_VAPID_PUBLIC_KEY` = the public key (GitHub → Settings → Variables).
+3. `npx supabase login`, then deploy the function and its secrets:
+   `npx supabase functions deploy push --project-ref <ref> --no-verify-jwt` and
+   `npx supabase secrets set --project-ref <ref> --env-file .env.push` (the script already put a random
+   `PUSH_WEBHOOK_SECRET` in it).
+4. Tell the database where to send, in the SQL editor:
+   `insert into push_config (url, secret) values ('https://<ref>.supabase.co/functions/v1/push', '<PUSH_WEBHOOK_SECRET>');`
+
+iPhone: notifications work only after the app is added to the Home Screen (iOS 16.4+).
+
 ### Rolling back a release
 
 Each feature is its own PR, so revert it on GitHub (PR → Revert) and Pages redeploys. If the PR added a file

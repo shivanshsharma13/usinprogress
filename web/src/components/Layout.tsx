@@ -11,6 +11,7 @@ import { applyScheme } from '../lib/theme';
 import { Avatar, useNow } from './ui';
 import { FocusCompanion } from './FocusCompanion';
 import { TogetherNudge } from './Together';
+import { refreshPush } from '../lib/push';
 import { notify } from '../lib/notifications';
 import { CalendarIcon, ChartIcon, FriendsIcon, GoalIcon, HomeIcon, MoonIcon, PauseIcon, PlayIcon, RoomIcon, SunIcon } from './icons';
 
@@ -35,6 +36,9 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
+  useEffect(() => {
+    void refreshPush();
+  }, [me.id]);
 
   return (
     <div className="shell">

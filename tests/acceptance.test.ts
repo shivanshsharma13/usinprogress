@@ -808,3 +808,51 @@ test('studying together: join a friend, share breaks, and part ways when one fin
   assert.equal((await A.post(`/together/${togetherId}/break`, { on: true })).status, 409);
   await A.post(`/sessions/${joined.body.session.id}/discard`);
 });
+
+test('phone notifications: the right people, only if they opted in, and never blocking the action', async () => {
+  const endpoint = (who: string) => `https://push.example.com/${who}-${Date.now()}`;
+  const save = (who: Client, id: string) => who.sb.rpc('save_push_subscription', { p_endpoint: endpoint(id), p_p256dh: 'BKey', p_auth: 'auth' });
+  assert.equal((await save(A, 'a')).error, null);
+  await save(B, 'b');
+  assert.equal(((await C.sb.from('push_subscriptions').select('*')).data ?? []).length, 0, 'subscriptions are private');
+  const recipients = async (pref: string, users: string[]) => (await srv.db.query(`SELECT push_recipients(?, ?::uuid[]) AS r`, [pref, users]))[0].r;
+
+  assert.deepEqual(await recipients('pushEncourage', [a.id]), [], 'off until switched on');
+  await A.patch('/me', { prefs: { pushEncourage: true, pushStudying: true } });
+  assert.deepEqual(await recipients('pushEncourage', [a.id]), [a.id]);
+  for (const who of [A, B]) {
+    const s = (await who.get('/sessions/active')).body.session;
+    if (s) await who.post(`/sessions/${s.id}/discard`);
+  }
+  assert.deepEqual(await recipients('pushStudying', [a.id]), [a.id]);
+  const s = (await A.post('/sessions', { topicId: topics[1] })).body.session;
+  assert.deepEqual(await recipients('pushStudying', [a.id]), [], 'not while you are studying yourself');
+  await A.post(`/sessions/${s.id}/discard`);
+
+  // The database hands the message to the push function. Stand in for it with a local server.
+  const { createServer } = await import('node:http');
+  const received: { headers: any; body: any }[] = [];
+  const server = createServer((req, res) => {
+    let data = '';
+    req.on('data', (c) => (data += c));
+    req.on('end', () => (received.push({ headers: req.headers, body: JSON.parse(data) }), res.end('{}')));
+  });
+  await new Promise<void>((r) => server.listen(0, '0.0.0.0', r));
+  const port = (server.address() as any).port;
+  const [{ host }] = await srv.db.query(`SELECT host(inet_client_addr()) AS host`); // this machine, as the database container sees it
+  await srv.db.query(`INSERT INTO push_config (url, secret) VALUES (?, 'test-secret')`, [`http://${host}:${port}/push`]);
+  try {
+    assert.equal((await B.post('/encourage', { recipientId: a.id, reaction: 'proud' })).status, 201);
+    for (let i = 0; i < 40 && !received.length; i++) await sleep(250);
+    assert.equal(received.length, 1, 'one call to the push function');
+    assert.equal(received[0].headers['x-push-secret'], 'test-secret');
+    assert.equal(received[0].body.notification.title, 'Mira sent you some encouragement');
+    assert.deepEqual(received[0].body.subscriptions.map((x: any) => x.endpoint.split('/').pop().split('-')[0]), ['a'], 'only to the recipient');
+
+    await srv.db.query(`UPDATE push_config SET url = 'http://256.0.0.1/broken'`);
+    assert.equal((await B.post('/encourage', { recipientId: a.id, reaction: 'keep_going' })).status, 201, 'a broken push setup never blocks the action');
+  } finally {
+    await srv.db.query(`DELETE FROM push_config`);
+    server.close();
+  }
+});

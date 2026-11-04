@@ -950,6 +950,13 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         const userId = query.get('userId') ?? (await myId());
         return { stats: await rpc('progress_stats', { p_user: userId }) };
       }
+      case 'POST /push/subscribe':
+        if (!body?.endpoint || !body?.p256dh || !body?.auth) throw new ApiError(400, 'BAD_REQUEST', 'That notification subscription isn’t valid.');
+        await rpc('save_push_subscription', { p_endpoint: body.endpoint, p_p256dh: body.p256dh, p_auth: body.auth });
+        return { ok: true };
+      case 'POST /push/unsubscribe':
+        await rpc('delete_push_subscription', { p_endpoint: String(body?.endpoint ?? '') });
+        return { ok: true };
       case 'POST /together/join': {
         const input = parse(v.joinStudySchema, body);
         return { session: await rpc('join_study', { p_friend: input.friendId, p_topic: input.topicId, p_target: input.targetMinutes ?? null }) };
