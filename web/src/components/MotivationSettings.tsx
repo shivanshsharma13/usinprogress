@@ -1,9 +1,11 @@
 // Settings → Motivation & focus. Every extra is optional and off until you switch it on here.
+import { useEffect, useState } from 'react';
 import type { PrefKey } from '@shared/types';
 import { setFocusSettings, useFocusSettings } from '../lib/focusSettings';
 import { installApp, useInstallState } from '../lib/install';
 import { setWorkerFastStart } from '../lib/notifications';
 import { usePref } from '../lib/prefs';
+import { disablePush, enablePush, pushConfigured, pushOnHere, pushSupported } from '../lib/push';
 import { toast } from '../lib/toast';
 import { Switch } from './ui';
 import { FocusSettingsCard } from './FocusSettingsCard';
@@ -33,6 +35,7 @@ export function MotivationSettings() {
           On Sunday (and Monday, looking back), a card sums up both your weeks: hours, best day, topics finished and trees planted.
         </PrefSwitch>
       </div>
+      <PushCard />
       <FocusSettingsCard />
       <InstallCard />
     </div>
@@ -45,6 +48,66 @@ function PrefSwitch({ k, label, children }: { k: PrefKey; label: string; childre
     <div className="stack" style={{ gap: 6 }}>
       <Switch checked={on} onChange={set} label={label} />
       <p className="tiny muted">{children}</p>
+    </div>
+  );
+}
+
+function PushCard() {
+  const [here, setHere] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const install = useInstallState();
+  useEffect(() => {
+    void pushOnHere().then(setHere);
+  }, []);
+  const toggle = async (on: boolean) => {
+    setBusy(true);
+    try {
+      if (!on) {
+        await disablePush();
+        setHere(false);
+        return;
+      }
+      const result = await enablePush();
+      setHere(result === 'on');
+      if (result === 'denied') toast('Notifications are blocked for this site. Allow them in your browser’s site settings, then try again.', 'error', 7000);
+      if (result === 'on') toast('Notifications are on for this device 🔔', 'success');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Couldn’t turn on notifications.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card stack">
+      <div>
+        <h2>Phone notifications</h2>
+        <p className="tiny muted">News from your friend, even when the app is closed. Choose what you hear about; it applies to every device you turn on.</p>
+      </div>
+      {!pushConfigured() ? (
+        <p className="small muted">Not set up on this site yet.</p>
+      ) : !pushSupported() ? (
+        <p className="small muted">
+          {install === 'ios'
+            ? 'On iPhone, add the app to your Home Screen first (see “App on your phone” below), then open it from there and turn this on.'
+            : 'This browser can’t receive notifications.'}
+        </p>
+      ) : (
+        <Switch checked={Boolean(here)} onChange={(on) => !busy && void toggle(on)} label="Notifications on this device" />
+      )}
+      {pushConfigured() && (
+        <>
+          <PrefSwitch k="pushEncourage" label="Encouragement">
+            When your friend sends a reaction or a note, or joins you to study together.
+          </PrefSwitch>
+          <PrefSwitch k="pushStudying" label="Your friend starts studying">
+            A nudge to join them. Not while you're studying yourself, and only if they share their live status.
+          </PrefSwitch>
+          <PrefSwitch k="pushDayDone" label="Your friend finishes today's plan">
+            When everything they planned for the day is done.
+          </PrefSwitch>
+        </>
+      )}
     </div>
   );
 }

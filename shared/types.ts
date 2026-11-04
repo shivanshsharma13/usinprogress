@@ -324,7 +324,7 @@ export interface Task {
 
 export interface Activity {
   id: string;
-  type: 'reaction' | 'message' | 'topic_completed' | 'room_created' | 'friend_accepted' | 'topic_added' | 'challenge_set' | 'challenge_won' | 'together_joined';
+  type: 'reaction' | 'message' | 'topic_completed' | 'room_created' | 'friend_accepted' | 'topic_added' | 'challenge_set' | 'challenge_won' | 'together_joined' | 'day_finished';
   actor: PublicUser;
   recipientId: string | null;
   roomId: string | null;

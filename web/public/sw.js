@@ -178,7 +178,24 @@ self.addEventListener('notificationclick', (event) => {
   const n = event.notification;
   n.close();
   if (n.tag === TAG && (event.action === 'pause' || event.action === 'resume')) event.waitUntil(pauseOrResume(event.action, n.data));
-  else event.waitUntil(openApp(n.tag === TAG ? 'study' : ''));
+  else event.waitUntil(openApp(n.tag === TAG ? 'study' : (n.data?.path ?? '')));
+});
+
+// ───────────── news from your friend (phone notifications) ─────────────
+
+self.addEventListener('push', (event) => {
+  let m = {};
+  try {
+    m = event.data ? event.data.json() : {};
+  } catch {}
+  event.waitUntil(
+    self.registration.showNotification(m.title || 'Us in Progress', {
+      body: m.body || '',
+      icon: `${scope}icon-192.png`,
+      tag: m.tag || 'friend',
+      data: { path: m.path || '' },
+    }),
+  );
 });
 
 self.addEventListener('message', (event) => {
