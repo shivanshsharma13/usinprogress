@@ -265,8 +265,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   }
 
   async function roomDetail(roomId: string): Promise<RoomDetail> {
-    const { values, error } = await together([roomsData(roomId), myId().then((id) => listActivity(id, { roomId, limit: 15 })), sharedSprints(roomId), rpc<Row[]>('room_forest', { p_room: roomId })] as const);
-    const [data, activity, sprints, forest] = values as unknown as [Awaited<ReturnType<typeof roomsData>> | undefined, Activity[], RoomSprint[], Row[]];
+    const { values, error } = await together([roomsData(roomId), myId().then((id) => listActivity(id, { roomId, limit: 15 })), sharedSprints(roomId), rpc<Row[]>('room_forest', { p_room: roomId }), rpc<number>('room_blooms', { p_room: roomId })] as const);
+    const [data, activity, sprints, forest, blooms] = values as unknown as [Awaited<ReturnType<typeof roomsData>> | undefined, Activity[], RoomSprint[], Row[], number];
     if (data && !data.summaries.length) throw notFound('That room could not be found.');
     if (error) throw error;
     const { summaries, topics } = data!;
@@ -277,6 +277,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       activity,
       sprints,
       forest: Object.fromEntries(forest.map((f) => [f.user_id, f.full_days])),
+      blooms: blooms ?? 0,
     };
   }
 
@@ -949,6 +950,15 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         const userId = query.get('userId') ?? (await myId());
         return { stats: await rpc('progress_stats', { p_user: userId }) };
       }
+      case 'GET /challenge':
+        return rpc('current_challenge', { p_friend: query.get('friendId'), p_week: query.get('week') });
+      case 'POST /challenge': {
+        const input = parse(v.challengeSchema, body);
+        return { id: await rpc('set_challenge', { p_friend: input.friendId, p_week: input.week, p_kind: input.kind, p_target: input.target }) };
+      }
+      case 'POST /challenge/:id/cancel':
+        await rpc('cancel_challenge', { p_id: p[0] });
+        return { ok: true };
       case 'GET /recap':
         return { people: (await rpc('week_recap', { p_from: query.get('from'), p_to: query.get('to') })) ?? [] };
       case 'GET /revisions':

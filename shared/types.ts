@@ -37,6 +37,17 @@ export interface WeekRecap {
   trees: number;
 }
 
+/** This week's challenge between you and a friend. Progress is focused ms ('hours') or full days ('days'). */
+export interface Challenge {
+  id: string;
+  weekStart: string;
+  kind: 'hours' | 'days';
+  target: number;
+  createdBy: string;
+  wonAt: number | null;
+  progress: Record<string, number>;
+}
+
 export interface Me extends PublicUser {
   colorScheme: 'light' | 'dark';
   timezone: string;
@@ -155,6 +166,7 @@ export interface RoomDetail extends RoomSummary {
   activity: Activity[];
   sprints: RoomSprint[]; // both members' sprints pulled into this room
   forest: Record<string, number>; // per member: days they finished everything planned in this room
+  blooms: number; // weekly challenges the two members won together (golden sunflowers)
 }
 
 export interface TopicHistoryEntry {
@@ -298,7 +310,7 @@ export interface Task {
 
 export interface Activity {
   id: string;
-  type: 'reaction' | 'message' | 'topic_completed' | 'room_created' | 'friend_accepted' | 'topic_added';
+  type: 'reaction' | 'message' | 'topic_completed' | 'room_created' | 'friend_accepted' | 'topic_added' | 'challenge_set' | 'challenge_won';
   actor: PublicUser;
   recipientId: string | null;
   roomId: string | null;

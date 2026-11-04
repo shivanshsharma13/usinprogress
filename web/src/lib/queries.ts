@@ -12,6 +12,7 @@ import type {
   Me,
   ProgressStats,
   RevisionDue,
+  Challenge,
   WeekRecap,
   HoursReport,
   CalendarPlanItem,
@@ -72,6 +73,13 @@ export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: asy
 export const useActivity = () => useQuery({ queryKey: ['activity'], queryFn: () => api.get<{ activity: Activity[]; unread: number }>('/activity') });
 export const useProgress = (userId?: string) =>
   useQuery({ queryKey: ['progress', userId ?? 'me'], queryFn: async () => (await api.get<{ stats: ProgressStats }>(`/progress${userId ? `?userId=${userId}` : ''}`)).stats });
+export const useChallenge = (enabled: boolean, friendId: string | undefined, week: string) =>
+  useQuery({
+    queryKey: ['challenge', friendId, week],
+    enabled: enabled && Boolean(friendId),
+    staleTime: 0,
+    queryFn: () => api.get<{ challenge: Challenge | null; wins: number }>(`/challenge?friendId=${friendId}&week=${week}`),
+  });
 export const useWeekRecap = (enabled: boolean, from: string, to: string) =>
   useQuery({ queryKey: ['recap', from, to], enabled, staleTime: 60_000, queryFn: async () => (await api.get<{ people: WeekRecap[] }>(`/recap?from=${from}&to=${to}`)).people });
 // Fetched fresh on each visit: your own completions don't come back through Realtime.

@@ -27,6 +27,7 @@ const TABLE_KEYS: Record<string, string[]> = {
   plan_tasks: ['plans', 'plan', 'room', 'rooms', 'home', 'tasks'],
   tasks: ['tasks', 'home'],
   activities: ['activity', 'friend', 'home', 'room'],
+  challenges: ['challenge', 'room'],
 };
 
 export type ConnectionState = 'connecting' | 'online' | 'offline';

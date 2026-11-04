@@ -193,8 +193,11 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
               {trees} {trees === 1 ? 'tree' : 'trees'}
             </span>
           </div>
-          <Forest count={trees} color="var(--c)" />
-          <span className="tiny muted">{trees ? 'One tree for every day everything planned was finished.' : 'Finish everything planned for a day to plant the first tree.'}</span>
+          <Forest count={trees} color="var(--c)" blooms={room.blooms} />
+          <span className="tiny muted">
+            {trees ? 'One tree for every day everything planned was finished.' : 'Finish everything planned for a day to plant the first tree.'}
+            {room.blooms > 0 && ` 🌻 ${room.blooms === 1 ? 'A sunflower' : `${room.blooms} sunflowers`} for weekly challenges you won together.`}
+          </span>
         </div>
       )}
 

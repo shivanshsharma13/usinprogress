@@ -22,6 +22,9 @@ export function MotivationSettings() {
         <PrefSwitch k="streaks" label="Streaks">
           Counts days in a row you study at least 5 minutes, for you and your friend, on Home.
         </PrefSwitch>
+        <PrefSwitch k="challenge" label="Weekly challenge">
+          Set a goal with your friend for the week, like 10 hours each. Win it together and a golden sunflower blooms in your shared forest.
+        </PrefSwitch>
         <PrefSwitch k="recap" label="Sunday recap">
           On Sunday (and Monday, looking back), a card sums up both your weeks: hours, best day, topics finished and trees planted.
         </PrefSwitch>

@@ -67,6 +67,13 @@ export const profileUpdateSchema = z.object({
   prefs: z.record(z.string().regex(/^[a-zA-Z]{1,40}$/), z.boolean()).optional(),
 });
 
+export const challengeSchema = z.object({
+  friendId: z.string().min(1),
+  week: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  kind: z.enum(['hours', 'days']),
+  target: z.number().int().min(1).max(100),
+});
+
 export const roomCreateSchema = z
   .object({
     friendId: z.string().min(1),
