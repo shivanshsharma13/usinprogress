@@ -551,3 +551,8 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 /* A ⋯ menu sitting on top of a card that is itself a link. */
 .has-card-menu { position: relative; }
 .card-menu { position: absolute; top: 12px; right: 12px; }
+
+/* ── Revision reminders ── */
+.revisions-card { border-left: 4px solid var(--me); }
+.revision-row { display: flex; align-items: center; gap: 10px; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

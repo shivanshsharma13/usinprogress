@@ -16,6 +16,17 @@ export interface PublicUser {
 export type PrefKey = string;
 export type Prefs = Partial<Record<PrefKey, boolean>>;
 
+/** A topic due for revision (1, 3, 7 and 21 days after you first finished it). */
+export interface RevisionDue {
+  topicId: string;
+  title: string;
+  roomId: string;
+  roomName: string;
+  step: number; // 1–4
+  dueDate: string;
+  firstDoneDate: string;
+}
+
 export interface Me extends PublicUser {
   colorScheme: 'light' | 'dark';
   timezone: string;

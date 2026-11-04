@@ -9,6 +9,7 @@ import { EncourageButtons } from '../components/Encourage';
 import { PlanLine } from '../components/PlanBits';
 import { Buddy } from '../components/Buddy';
 import { Plant } from '../components/Plant';
+import { RevisionsDue } from '../components/Revisions';
 import { CheckIcon, PlayIcon } from '../components/icons';
 
 function greeting() {
@@ -116,6 +117,8 @@ export function HomePage() {
               </Empty>
             </div>
           )}
+
+          <RevisionsDue />
 
           {/* 6. Today */}
           <div className="card">
