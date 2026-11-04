@@ -448,13 +448,37 @@ details > summary::-webkit-details-marker { display: none; }
 details.rest > summary { display: flex; align-items: center; gap: 6px; }
 details.rest > summary::after { content: '▾'; margin-left: auto; color: var(--text-2); transition: transform .2s; }
 details.rest[open] > summary::after { transform: rotate(180deg); }
-.tree-sway { transform-origin: 100px 168px; transform-box: view-box; animation: tree-sway 7s ease-in-out infinite; }
-@keyframes tree-sway { 0%, 100% { rotate: -1deg; } 50% { rotate: 1.4deg; } }
+/* Today's plant: sways, leaves flutter, eyes blink; sleepy z's and happy hearts float up. */
+.plant-sway { transform-origin: 100px 132px; transform-box: view-box; animation: plant-sway 6s ease-in-out infinite; }
+@keyframes plant-sway { 0%, 100% { rotate: -2deg; } 50% { rotate: 2deg; } }
+.leaf-flutter { animation: leaf-flutter 3.2s ease-in-out infinite; }
+@keyframes leaf-flutter { 0%, 100% { rotate: -5deg; } 50% { rotate: 6deg; } }
+.blink { transform-box: fill-box; transform-origin: center; animation: blink 5s infinite; }
+@keyframes blink { 0%, 93%, 100% { scale: 1 1; } 96% { scale: 1 .1; } }
+.float-up { animation: float-up 3s ease-in-out infinite; }
+@keyframes float-up { 0% { translate: 0 0; opacity: 0; } 20% { opacity: 1; } 100% { translate: 0 -30px; opacity: 0; } }
+.flower-pop { transform-box: fill-box; transform-origin: center; animation: flower-pop .9s cubic-bezier(.3,1.6,.5,1) both; }
+@keyframes flower-pop { from { scale: 0; } to { scale: 1; } }
 .twinkle path { transform-box: fill-box; transform-origin: center; animation: twinkle 2.4s ease-in-out infinite; }
 .twinkle path:nth-child(2) { animation-delay: .8s; }
 .twinkle path:nth-child(3) { animation-delay: 1.6s; }
 @keyframes twinkle { 0%, 100% { opacity: .3; scale: .7; } 50% { opacity: 1; scale: 1.1; } }
-@media (prefers-reduced-motion: reduce) { .tree-sway, .twinkle path { animation: none; } }
+
+/* Forest: trees sway out of step, clouds drift, birds fly over, the newest tree sparkles. */
+.forest-sway { transform-box: fill-box; transform-origin: 50% 100%; animation: forest-sway 5s ease-in-out infinite; }
+@keyframes forest-sway { 0%, 100% { rotate: -2.5deg; } 50% { rotate: 2.5deg; } }
+.cloud { animation: cloud-drift 70s linear infinite; }
+.cloud.slow { animation-duration: 110s; }
+@keyframes cloud-drift { from { translate: -40px 0; } to { translate: 360px 0; } }
+.bird { animation: bird-fly 24s linear infinite; }
+@keyframes bird-fly { 0% { translate: -20px 6px; } 50% { translate: 150px -4px; } 100% { translate: 340px 4px; } }
+.bird .wing { transform-box: fill-box; transform-origin: center; animation: flap .45s ease-in-out infinite alternate; }
+@keyframes flap { from { scale: 1 1; } to { scale: 1 .35; } }
+.twinkle-one { transform-box: fill-box; transform-origin: center; animation: twinkle 2.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .plant-sway, .leaf-flutter, .blink, .float-up, .flower-pop, .twinkle path, .forest-sway, .cloud, .bird, .bird .wing, .twinkle-one { animation: none; }
+}
 
 /* Progress → Hours. Chart marks use the validated --c-chart shade; the friend's marks are striped. */
 .hours-summary { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 12px; background: var(--c-soft); }
