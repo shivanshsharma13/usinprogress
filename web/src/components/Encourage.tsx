@@ -52,6 +52,10 @@ function describe(a: Activity, meId: string): string {
       return `${who} planted a new room: ${a.roomName}`;
     case 'friend_accepted':
       return `${who} ${a.actor.id === meId ? 'became friends 🌱' : 'accepted your friend request 🌱'}`;
+    case 'challenge_set':
+      return `${who} set a challenge for the week: ${a.message} 🎯`;
+    case 'challenge_won':
+      return `You two won the weekly challenge (${a.message}) — a golden sunflower blooms 🌻`;
     default:
       return `${who} did something nice`;
   }

@@ -163,7 +163,10 @@ function seeded(n: number) {
 const MAX_TREES = 48;
 
 /** One tree per finished day, gently moving, under drifting clouds. */
-export function Forest({ count, color = 'var(--c)' }: { count: number; color?: string }) {
+const MAX_BLOOMS = 12;
+const PETALS = Array.from({ length: 10 }, (_, i) => i * 36);
+
+export function Forest({ count, color = 'var(--c)', blooms = 0 }: { count: number; color?: string; blooms?: number }) {
   const id = useId().replace(/:/g, '');
   const shown = Math.min(count, MAX_TREES);
   const trees = Array.from({ length: shown }, (_, i) => {
@@ -172,8 +175,12 @@ export function Forest({ count, color = 'var(--c)' }: { count: number; color?: s
     return { i, kind, row, x: 16 + seeded(i + 3) * 288, y: 78 + row * 9, s: 0.95 + row * 0.18 + seeded(i + 5) * 0.15, delay: -seeded(i + 11) * 5, newest: i === shown - 1 };
   }).sort((a, b) => a.y - b.y);
 
+  // Weekly challenges won together: golden sunflowers along the front.
+  const flowers = Array.from({ length: Math.min(blooms, MAX_BLOOMS) }, (_, i) => ({ i, x: 14 + ((i * 97 + seeded(i + 21) * 40) % 292), y: 104 + seeded(i + 23) * 4, delay: -seeded(i + 29) * 4 }));
+  const label = `${count} ${count === 1 ? 'tree' : 'trees'} in the forest${blooms ? `, and ${blooms} golden ${blooms === 1 ? 'sunflower' : 'sunflowers'} from weekly challenges won together` : ''}`;
+
   return (
-    <svg viewBox="0 0 320 112" width="100%" role="img" aria-label={`${count} ${count === 1 ? 'tree' : 'trees'} in the forest`} style={{ display: 'block', overflow: 'hidden' }}>
+    <svg viewBox="0 0 320 112" width="100%" role="img" aria-label={label} style={{ display: 'block', overflow: 'hidden' }}>
       <defs>
         <linearGradient id={`${id}sky`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#CFE7F7" />
@@ -238,6 +245,24 @@ export function Forest({ count, color = 'var(--c)' }: { count: number; color?: s
             )}
           </g>
           {t.newest && <path className="twinkle-one" d="M12 -34l1.2-3.4 1.2 3.4 3.4 1.2-3.4 1.2-1.2 3.4-1.2-3.4-3.4-1.2Z" fill="#F6D57A" />}
+        </g>
+      ))}
+      {flowers.map((f) => (
+        <g key={`f${f.i}`} transform={`translate(${f.x} ${f.y})`}>
+          <g className="forest-sway" style={{ animationDelay: `${f.delay}s` }}>
+            <path d="M0 0V-20" stroke="#5E9A66" strokeWidth="1.6" strokeLinecap="round" />
+            <path d="M0 -8c-4-1-7-4-7-7 3 0 6 2 7 7Z" fill="#6AA971" />
+            <path d="M0 -12c4-1 6-3 6-6-3 0-5 2-6 6Z" fill="#6AA971" />
+            <g transform="translate(0 -24)">
+              {PETALS.map((a) => (
+                <ellipse key={a} cx="0" cy="-5.2" rx="1.9" ry="3.4" fill="#F6C945" transform={`rotate(${a})`} />
+              ))}
+              <circle r="3.6" fill="#8A5A33" />
+              <circle cx="-1.2" cy="-0.6" r=".55" fill="#FFF3D6" />
+              <circle cx="1.2" cy="-0.6" r=".55" fill="#FFF3D6" />
+              <path d="M-1 1q1 .9 2 0" stroke="#FFF3D6" strokeWidth=".55" fill="none" strokeLinecap="round" />
+            </g>
+          </g>
         </g>
       ))}
       {count > MAX_TREES && (

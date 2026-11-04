@@ -2,7 +2,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { Client, closeClients, emailFor, signUp, sleep, startServer, type TestServer } from './helpers.ts';
-import { addDays } from '../shared/dates.ts';
+import { addDays, startOfWeek } from '../shared/dates.ts';
 
 let srv: TestServer;
 let A: Client; // engineer
@@ -739,4 +739,35 @@ test('streaks count days in a row with 5+ minutes; the recap covers you and your
   assert.ok(recap.body.people.some((p: any) => p.userId === a.id), 'your friend is included');
   assert.equal((await C.get(`/recap?from=${from}&to=${today}`)).body.people.some((p: any) => p.userId === b.id), false, 'strangers are not');
   assert.equal((await B.get(`/recap?from=2020-01-01&to=${today}`)).status, 400);
+});
+
+test('a weekly challenge is won when both reach the target, and plants a sunflower in shared rooms', async () => {
+  const week = startOfWeek(today);
+  assert.equal((await C.post('/challenge', { friendId: a.id, week, kind: 'hours', target: 2 })).status, 404, 'friends only');
+  assert.equal((await A.post('/challenge', { friendId: b.id, week: addDays(week, 21), kind: 'hours', target: 2 })).status, 400, 'this week or next');
+  assert.equal((await A.post('/challenge', { friendId: b.id, week, kind: 'days', target: 9 })).status, 400);
+
+  const set = await A.post('/challenge', { friendId: b.id, week, kind: 'hours', target: 3 });
+  assert.equal(set.status, 200);
+  const changed = await B.post('/challenge', { friendId: a.id, week, kind: 'hours', target: 2 });
+  const status = (who: Client, friend: string) => who.get(`/challenge?friendId=${friend}&week=${week}`);
+  const seen = (await status(A, b.id)).body;
+  assert.equal(seen.challenge.id, changed.body.id, 'changing replaces the old one');
+  assert.equal(seen.challenge.target, 2);
+  assert.equal(seen.challenge.wonAt, null);
+
+  for (const [user, room, topic] of [[a.id, roomId, topics[0]], [b.id, room2Id, bTopics[0]]])
+    await srv.db.query(
+      `INSERT INTO study_sessions (user_id, room_id, topic_id, state, started_at, ended_at, focused_ms, measured_ms, local_date, created_at)
+       VALUES (?, ?, ?, 'finished', ?, ?, ?, ?, ?, ?)`,
+      [user, room, topic, Date.now(), Date.now(), 2.5 * 3600000, 2.5 * 3600000, today, Date.now()],
+    );
+  const won = (await status(B, a.id)).body;
+  assert.ok(won.challenge.wonAt, 'both reached two hours');
+  assert.equal(won.wins, 1);
+  assert.equal((await A.get(`/rooms/${roomId}`)).body.blooms, 1, 'a sunflower in the shared room');
+  assert.ok((await A.get('/activity')).body.activity.some((x: any) => x.type === 'challenge_won'));
+  assert.equal((await A.post('/challenge', { friendId: b.id, week, kind: 'hours', target: 5 })).status, 409, 'a won week stays won');
+  assert.equal((await A.post(`/challenge/${won.challenge.id}/cancel`)).status, 409);
+  assert.equal((await C.get(`/challenge?friendId=${a.id}&week=${week}`)).status, 404);
 });

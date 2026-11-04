@@ -575,3 +575,7 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .recap-stats div { display: flex; flex-direction: column; }
 .recap-stats dt { font-size: 0.75rem; color: var(--text-2); }
 .recap-stats dd { margin: 0; font-weight: 800; }
+
+/* ── Weekly challenge ── */
+.challenge-card { border-top: 4px solid #F6C945; }
+.chip.sunflower { background: #FDF1C7; color: #6B4A16; font-weight: 800; }
