@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { daysBetween, formatDate } from '@shared/dates';
@@ -6,6 +7,9 @@ import { formatMinutes } from '@shared/timer';
 import type { MemberProgress, PlanDay, RoomDetail, RoomSprint, Topic, TopicMemberProgress } from '@shared/types';
 import { useAction, useMe, useRoom, useTopicHistory } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
+import { celebrate, plantGrowth } from '../lib/celebrate';
+import { getFocusSettings } from '../lib/focusSettings';
+import { toast } from '../lib/toast';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
@@ -365,13 +369,22 @@ function statusText(p: TopicMemberProgress | undefined) {
 /** `planned` rows come from a goal's sprint: they're edited on the goal page, not here. */
 function TopicRow({ topic: t, index, siblings, ownerId, isMe, active, planned }: { topic: Topic; index: number; siblings: Topic[]; planned?: boolean } & RowContext) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { data: me } = useMe();
   const [editing, setEditing] = useState(false);
   const [history, setHistory] = useState(false);
   const p = t.progress[ownerId];
   const done = p?.status === 'completed';
 
   const inv = [['room', t.roomId], ['rooms'], ['plan'], ['plans'], ['progress'], ['session']];
-  const complete = useAction(() => api.post(`/topics/${t.id}/complete`), { invalidate: inv, success: 'Topic complete 🌼' });
+  const complete = useAction(() => api.post(`/topics/${t.id}/complete`), {
+    invalidate: inv,
+    onSuccess: () => {
+      const room = qc.getQueryData<RoomDetail>(['room', t.roomId]);
+      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, t.id) });
+      else toast('Topic complete 🌼', 'success');
+    },
+  });
   const reopen = useAction((mode: 'revise' | 'undo') => api.post(`/topics/${t.id}/reopen`, { mode }), { invalidate: inv });
   const archive = useAction(() => api.del(`/topics/${t.id}`), { invalidate: inv, success: 'Topic archived — its history is kept' });
   const reorder = useAction((topicIds: string[]) => api.put(`/rooms/${t.roomId}/topics/order`, { topicIds }), { invalidate: inv });

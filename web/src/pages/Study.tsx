@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { focusedMs, formatClock, formatCountdown, formatMinutes } from '@shared/timer';
-import type { ActiveSession, SessionRecord, Topic } from '@shared/types';
+import type { ActiveSession, RoomDetail, SessionRecord, Topic } from '@shared/types';
 import { useAction, useActiveSession, useFriends, useMe, useRoom, useRooms } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { toast } from '../lib/toast';
@@ -13,6 +13,8 @@ import { Empty, ErrorNote, Field, fmt, Modal, Spinner, Switch, useNow } from '..
 import { Plant } from '../components/Plant';
 import { CheckIcon, ChevronLeft, NextIcon, PauseIcon, PlayIcon, StopIcon } from '../components/icons';
 import { TogetherPanel } from '../components/Together';
+import { TodayPlant } from '../components/Garden';
+import { celebrate, plantGrowth } from '../lib/celebrate';
 import { usePref } from '../lib/prefs';
 
 interface FinishResult {
@@ -22,7 +24,7 @@ interface FinishResult {
   roomId: string;
 }
 
-type Outcome = { kind: 'completed' | 'finished'; topicTitle: string; focusedMs: number | null; result: FinishResult };
+type Outcome = { kind: 'completed' | 'finished'; topicTitle: string; focusedMs: number | null; result: FinishResult; plant?: { percent: number; caption: string } };
 
 export function StudyPage() {
   const [params, setParams] = useSearchParams();
@@ -53,6 +55,7 @@ export function StudyPage() {
 function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSession; requestedTopic: string | null; onOutcome: (o: Outcome) => void }) {
   const qc = useQueryClient();
   const { data: me } = useMe();
+  useRoom(session.roomId); // the room plant, for the celebration when you complete the topic
   const now = useNow(250);
   const elapsed = focusedMs({ startedAt: session.startedAt, endedAt: null, pauses: session.pauses }, now);
   const [note, setNote] = useState('');
@@ -76,7 +79,15 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
       onSuccess: (r, body) => {
         setLongSession(null);
         qc.setQueryData<any>(['session'], null);
-        onOutcome({ kind: body.completeTopic ? 'completed' : 'finished', topicTitle: session.topicTitle, focusedMs: r.session?.focusedMs ?? null, result: r });
+        const plant = body.completeTopic && me ? plantGrowth(qc.getQueryData<RoomDetail>(['room', session.roomId]), me.id, session.topicId) : undefined;
+        if (plant && r.completedTopic) celebrate({ topicTitle: session.topicTitle, roomName: session.roomName, accent: me!.accent, ...plant });
+        onOutcome({
+          kind: body.completeTopic ? 'completed' : 'finished',
+          topicTitle: session.topicTitle,
+          focusedMs: r.session?.focusedMs ?? null,
+          result: r,
+          plant: plant && { percent: plant.after, caption: plant.caption },
+        });
       },
       onError: (e: ApiError, body) => {
         if (e.code === 'LONG_SESSION') {
@@ -560,14 +571,20 @@ function OutcomeCard({ outcome, onStartNext }: { outcome: Outcome; onStartNext: 
     onSuccess: (r) => qc.setQueryData<any>(['session'], r.session),
   });
   return (
-    <div className="card tint stack" style={me ? personVars(me.accent) : undefined} role="status">
+    <div className="card tint stack outcome-card" style={me ? personVars(me.accent) : undefined} role="status">
       <div className="row">
-        <Plant percent={outcome.kind === 'completed' ? 100 : 50} size={56} color="var(--c)" />
+        {outcome.plant ? (
+          <span className="outcome-plant">
+            <TodayPlant percent={outcome.plant.percent} size={96} color="var(--c)" />
+          </span>
+        ) : (
+          <Plant percent={outcome.kind === 'completed' ? 100 : 50} size={56} color="var(--c)" />
+        )}
         <div className="grow">
           <h2>{outcome.kind === 'completed' ? `🌼 “${outcome.topicTitle}” complete` : 'Session saved'}</h2>
           <p className="small muted">
             {outcome.focusedMs != null ? `${fmt(outcome.focusedMs)} focused this session. ` : ''}
-            {outcome.kind === 'completed' ? 'Your room and goals are updated.' : 'The topic stays open for next time.'}
+            {outcome.kind === 'completed' ? (outcome.plant?.caption ?? 'Your room and goals are updated.') : 'The topic stays open for next time.'}
           </p>
         </div>
       </div>

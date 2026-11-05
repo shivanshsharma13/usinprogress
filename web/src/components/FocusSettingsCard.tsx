@@ -23,6 +23,10 @@ export function FocusSettingsCard() {
         <h2>Focus</h2>
         <p className="tiny muted">Saved on this device only. Optional; the timer works the same with it off.</p>
       </div>
+      <div className="stack" style={{ gap: 6 }}>
+        <Switch checked={settings.celebrate} onChange={(on) => setFocusSettings({ celebrate: on })} label="“Yay!” screen when you complete a topic" />
+        <p className="tiny muted">A watering can waters your room plant and it grows, then the screen slides away to what's next.</p>
+      </div>
       {perm === 'unsupported' ? (
         <p className="tiny muted">This browser can't show timer notifications (for example Safari on iPhone).</p>
       ) : (

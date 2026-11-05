@@ -595,3 +595,52 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
   .together-nudge { animation: nudge-in 0.35s ease-out; }
 }
 @keyframes nudge-in { from { opacity: 0; translate: -50% 12px; } }
+
+/* ── "Yay!" after completing a topic (components/Celebration.tsx) ── */
+.celebrate {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: hidden; cursor: pointer;
+  background: radial-gradient(circle at 50% 46%, var(--c-soft), var(--bg, var(--surface)) 72%);
+  transition: translate 0.6s cubic-bezier(0.7, 0, 0.3, 1), opacity 0.6s ease;
+  animation: celebrate-in 0.3s ease-out;
+}
+.celebrate.leaving { translate: 0 -100%; }
+.celebrate.calm, .celebrate.calm * { animation: none !important; }
+.celebrate.calm.leaving { translate: none; opacity: 0; }
+.celebrate-body { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 16px; }
+.yay { font-size: clamp(3rem, 14vw, 5rem); line-height: 1; color: var(--c); animation: yay-pop 0.7s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
+.celebrate-topic { font-weight: 700; max-width: 32ch; }
+.celebrate-stage { position: relative; width: 260px; height: 240px; display: grid; place-items: center; margin-top: 4px; }
+
+.watering { position: absolute; left: 6px; top: -6px; width: 120px; height: 80px; transform-origin: 30% 80%; animation: can-pour 1.9s ease-in-out both; pointer-events: none; }
+.watering .drops { position: absolute; left: 112px; top: 68px; }
+.watering .drops i { position: absolute; width: 5px; height: 9px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; background: #7DB4F0; opacity: 0; animation: drop-fall 0.45s ease-in 3; }
+
+.confetti i { position: absolute; top: -12px; width: 8px; height: 12px; border-radius: 2px; opacity: 0; animation: confetti-fall 2.4s ease-in 0.2s both; }
+.confetti .c0 { background: var(--c); }
+.confetti .c1 { background: #F6C945; }
+.confetti .c2 { background: #8DC487; }
+.confetti .c3 { background: #F49BB0; }
+
+@keyframes celebrate-in { from { opacity: 0; } }
+@keyframes yay-pop { from { scale: 0.3; opacity: 0; } }
+@keyframes can-pour {
+  0% { opacity: 0; translate: -30px -14px; rotate: 0deg; }
+  16% { opacity: 1; translate: 0 0; rotate: 0deg; }
+  30%, 72% { opacity: 1; translate: 0 0; rotate: 34deg; }
+  100% { opacity: 0; translate: -24px -12px; rotate: 0deg; }
+}
+@keyframes drop-fall {
+  0% { opacity: 0; translate: 0 0; }
+  20% { opacity: 1; }
+  100% { opacity: 0; translate: 6px 70px; }
+}
+@keyframes confetti-fall {
+  0% { opacity: 1; translate: 0 0; }
+  100% { opacity: 0.2; translate: 20px 105vh; rotate: 540deg; }
+}
+
+/* The next-topic card after a completion rises into place as the celebration slides away. */
+.outcome-card { animation: outcome-rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.outcome-plant { flex-shrink: 0; margin: -10px -6px -14px -10px; }
+@keyframes outcome-rise { from { opacity: 0; translate: 0 40px; } }
+@media (prefers-reduced-motion: reduce) { .outcome-card { animation: none; } }
