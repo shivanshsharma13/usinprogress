@@ -299,12 +299,19 @@ textarea.input { min-height: 80px; resize: vertical; }
 .is-paused .timer-face { opacity: 0.55; animation: soft-blink 2.8s ease-in-out infinite; }
 .is-reached .ring-progress { stroke: var(--leaf); }
 /* Long session → a list of tasks, each with its minutes */
-.split-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.split-row { display: flex; align-items: flex-start; gap: 8px; }
-.split-task { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.split-minutes { display: flex; align-items: center; gap: 4px; flex: none; }
-.split-minutes .input { width: 76px; text-align: right; }
-.split-row .btn.icon { margin-top: 4px; }
+.split-total { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.split-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; }
+.split-row { display: flex; align-items: center; gap: 8px; padding: 10px 8px 10px 12px; min-height: 56px; }
+.split-row + .split-row { border-top: 1px solid var(--border); }
+.split-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.split-name b { font-weight: 600; font-size: 0.95rem; }
+.split-rest { padding-right: 44px; font-weight: 600; }
+.stepper { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.stepper .num { min-width: 58px; text-align: center; font-weight: 600; }
+.stepper .btn.icon { width: 34px; height: 34px; min-height: 34px; padding: 0; font-size: 1.1rem; border-radius: 50%; }
+.stepper.big .num { min-width: 76px; font-size: 1.15rem; }
+.stepper.big .btn.icon { width: 40px; height: 40px; min-height: 40px; }
+.task-picker { padding: 10px; border: 1px dashed var(--border); border-radius: 14px; }
 .danger-text { color: var(--danger); }
 .length-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .length-chips .chip-btn { min-height: 36px; padding: 6px 14px; }
