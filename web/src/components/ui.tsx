@@ -87,8 +87,12 @@ export function Empty({ title, children, action, art }: { title: string; childre
 
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Callers often pass a new onClose on every render (the timer re-renders 4x a second). Read it from a ref so
+  // the setup below runs once: re-running it moved focus off whatever you were typing in and closed the phone keyboard.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
     document.addEventListener('keydown', onKey);
     const first = ref.current?.querySelector<HTMLElement>('input, select, textarea, button:not(.modal-close)');
     first?.focus();
@@ -98,7 +102,7 @@ export function Modal({ title, onClose, children, footer, wide }: { title: strin
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prev;
     };
-  }, [onClose]);
+  }, []);
   return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={ref} style={wide ? { width: 'min(720px, 100%)' } : undefined}>

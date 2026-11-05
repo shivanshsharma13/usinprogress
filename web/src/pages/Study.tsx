@@ -11,7 +11,7 @@ import { toast } from '../lib/toast';
 import { personVars } from '../lib/theme';
 import { Empty, ErrorNote, Field, fmt, Modal, Spinner, Switch, useNow } from '../components/ui';
 import { Plant } from '../components/Plant';
-import { CheckIcon, ChevronLeft, NextIcon, PauseIcon, PlayIcon, StopIcon } from '../components/icons';
+import { CheckIcon, ChevronLeft, NextIcon, PauseIcon, PlayIcon, StopIcon, XIcon } from '../components/icons';
 import { TogetherPanel } from '../components/Together';
 import { TodayPlant } from '../components/Garden';
 import { celebrate, plantGrowth } from '../lib/celebrate';
@@ -73,11 +73,15 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
   });
 
   const finish = useAction(
-    (body: { completeTopic?: boolean; confirmLong?: boolean; correctedMinutes?: number }) => api.post<FinishResult>(`/sessions/${session.id}/finish`, { ...body, note: note || undefined }),
+    ({ parts, ...body }: { completeTopic?: boolean; confirmLong?: boolean; correctedMinutes?: number; parts?: SplitPart[] }) =>
+      parts
+        ? api.post<FinishResult>(`/sessions/${session.id}/split`, { parts, completeTopic: body.completeTopic, note: note || undefined })
+        : api.post<FinishResult>(`/sessions/${session.id}/finish`, { ...body, note: note || undefined }),
     {
       invalidate: inv,
       onSuccess: (r, body) => {
         setLongSession(null);
+        if (body.parts && body.parts.length > 1) toast(`Saved as ${body.parts.length} tasks 🌱`);
         qc.setQueryData<any>(['session'], null);
         const plant = body.completeTopic && me ? plantGrowth(qc.getQueryData<RoomDetail>(['room', session.roomId]), me.id, session.topicId) : undefined;
         if (plant && r.completedTopic) celebrate({ topicTitle: session.topicTitle, roomName: session.roomName, accent: me!.accent, ...plant });
@@ -258,10 +262,12 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
       {longSession && (
         <LongSessionDialog
           measuredMs={longSession.measuredMs}
+          session={session}
+          topics={(qc.getQueryData<RoomDetail>(['room', session.roomId])?.topics ?? []).filter((t) => t.createdBy === me?.id && t.status === 'active')}
           busy={finish.isPending}
           onCancel={() => setLongSession(null)}
           onConfirm={() => finish.mutate({ completeTopic: longSession.completeTopic, confirmLong: true })}
-          onCorrect={(m) => finish.mutate({ completeTopic: longSession.completeTopic, correctedMinutes: m })}
+          onSplit={(parts) => finish.mutate({ completeTopic: longSession.completeTopic, parts })}
         />
       )}
       {confirmDiscard && (
@@ -312,8 +318,54 @@ function ReminderToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) 
   );
 }
 
-function LongSessionDialog({ measuredMs, busy, onCancel, onConfirm, onCorrect }: { measuredMs: number; busy: boolean; onCancel: () => void; onConfirm: () => void; onCorrect: (m: number) => void }) {
-  const [minutes, setMinutes] = useState(String(Math.min(180, Math.round(measuredMs / 60_000))));
+type SplitPart = { topicId: string; minutes: number } | { title: string; minutes: number };
+type SplitRow = { key: number; topicId: string; title: string; minutes: string };
+const NEW = 'new';
+
+/**
+ * Over 4 hours: count it all, or say what you actually did — a list of tasks, each with its own minutes.
+ * The session's topic comes first; add other topics from this room or a new task by name.
+ */
+function LongSessionDialog({
+  measuredMs,
+  session,
+  topics,
+  busy,
+  onCancel,
+  onConfirm,
+  onSplit,
+}: {
+  measuredMs: number;
+  session: ActiveSession;
+  topics: Topic[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onSplit: (parts: SplitPart[]) => void;
+}) {
+  const [rows, setRows] = useState<SplitRow[]>([{ key: 0, topicId: session.topicId, title: '', minutes: String(Math.min(180, Math.round(measuredMs / 60_000))) }]);
+  const set = (key: number, patch: Partial<SplitRow>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const totalMs = rows.reduce((n, r) => n + (Number(r.minutes) || 0) * 60_000, 0);
+  const tooMuch = totalMs > measuredMs + 60_000;
+  const unnamed = rows.some((r) => r.topicId === NEW && !r.title.trim());
+  const used = (except: SplitRow) => new Set(rows.filter((r) => r !== except && r.topicId !== NEW).map((r) => r.topicId));
+  const options = (row: SplitRow) => [
+    ...(topics.some((t) => t.id === session.topicId) ? [] : [{ id: session.topicId, title: session.topicTitle }]),
+    ...topics,
+  ].filter((t) => !used(row).has(t.id));
+
+  const add = () => {
+    const free = options({ key: -1, topicId: '', title: '', minutes: '' })[0];
+    setRows((rs) => [...rs, { key: Math.max(...rs.map((r) => r.key)) + 1, topicId: free?.id ?? NEW, title: '', minutes: '' }]);
+  };
+  const save = () =>
+    onSplit(
+      rows.map((r) => {
+        const minutes = Math.round(Number(r.minutes) || 0);
+        return r.topicId === NEW ? { title: r.title.trim(), minutes } : { topicId: r.topicId, minutes };
+      }),
+    );
+
   return (
     <Modal title="That was a long session" onClose={onCancel}>
       <div className="stack">
@@ -324,14 +376,49 @@ function LongSessionDialog({ measuredMs, busy, onCancel, onConfirm, onCorrect }:
           Yes, count {fmt(measuredMs)}
         </button>
         <div className="divider" />
-        <Field label="Or correct it to (minutes)" hint="The original reading is kept in your history.">
-          <div className="row">
-            <input className="input" type="number" min="0" max="1440" inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
-            <button className="btn" disabled={busy || minutes === '' || Number(minutes) < 0} onClick={() => onCorrect(Math.round(Number(minutes)))}>
-              Save
-            </button>
-          </div>
-        </Field>
+        <div className="stack" style={{ gap: 4 }}>
+          <b className="small">Or list what you actually did</b>
+          <span className="tiny muted">Give each task its minutes. The original reading is kept in your history.</span>
+        </div>
+        <ul className="split-list">
+          {rows.map((r) => (
+            <li key={r.key} className="split-row">
+              <div className="split-task">
+                <select className="input" value={r.topicId} onChange={(e) => set(r.key, { topicId: e.target.value })} aria-label="Task">
+                  {options(r).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title}
+                    </option>
+                  ))}
+                  <option value={NEW}>＋ New task…</option>
+                </select>
+                {r.topicId === NEW && (
+                  <input className="input" value={r.title} onChange={(e) => set(r.key, { title: e.target.value })} placeholder="What did you work on?" maxLength={140} aria-label="New task name" />
+                )}
+              </div>
+              <label className="split-minutes">
+                <input className="input num" type="number" min="0" max="1440" inputMode="numeric" value={r.minutes} onChange={(e) => set(r.key, { minutes: e.target.value })} aria-label="Minutes" placeholder="0" />
+                <span className="tiny muted">min</span>
+              </label>
+              <button className="btn ghost icon small" disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="Remove this task">
+                <XIcon width={16} />
+              </button>
+            </li>
+          ))}
+        </ul>
+        {rows.length < 12 && (
+          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={add}>
+            ＋ Add a task
+          </button>
+        )}
+        <div className="row between wrap">
+          <span className={`small num${tooMuch ? ' danger-text' : ' muted'}`} role={tooMuch ? 'alert' : undefined}>
+            {tooMuch ? `That's more than the ${fmt(measuredMs)} the timer measured` : `Total ${fmt(totalMs)} of ${fmt(measuredMs)}`}
+          </span>
+          <button className="btn" disabled={busy || tooMuch || unnamed} onClick={save}>
+            Save {fmt(totalMs)}
+          </button>
+        </div>
       </div>
     </Modal>
   );

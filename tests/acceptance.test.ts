@@ -276,6 +276,50 @@ test('very long sessions must be confirmed or corrected, with an audit trail', a
   assert.equal(again.body.session.corrections.length, 2);
 });
 
+test('a long session can be saved as a list of tasks, each with its own minutes', async () => {
+  const own = (await A.post(`/rooms/${roomId}/topics`, { title: 'Split: graphs' })).body.id;
+  const other = (await A.post(`/rooms/${roomId}/topics`, { title: 'Split: trees' })).body.id;
+  const s = (await A.post('/sessions', { topicId: own })).body.session;
+  await srv.db.query('UPDATE study_sessions SET started_at = started_at - ? WHERE id = ?', [5 * 3600_000, s.id]);
+
+  // More than the timer measured is refused, and the session keeps running.
+  const tooMuch = await A.post(`/sessions/${s.id}/split`, { parts: [{ topicId: own, minutes: 200 }, { topicId: other, minutes: 200 }] });
+  assert.equal(tooMuch.status, 400);
+  assert.equal((await A.get('/sessions/active')).body.session.id, s.id);
+  // Someone else's topic can't be listed.
+  const theirs = await A.post(`/sessions/${s.id}/split`, { parts: [{ topicId: bTopics[0], minutes: 10 }] });
+  assert.ok(theirs.status >= 400);
+
+  const r = await A.post(`/sessions/${s.id}/split`, {
+    completeTopic: true,
+    parts: [{ topicId: own, minutes: 90 }, { topicId: other, minutes: 45 }, { title: 'Read the DP chapter', minutes: 30 }],
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.session.focusedMs, 90 * 60_000);
+  assert.equal(r.body.completedTopic, true);
+  assert.equal(r.body.session.corrections.length, 1);
+  const rows = await srv.db.query(
+    'SELECT t.title, s.focused_ms, s.state FROM study_sessions s JOIN topics t ON t.id = s.topic_id WHERE s.room_id = ? AND t.title IN (?, ?, ?) ORDER BY t.title',
+    [roomId, 'Split: graphs', 'Split: trees', 'Read the DP chapter'],
+  );
+  assert.deepEqual(
+    rows.map((x: any) => [x.title, x.focused_ms, x.state]),
+    [
+      ['Read the DP chapter', 30 * 60_000, 'finished'],
+      ['Split: graphs', 90 * 60_000, 'finished'],
+      ['Split: trees', 45 * 60_000, 'finished'],
+    ],
+  );
+  // The new task is a topic of yours in the room, now in progress.
+  const room = (await A.get(`/rooms/${roomId}`)).body;
+  const added = room.topics.find((t: any) => t.title === 'Read the DP chapter');
+  assert.equal(added.createdBy, room.topics.find((t: any) => t.id === own).createdBy);
+  assert.equal(added.progress[added.createdBy].status, 'in_progress');
+  // Retrying adds nothing.
+  await A.post(`/sessions/${s.id}/split`, { parts: [{ topicId: other, minutes: 45 }] });
+  assert.equal((await srv.db.query('SELECT count(*) AS n FROM study_sessions WHERE topic_id = ?', [other]))[0].n, 1);
+});
+
 test('reconnecting replays nothing: realtime events only invalidate, state comes from the server', async () => {
   const s = (await B.post('/sessions', { topicId: bTopics[0] })).body.session;
   // Simulate several reconnects that each re-read state.

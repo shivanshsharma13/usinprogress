@@ -877,6 +877,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         const input = parse(v.sessionFinishSchema, body ?? {});
         return rpc('finish_session', { p_session: p[0], p_complete: input.completeTopic ?? false, p_confirm_long: input.confirmLong ?? false, p_corrected: input.correctedMinutes ?? null, p_note: input.note ?? null });
       }
+      case 'POST /sessions/:id/split': {
+        const input = parse(v.sessionSplitSchema, body);
+        return rpc('finish_session_split', { p_session: p[0], p_parts: input.parts, p_complete: input.completeTopic ?? false, p_note: input.note ?? null });
+      }
       case 'POST /sessions/:id/discard':
         await rpc('discard_session', { p_session: p[0] });
         return { ok: true };

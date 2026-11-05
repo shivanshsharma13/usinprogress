@@ -298,6 +298,14 @@ textarea.input { min-height: 80px; resize: vertical; }
 .is-paused .drift-leaves { opacity: 0; }
 .is-paused .timer-face { opacity: 0.55; animation: soft-blink 2.8s ease-in-out infinite; }
 .is-reached .ring-progress { stroke: var(--leaf); }
+/* Long session → a list of tasks, each with its minutes */
+.split-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.split-row { display: flex; align-items: flex-start; gap: 8px; }
+.split-task { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.split-minutes { display: flex; align-items: center; gap: 4px; flex: none; }
+.split-minutes .input { width: 76px; text-align: right; }
+.split-row .btn.icon { margin-top: 4px; }
+.danger-text { color: var(--danger); }
 .length-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .length-chips .chip-btn { min-height: 36px; padding: 6px 14px; }
 .timer-controls { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
