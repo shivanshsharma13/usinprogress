@@ -139,6 +139,13 @@ export const sessionSplitSchema = z.object({
   note: text(1000).optional(),
 });
 
+export const photoCheerSchema = z.object({
+  to: z.string().uuid(),
+  image: z.string().startsWith('data:image/jpeg;base64,').max(200_000, 'That photo is too big to send.'),
+  caption: text(80).optional(),
+  replyTo: z.string().uuid().optional(),
+});
+
 export const sessionUpdateSchema = z.object({
   note: text(1000).optional(),
   remindAfterHour: z.boolean().optional(),

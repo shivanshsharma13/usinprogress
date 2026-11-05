@@ -31,6 +31,10 @@ export function MotivationSettings() {
         <PrefSwitch k="challenge" label="Weekly challenge">
           Set a goal with your friend for the week, like 10 hours each. Win it together and a golden sunflower blooms in your shared forest.
         </PrefSwitch>
+        <PrefSwitch k="photoCheers" label="Photo cheers 📸">
+          Snap a selfie with your camera and send it to your friend, with a fun frame and a line. It floats around their study timer, then pins to
+          the corner. Only the two of you see it, and it's deleted after 24 hours. Both of you need this on.
+        </PrefSwitch>
         <PrefSwitch k="recap" label="Sunday recap">
           On Sunday (and Monday, looking back), a card sums up both your weeks: hours, best day, topics finished and trees planted.
         </PrefSwitch>
@@ -98,7 +102,7 @@ function PushCard() {
       {pushConfigured() && (
         <>
           <PrefSwitch k="pushEncourage" label="Encouragement">
-            When your friend sends a reaction or a note, or joins you to study together.
+            When your friend sends a reaction, a note or a photo, or joins you to study together.
           </PrefSwitch>
           <PrefSwitch k="pushStudying" label="Your friend starts studying">
             A nudge to join them. Not while you're studying yourself, and only if they share their live status.

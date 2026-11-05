@@ -972,6 +972,18 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       }
       case 'POST /together/:id/break':
         return { together: await rpc('together_break', { p_id: p[0], p_on: Boolean(body?.on) }) };
+      case 'GET /photos':
+        return { photos: await rpc('my_photo_cheers') };
+      case 'POST /photos': {
+        const input = parse(v.photoCheerSchema, body);
+        return { photo: await rpc('send_photo_cheer', { p_to: input.to, p_image: input.image, p_caption: input.caption ?? '', p_reply_to: input.replyTo ?? null }) };
+      }
+      case 'POST /photos/:id/seen':
+        await rpc('seen_photo_cheer', { p_id: p[0] });
+        return { ok: true };
+      case 'POST /photos/:id/heart':
+        await rpc('heart_photo_cheer', { p_id: p[0] });
+        return { ok: true };
       case 'GET /challenge':
         return rpc('current_challenge', { p_friend: query.get('friendId'), p_week: query.get('week') });
       case 'POST /challenge': {

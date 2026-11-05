@@ -659,3 +659,33 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .outcome-plant { flex-shrink: 0; margin: -10px -6px -14px -10px; }
 @keyframes outcome-rise { from { opacity: 0; translate: 0 40px; } }
 @media (prefers-reduced-motion: reduce) { .outcome-card { animation: none; } }
+
+/* ───────────── Photo cheers ───────────── */
+.polaroid { display: block; padding: 5px 5px 14px; background: #fffdf8; border: 0; border-radius: 4px; box-shadow: 0 6px 18px rgba(40, 40, 30, 0.22); cursor: pointer; }
+.polaroid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 2px; }
+.polaroid.big { margin: 0 auto; width: min(320px, 100%); padding: 10px 10px 16px; rotate: -1.5deg; cursor: default; }
+.polaroid.big figcaption { margin-top: 10px; text-align: center; color: #3b3a33; font-weight: 700; font-size: 1rem; }
+/* Drifts slowly around the ring (riding on its line, clear of the clock), staying upright and swaying a little. */
+.photo-orbit { position: absolute; inset: 0; pointer-events: none; animation: photo-orbit 36s linear infinite; z-index: 2; }
+.photo-orbit .polaroid { position: absolute; left: 50%; top: 0; width: 22cqw; translate: -50% -50%; pointer-events: auto; animation: photo-upright 36s linear infinite, photo-in 0.9s cubic-bezier(.2, 1.4, .4, 1) both; animation-delay: inherit, 0s; }
+@keyframes photo-orbit { to { rotate: 360deg; } }
+@keyframes photo-upright { from { rotate: 0deg; } 25% { rotate: -96deg; } 50% { rotate: -180deg; } 75% { rotate: -264deg; } to { rotate: -360deg; } }
+@keyframes photo-in { from { scale: 0.2; opacity: 0; } to { scale: 1; opacity: 1; } }
+/* Settled: pinned in the ring's top-right corner, outside the circle. */
+.photo-pins { position: absolute; top: -4px; right: -10px; display: flex; flex-direction: row-reverse; z-index: 2; }
+.photo-pins .polaroid { width: 46px; padding: 3px 3px 9px; margin-left: -18px; transition: scale 0.2s; animation: photo-in 0.6s ease both; }
+.photo-pins .polaroid:hover { scale: 1.12; z-index: 1; }
+@media (prefers-reduced-motion: reduce) { .photo-orbit, .photo-orbit .polaroid, .photo-pins .polaroid { animation: none; } }
+
+.photo-stage { position: relative; width: 100%; aspect-ratio: 1; max-width: 360px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: var(--mint, #e8f0e6); display: grid; place-items: center; }
+.photo-live, .photo-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.photo-live { transform: scaleX(-1); }
+.photo-hint { position: relative; padding: 16px; }
+.shutter { align-self: center; width: 68px; height: 68px; border-radius: 50%; border: 4px solid var(--me, #6e9ad6); background: transparent; padding: 4px; cursor: pointer; }
+.shutter span { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--me, #6e9ad6); transition: scale 0.15s; }
+.shutter:active span { scale: 0.85; }
+
+.photo-envelope { display: flex; align-items: center; gap: 12px; width: 100%; cursor: pointer; text-align: left; font: inherit; color: inherit; border-color: var(--c, var(--border)); }
+.photo-envelope .envelope { font-size: 1.8rem; animation: envelope-wiggle 2.4s ease-in-out infinite; }
+@keyframes envelope-wiggle { 0%, 70%, 100% { rotate: 0deg; } 76% { rotate: -12deg; } 84% { rotate: 10deg; } 92% { rotate: -6deg; } }
+@media (prefers-reduced-motion: reduce) { .photo-envelope .envelope { animation: none; } }

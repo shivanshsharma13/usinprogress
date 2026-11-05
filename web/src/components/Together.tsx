@@ -11,6 +11,7 @@ import { toast } from '../lib/toast';
 import { personVars } from '../lib/theme';
 import { Avatar, useNow } from './ui';
 import { XIcon } from './icons';
+import { SendPhotoButton } from './PhotoCheers';
 
 const FRESH_MS = 15 * 60_000; // "just started"
 const SKIPPED = 'us-in-progress-together-skipped';
@@ -139,9 +140,12 @@ export function TogetherPanel({ session, me }: { session: ActiveSession; me: Me 
           </button>
         </div>
       ) : (
-        <button className="btn small" disabled={brk.isPending} onClick={() => brk.mutate(true)}>
-          ☕ Break for both
-        </button>
+        <div className="row wrap">
+          <button className="btn small" disabled={brk.isPending} onClick={() => brk.mutate(true)}>
+            ☕ Break for both
+          </button>
+          <SendPhotoButton to={partner ?? { id: partnerId, displayName: name }} className="btn small" label={`📸 Photo for ${name}`} />
+        </div>
       )}
     </div>
   );

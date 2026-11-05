@@ -16,6 +16,19 @@ export interface PublicUser {
 export type PrefKey = string;
 export type Prefs = Partial<Record<PrefKey, boolean>>;
 
+/** A selfie sent to a friend (Settings → Motivation & focus → Photo cheers). Kept for 24 hours. */
+export interface PhotoCheer {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  image: string; // data:image/jpeg;base64,… with the frame already drawn in
+  caption: string;
+  replyTo: string | null;
+  createdAt: number;
+  seenAt: number | null;
+  heartedAt: number | null;
+}
+
 /** A topic due for revision (1, 3, 7 and 21 days after you first finished it). */
 export interface RevisionDue {
   topicId: string;
