@@ -129,6 +129,16 @@ export const sessionFinishSchema = z.object({
   note: text(1000).optional(),
 });
 
+// A long session saved as what you actually did: existing topics in the room, or new ones by name.
+export const sessionSplitSchema = z.object({
+  parts: z
+    .array(z.union([z.object({ topicId: z.string().uuid(), minutes: z.number().int().min(0).max(24 * 60) }), z.object({ title: text(140).min(1), minutes: z.number().int().min(0).max(24 * 60) })]))
+    .min(1)
+    .max(12),
+  completeTopic: z.boolean().optional(),
+  note: text(1000).optional(),
+});
+
 export const sessionUpdateSchema = z.object({
   note: text(1000).optional(),
   remindAfterHour: z.boolean().optional(),
