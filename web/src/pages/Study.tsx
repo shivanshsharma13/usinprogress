@@ -319,12 +319,13 @@ function ReminderToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) 
 }
 
 type SplitPart = { topicId: string; minutes: number } | { title: string; minutes: number };
-type SplitRow = { key: number; topicId: string; title: string; minutes: string };
-const NEW = 'new';
+type SplitTask = { key: number; topicId: string | null; title: string; minutes: number };
+const STEP = 15;
+const roundTo = (m: number, step: number) => Math.max(0, Math.round(m / step) * step);
 
 /**
- * Over 4 hours: count it all, or say what you actually did — a list of tasks, each with its own minutes.
- * The session's topic comes first; add other topics from this room or a new task by name.
+ * Over 4 hours: count it all, or say what you actually did. Set how long you really studied, then add tasks
+ * with − / + buttons; the topic you were studying gets whatever is left, so nothing needs adding up.
  */
 function LongSessionDialog({
   measuredMs,
@@ -343,28 +344,25 @@ function LongSessionDialog({
   onConfirm: () => void;
   onSplit: (parts: SplitPart[]) => void;
 }) {
-  const [rows, setRows] = useState<SplitRow[]>([{ key: 0, topicId: session.topicId, title: '', minutes: String(Math.min(180, Math.round(measuredMs / 60_000))) }]);
-  const set = (key: number, patch: Partial<SplitRow>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-  const totalMs = rows.reduce((n, r) => n + (Number(r.minutes) || 0) * 60_000, 0);
-  const tooMuch = totalMs > measuredMs + 60_000;
-  const unnamed = rows.some((r) => r.topicId === NEW && !r.title.trim());
-  const used = (except: SplitRow) => new Set(rows.filter((r) => r !== except && r.topicId !== NEW).map((r) => r.topicId));
-  const options = (row: SplitRow) => [
-    ...(topics.some((t) => t.id === session.topicId) ? [] : [{ id: session.topicId, title: session.topicTitle }]),
-    ...topics,
-  ].filter((t) => !used(row).has(t.id));
+  const maxMin = Math.floor(measuredMs / 60_000);
+  const [total, setTotal] = useState(Math.min(maxMin, 180));
+  const [tasks, setTasks] = useState<SplitTask[]>([]);
+  const [picking, setPicking] = useState(false);
+  const others = tasks.reduce((n, t) => n + t.minutes, 0);
+  const rest = total - others;
+  const over = rest < 0;
 
-  const add = () => {
-    const free = options({ key: -1, topicId: '', title: '', minutes: '' })[0];
-    setRows((rs) => [...rs, { key: Math.max(...rs.map((r) => r.key)) + 1, topicId: free?.id ?? NEW, title: '', minutes: '' }]);
+  const setMinutes = (key: number, minutes: number) => setTasks((ts) => ts.map((t) => (t.key === key ? { ...t, minutes: Math.max(0, minutes) } : t)));
+  const add = (topicId: string | null, title: string) => {
+    setTasks((ts) => [...ts, { key: Date.now(), topicId, title, minutes: Math.min(30, roundTo(Math.max(0, rest), 5)) }]);
+    setPicking(false);
   };
   const save = () =>
-    onSplit(
-      rows.map((r) => {
-        const minutes = Math.round(Number(r.minutes) || 0);
-        return r.topicId === NEW ? { title: r.title.trim(), minutes } : { topicId: r.topicId, minutes };
-      }),
-    );
+    onSplit([
+      { topicId: session.topicId, minutes: Math.max(0, rest) },
+      ...tasks.map((t) => (t.topicId ? { topicId: t.topicId, minutes: t.minutes } : { title: t.title, minutes: t.minutes })),
+    ]);
+  const taken = new Set([session.topicId, ...tasks.map((t) => t.topicId)]);
 
   return (
     <Modal title="That was a long session" onClose={onCancel}>
@@ -376,51 +374,128 @@ function LongSessionDialog({
           Yes, count {fmt(measuredMs)}
         </button>
         <div className="divider" />
-        <div className="stack" style={{ gap: 4 }}>
-          <b className="small">Or list what you actually did</b>
-          <span className="tiny muted">Give each task its minutes. The original reading is kept in your history.</span>
+
+        <div className="split-total">
+          <span className="small">
+            <b>Or I actually studied</b>
+          </span>
+          <Stepper value={total} max={maxMin} step={STEP} onChange={setTotal} label="Time you actually studied" big />
         </div>
-        <ul className="split-list">
-          {rows.map((r) => (
-            <li key={r.key} className="split-row">
-              <div className="split-task">
-                <select className="input" value={r.topicId} onChange={(e) => set(r.key, { topicId: e.target.value })} aria-label="Task">
-                  {options(r).map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.title}
-                    </option>
-                  ))}
-                  <option value={NEW}>＋ New task…</option>
-                </select>
-                {r.topicId === NEW && (
-                  <input className="input" value={r.title} onChange={(e) => set(r.key, { title: e.target.value })} placeholder="What did you work on?" maxLength={140} aria-label="New task name" />
-                )}
-              </div>
-              <label className="split-minutes">
-                <input className="input num" type="number" min="0" max="1440" inputMode="numeric" value={r.minutes} onChange={(e) => set(r.key, { minutes: e.target.value })} aria-label="Minutes" placeholder="0" />
-                <span className="tiny muted">min</span>
-              </label>
-              <button className="btn ghost icon small" disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="Remove this task">
+        <div className="row wrap" style={{ gap: 6 }}>
+          {[60, 120, 180, 240].filter((m) => m <= maxMin).map((m) => (
+            <button key={m} className={`chip-btn${total === m ? ' on' : ''}`} onClick={() => setTotal(m)}>
+              {m / 60}h
+            </button>
+          ))}
+        </div>
+
+        <ul className="split-list" aria-label="What you worked on">
+          <li className="split-row">
+            <span className="split-name">
+              <b>{session.topicTitle}</b>
+              <span className="tiny muted">{tasks.length ? 'gets the rest' : 'gets it all'}</span>
+            </span>
+            <span className={`split-rest num${over ? ' danger-text' : ''}`}>{fmt(Math.max(0, rest) * 60_000)}</span>
+          </li>
+          {tasks.map((t) => (
+            <li key={t.key} className="split-row">
+              <span className="split-name">
+                <b>{t.title}</b>
+                {!t.topicId && <span className="tiny muted">new task</span>}
+              </span>
+              <Stepper value={t.minutes} max={total} step={STEP} onChange={(m) => setMinutes(t.key, m)} label={`Time on ${t.title}`} />
+              <button className="btn ghost icon small" onClick={() => setTasks((ts) => ts.filter((x) => x.key !== t.key))} aria-label={`Remove ${t.title}`}>
                 <XIcon width={16} />
               </button>
             </li>
           ))}
         </ul>
-        {rows.length < 12 && (
-          <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={add}>
-            ＋ Add a task
-          </button>
+        {over && (
+          <p className="small danger-text" role="alert" style={{ margin: 0 }}>
+            These tasks take {fmt(-rest * 60_000)} more than the {fmt(total * 60_000)} you studied.
+          </p>
         )}
-        <div className="row between wrap">
-          <span className={`small num${tooMuch ? ' danger-text' : ' muted'}`} role={tooMuch ? 'alert' : undefined}>
-            {tooMuch ? `That's more than the ${fmt(measuredMs)} the timer measured` : `Total ${fmt(totalMs)} of ${fmt(measuredMs)}`}
-          </span>
-          <button className="btn" disabled={busy || tooMuch || unnamed} onClick={save}>
-            Save {fmt(totalMs)}
-          </button>
-        </div>
+
+        {picking ? (
+          <TaskPicker topics={topics.filter((t) => !taken.has(t.id))} onPick={add} onCancel={() => setPicking(false)} />
+        ) : (
+          tasks.length < 11 && (
+            <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setPicking(true)}>
+              ＋ I also worked on something else
+            </button>
+          )
+        )}
+
+        <button className="btn" disabled={busy || over || total === 0} onClick={save}>
+          Save {fmt(total * 60_000)}
+        </button>
       </div>
     </Modal>
+  );
+}
+
+/** − 1h 30m + : no typing, so no keyboard and no sums. */
+function Stepper({ value, max, step, onChange, label, big }: { value: number; max: number; step: number; onChange: (m: number) => void; label: string; big?: boolean }) {
+  // Snap to the step grid first, so 50 → 45 / 60 rather than 35 / 65.
+  const down = () => onChange(value % step ? value - (value % step) : Math.max(0, value - step));
+  const up = () => onChange(Math.min(max, value - (value % step) + step));
+  return (
+    <span className={`stepper${big ? ' big' : ''}`} role="group" aria-label={label}>
+      <button className="btn icon small" onClick={down} disabled={value <= 0} aria-label={`${step} minutes less`}>
+        −
+      </button>
+      <span className="num" aria-live="polite">
+        {fmt(value * 60_000)}
+      </span>
+      <button className="btn icon small" onClick={up} disabled={value >= max} aria-label={`${step} minutes more`}>
+        +
+      </button>
+    </span>
+  );
+}
+
+/** Type to find one of your topics in this room, or to name a new task. */
+function TaskPicker({ topics, onPick, onCancel }: { topics: Topic[]; onPick: (topicId: string | null, title: string) => void; onCancel: () => void }) {
+  const [q, setQ] = useState('');
+  const query = q.trim().toLowerCase();
+  const done = (t: Topic) => t.progress[t.createdBy]?.status === 'completed';
+  // Unfinished topics first, in room order.
+  const matches = topics
+    .filter((t) => !query || t.title.toLowerCase().includes(query))
+    .sort((a, b) => Number(done(a)) - Number(done(b)))
+    .slice(0, 6);
+  const exact = topics.some((t) => t.title.toLowerCase() === query);
+  return (
+    <div className="task-picker stack" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 6 }}>
+        <input
+          className="input"
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && query && (matches.length === 1 ? onPick(matches[0].id, matches[0].title) : !exact && onPick(null, q.trim()))}
+          placeholder="Find a topic or name a new task"
+          maxLength={140}
+          aria-label="Find a topic or name a new task"
+        />
+        <button className="btn ghost icon small" onClick={onCancel} aria-label="Cancel">
+          <XIcon width={16} />
+        </button>
+      </div>
+      <div className="row wrap" style={{ gap: 6 }}>
+        {query && !exact && (
+          <button className="chip-btn on" onClick={() => onPick(null, q.trim())}>
+            ＋ New: “{q.trim()}”
+          </button>
+        )}
+        {matches.map((t) => (
+          <button key={t.id} className="chip-btn" onClick={() => onPick(t.id, t.title)}>
+            {t.title}
+          </button>
+        ))}
+        {!matches.length && !query && <span className="tiny muted">Type the name of what you worked on.</span>}
+      </div>
+    </div>
   );
 }
 
