@@ -3,6 +3,7 @@ import { api, ApiError } from './api';
 import { toast } from './toast';
 import { noteLocalWrite } from './realtime';
 import type {
+  PhotoCheer,
   Activity,
   ActiveSession,
   Friend,
@@ -85,6 +86,8 @@ export const useChallenge = (enabled: boolean, friendId: string | undefined, wee
   });
 export const useWeekRecap = (enabled: boolean, from: string, to: string) =>
   useQuery({ queryKey: ['recap', from, to], enabled, staleTime: 60_000, queryFn: async () => (await api.get<{ people: WeekRecap[] }>(`/recap?from=${from}&to=${to}`)).people });
+export const usePhotos = (enabled: boolean) =>
+  useQuery({ queryKey: ['photos'], enabled, staleTime: 30_000, queryFn: async () => (await api.get<{ photos: PhotoCheer[] }>('/photos')).photos });
 // Fetched fresh on each visit: your own completions don't come back through Realtime.
 export const useRevisions = (enabled: boolean) =>
   useQuery({ queryKey: ['revisions'], enabled, staleTime: 0, queryFn: async () => (await api.get<{ revisions: RevisionDue[] }>('/revisions?ahead=7')).revisions });

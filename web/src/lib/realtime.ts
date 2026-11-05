@@ -29,6 +29,7 @@ const TABLE_KEYS: Record<string, string[]> = {
   activities: ['activity', 'friend', 'home', 'room'],
   challenges: ['challenge', 'room'],
   together_sessions: ['together', 'session', 'friends'],
+  photo_cheers: ['photos'],
 };
 
 export type ConnectionState = 'connecting' | 'online' | 'offline';
@@ -88,6 +89,11 @@ async function notice(table: string, event: string, row: Record<string, any>, me
       const { data } = await supabase.from('topics').select('title').eq('id', row.ref_id).maybeSingle();
       if (data) toast(`🌼 ${who} completed “${data.title}”`, 'notice');
     }
+  }
+  if (table === 'photo_cheers') {
+    // A new photo floats onto your timer by itself; elsewhere, say so. Hearts go back to the sender.
+    if (event === 'INSERT' && row.recipient_id === meId && !location.pathname.includes('/study')) toast(`📸 ${await displayName(row.sender_id)} sent you a photo`, 'notice');
+    if (event === 'UPDATE' && row.sender_id === meId && row.hearted_at && Date.now() - row.hearted_at < 60_000) toast(`💗 ${await displayName(row.recipient_id)} loved your photo`, 'notice');
   }
   if (table === 'friendships') {
     if (event === 'INSERT' && row.recipient_id === meId) toast(`${await displayName(row.requester_id)} sent you a friend request`, 'notice');

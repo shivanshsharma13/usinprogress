@@ -4,6 +4,7 @@ import type { Activity } from '@shared/types';
 import { api } from '../lib/api';
 import { useAction } from '../lib/queries';
 import { Avatar, relativeTime } from './ui';
+import { SendPhotoButton } from './PhotoCheers';
 
 export function EncourageButtons({ recipientId, name, roomId, withMessage }: { recipientId: string; name: string; roomId?: string; withMessage?: boolean }) {
   const [message, setMessage] = useState('');
@@ -20,6 +21,7 @@ export function EncourageButtons({ recipientId, name, roomId, withMessage }: { r
             {REACTIONS[k].emoji} {REACTIONS[k].label}
           </button>
         ))}
+        <SendPhotoButton to={{ id: recipientId, displayName: name }} />
       </div>
       {withMessage && (
         <form

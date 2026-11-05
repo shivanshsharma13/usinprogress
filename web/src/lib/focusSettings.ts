@@ -7,17 +7,18 @@ export interface FocusSettings {
   notificationControls: boolean;
   fastStart: boolean; // keep the app's files on this device (web/public/sw.js)
   celebrate: boolean; // the "Yay!" screen after completing a topic (components/Celebration.tsx)
+  floatPhotos: boolean; // photo cheers drift around the timer before settling (components/PhotoCheers.tsx)
 }
 
 const KEY = 'us-in-progress-focus';
-const DEFAULTS: FocusSettings = { notificationControls: false, fastStart: true, celebrate: true };
+const DEFAULTS: FocusSettings = { notificationControls: false, fastStart: true, celebrate: true, floatPhotos: true };
 const listeners = new Set<() => void>();
 let current = read();
 
 function read(): FocusSettings {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null');
-    if (saved && typeof saved === 'object') return { notificationControls: saved.notificationControls === true, fastStart: saved.fastStart !== false, celebrate: saved.celebrate !== false };
+    if (saved && typeof saved === 'object') return { notificationControls: saved.notificationControls === true, fastStart: saved.fastStart !== false, celebrate: saved.celebrate !== false, floatPhotos: saved.floatPhotos !== false };
   } catch {}
   return DEFAULTS;
 }

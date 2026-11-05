@@ -13,6 +13,7 @@ import { Empty, ErrorNote, Field, fmt, Modal, Spinner, Switch, useNow } from '..
 import { Plant } from '../components/Plant';
 import { CheckIcon, ChevronLeft, NextIcon, PauseIcon, PlayIcon, StopIcon, XIcon } from '../components/icons';
 import { TogetherPanel } from '../components/Together';
+import { TimerPhotoButton, TimerPhotos } from '../components/PhotoCheers';
 import { TodayPlant } from '../components/Garden';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { usePref } from '../lib/prefs';
@@ -204,6 +205,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
             <circle className="ring-progress" cx="50" cy="50" r={R} fill="none" stroke="url(#ring-grad)" strokeWidth="4" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - progress)} />
             {progress > 0.002 && <circle className="ring-tip" cx={tip.x} cy={tip.y} r="2.6" />}
           </svg>
+          {me && <TimerPhotos session={session} meId={me.id} />}
           <button className="timer-button" onClick={togglePause} disabled={busy} aria-label={paused ? 'Resume timer' : 'Pause timer'}>
             <span className={`timer-face${face.length > 6 ? ' long' : ''}`} role="timer" aria-live="off">
               {face}
@@ -246,6 +248,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
             <CheckIcon /> Complete<span className="hide-narrow">&nbsp;topic</span>
           </button>
         </div>
+        <TimerPhotoButton />
         <p className="tiny muted">Tap the clock or press Space to pause. “Finish session” keeps the topic open; “Complete topic” ticks it off.</p>
       </div>
 

@@ -853,6 +853,49 @@ test('studying together: join a friend, share breaks, and part ways when one fin
   await A.post(`/sessions/${joined.body.session.id}/discard`);
 });
 
+test('photo cheers: friends only, both switched on, private to the two of them, gone after a day', async () => {
+  const jpeg = 'data:image/jpeg;base64,' + Buffer.from('not really a jpeg, but small').toString('base64');
+  const send = (from: Client, to: string, extra: object = {}) => from.post('/photos', { to, image: jpeg, ...extra });
+
+  assert.match((await send(A, b.id)).body.error.message, /Turn on Photo cheers/);
+  await A.patch('/me', { prefs: { photoCheers: true } });
+  const off = await send(A, b.id);
+  assert.equal(off.body.error.data?.code, 'PHOTOS_OFF', 'the friend has it off');
+  await B.patch('/me', { prefs: { photoCheers: true } });
+  await C.patch('/me', { prefs: { photoCheers: true } });
+  assert.equal((await send(A, c.id)).status, 404, 'strangers can’t be sent photos');
+  assert.equal((await A.post('/photos', { to: b.id, image: 'data:image/png;base64,AAAA' })).status, 400, 'JPEG only');
+
+  const sent = await send(A, b.id, { caption: '  You’ve got this 💪  ' });
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  const id = sent.body.photo.id;
+  assert.equal(sent.body.photo.caption, 'You’ve got this 💪');
+
+  // Only the two of them can see it, through the API or straight from the table.
+  assert.equal((await B.get('/photos')).body.photos[0].id, id);
+  assert.equal((await C.get('/photos')).body.photos.length, 0);
+  assert.equal(((await C.sb.from('photo_cheers').select('id')).data ?? []).length, 0);
+  // Nobody writes to the table directly, and only the recipient can heart or mark it seen.
+  assert.ok((await B.sb.from('photo_cheers').update({ caption: 'edited' }).eq('id', id).select()).data?.length !== 1);
+  await A.post(`/photos/${id}/heart`);
+  assert.equal((await A.get('/photos')).body.photos[0].heartedAt, null);
+  await B.post(`/photos/${id}/seen`);
+  await B.post(`/photos/${id}/heart`);
+  const seen = (await A.get('/photos')).body.photos[0];
+  assert.ok(seen.seenAt && seen.heartedAt);
+
+  // A snap back links to the photo it answers; a made-up link is dropped.
+  const back = await send(B, a.id, { replyTo: id });
+  assert.equal(back.body.photo.replyTo, id);
+  assert.equal((await send(B, a.id, { replyTo: back.body.photo.id })).body.photo.replyTo, null);
+
+  // After 24 hours it's hidden, then deleted the next time anyone looks.
+  await srv.db.query('UPDATE photo_cheers SET created_at = created_at - ? WHERE id = ?', [25 * 3600_000, id]);
+  assert.ok(!(await B.get('/photos')).body.photos.some((p: any) => p.id === id));
+  assert.equal((await srv.db.query('SELECT count(*) AS n FROM photo_cheers WHERE id = ?', [id]))[0].n, 0);
+  await A.patch('/me', { prefs: { photoCheers: false } });
+});
+
 test('phone notifications: the right people, only if they opted in, and never blocking the action', async () => {
   const endpoint = (who: string) => `https://push.example.com/${who}-${Date.now()}`;
   const save = (who: Client, id: string) => who.sb.rpc('save_push_subscription', { p_endpoint: endpoint(id), p_p256dh: 'BKey', p_auth: 'auth' });
