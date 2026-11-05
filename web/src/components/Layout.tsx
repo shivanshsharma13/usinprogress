@@ -11,6 +11,7 @@ import { applyScheme } from '../lib/theme';
 import { Avatar, useNow } from './ui';
 import { FocusCompanion } from './FocusCompanion';
 import { TogetherNudge } from './Together';
+import { CelebrationHost } from './Celebration';
 import { refreshPush } from '../lib/push';
 import { notify } from '../lib/notifications';
 import { CalendarIcon, ChartIcon, FriendsIcon, GoalIcon, HomeIcon, MoonIcon, PauseIcon, PlayIcon, RoomIcon, SunIcon } from './icons';
@@ -101,6 +102,7 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
       <SessionWatcher hideMini={pathname === '/study' || pathname === '/'} />
       <FocusCompanion />
       <TogetherNudge />
+      <CelebrationHost />
     </div>
   );
 }
