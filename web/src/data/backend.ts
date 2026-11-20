@@ -984,6 +984,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       case 'POST /photos/:id/heart':
         await rpc('heart_photo_cheer', { p_id: p[0] });
         return { ok: true };
+      case 'GET /routine':
+        return { routine: await rpc('routine_of', { p_user: query.get('userId') ?? (await myId()) }) };
+      case 'PUT /routine':
+        return { routine: await rpc('set_routine', { p: parse(v.routineSchema, body) }) };
       case 'GET /challenge':
         return rpc('current_challenge', { p_friend: query.get('friendId'), p_week: query.get('week') });
       case 'POST /challenge': {

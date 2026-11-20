@@ -146,6 +146,14 @@ export const photoCheerSchema = z.object({
   replyTo: z.string().uuid().optional(),
 });
 
+const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 09:30');
+export const routineSchema = z.object({
+  sleepMinutes: z.number().int().min(180, 'At least 3 hours of sleep').max(720, 'At most 12 hours of sleep'),
+  workStart: clock.nullable(),
+  workEnd: clock.nullable(),
+  workDays: z.array(z.number().int().min(0).max(6)).max(7),
+});
+
 export const sessionUpdateSchema = z.object({
   note: text(1000).optional(),
   remindAfterHour: z.boolean().optional(),
