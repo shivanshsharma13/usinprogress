@@ -689,3 +689,16 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .photo-envelope .envelope { font-size: 1.8rem; animation: envelope-wiggle 2.4s ease-in-out infinite; }
 @keyframes envelope-wiggle { 0%, 70%, 100% { rotate: 0deg; } 76% { rotate: -12deg; } 84% { rotate: 10deg; } 92% { rotate: -6deg; } }
 @media (prefers-reduced-motion: reduce) { .photo-envelope .envelope { animation: none; } }
+
+/* Photo wall: the last 24 hours of photo cheers on Home */
+.photo-strip { display: flex; gap: 12px; overflow-x: auto; padding: 4px 2px 8px; scroll-snap-type: x proximity; }
+.photo-card { flex: none; width: 104px; display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: inherit; scroll-snap-align: start; text-align: center; }
+.photo-card .polaroid.mini { width: 92px; padding: 4px 4px 10px; rotate: -2deg; transition: rotate 0.2s, scale 0.2s; }
+.photo-card:nth-child(even) .polaroid.mini { rotate: 2deg; }
+.photo-card:hover .polaroid.mini { rotate: 0deg; scale: 1.04; }
+.photo-card.unseen .polaroid.mini { box-shadow: 0 0 0 3px var(--me), 0 6px 18px rgba(40, 40, 30, 0.22); }
+.photo-card-label { font-weight: 700; }
+.new-dot { color: var(--me); }
+.new-chip { margin-left: 6px; background: var(--me); color: #fff; border-color: transparent; font-size: 0.72rem; }
+.photo-status { margin: 0; text-align: center; font-weight: 700; }
+.photo-status.loved { color: var(--danger); }

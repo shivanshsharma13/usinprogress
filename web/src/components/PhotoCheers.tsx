@@ -3,7 +3,7 @@
 // for the rest of the session. Not studying? It waits in an envelope on Home. Photos are deleted after a day.
 import { useEffect, useRef, useState } from 'react';
 import { focusedMs } from '@shared/timer';
-import type { ActiveSession, PhotoCheer, PublicUser } from '@shared/types';
+import type { PhotoCheer, PublicUser } from '@shared/types';
 import { api } from '../lib/api';
 import { useFocusSettings } from '../lib/focusSettings';
 import { usePref } from '../lib/prefs';
@@ -279,11 +279,12 @@ export function PhotoCamera({ choices, replyTo, onClose }: { choices: Who[]; rep
 
 // ───────────── Receiving ─────────────
 
-const shownHere = new Map<string, number>(); // photo id → when it first appeared on this device
+const shownHere = new Map<string, number>(); // unseen photo id → when it first appeared here (until the server's seenAt arrives)
 const markedSeen = new Set<string>();
 
-/** Photos on your timer: new ones drift around the ring for 3 minutes, then pin to the corner. */
-export function TimerPhotos({ session, meId }: { session: ActiveSession; meId: string }) {
+/** Photos on your timer: new ones drift around the ring for 3 minutes, then stay pinned to the corner for the
+ * rest of their 24 hours. */
+export function TimerPhotos({ meId }: { meId: string }) {
   const [on] = usePref('photoCheers');
   const { data: photos } = usePhotos(on);
   const { data: friends } = useFriends();
@@ -292,10 +293,10 @@ export function TimerPhotos({ session, meId }: { session: ActiveSession; meId: s
   const [open, setOpen] = useState<PhotoCheer | null>(null);
   const calm = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  const mine = (photos ?? []).filter((p) => p.recipientId === meId && (p.seenAt === null || p.seenAt >= session.startedAt || shownHere.has(p.id)));
+  const mine = (photos ?? []).filter((p) => p.recipientId === meId);
   useEffect(() => {
     for (const p of mine) {
-      if (!shownHere.has(p.id)) shownHere.set(p.id, p.seenAt ?? Date.now());
+      if (p.seenAt === null && !shownHere.has(p.id)) shownHere.set(p.id, Date.now());
       if (p.seenAt === null && !markedSeen.has(p.id)) {
         markedSeen.add(p.id);
         void api.post(`/photos/${p.id}/seen`).catch(() => markedSeen.delete(p.id));
@@ -305,7 +306,8 @@ export function TimerPhotos({ session, meId }: { session: ActiveSession; meId: s
   if (!on || !mine.length) return null;
 
   const sender = (id: string) => friends?.friends.find((f) => f.user.id === id)?.user;
-  const floating = mine.filter((p) => floatPhotos && !calm && now - (shownHere.get(p.id) ?? now) < FLOAT_MS);
+  // A photo floats for 3 minutes from when you first saw it, then pins to the corner.
+  const floating = mine.filter((p) => floatPhotos && !calm && now - (p.seenAt ?? shownHere.get(p.id) ?? now) < FLOAT_MS);
   const pinned = mine.filter((p) => !floating.includes(p)).slice(0, 4);
 
   return (
@@ -326,82 +328,128 @@ export function TimerPhotos({ session, meId }: { session: ActiveSession; meId: s
           ))}
         </div>
       )}
-      {open && <PhotoViewer photo={open} sender={sender(open.senderId)} onClose={() => setOpen(null)} />}
+      {open && <PhotoViewer photo={open} meId={meId} friend={sender(open.senderId)} onClose={() => setOpen(null)} />}
     </>
   );
 }
 
-/** A photo, big: the line they wrote, a heart back, and a snap back. */
-export function PhotoViewer({ photo, sender, onClose }: { photo: PhotoCheer; sender: PublicUser | undefined; onClose: () => void }) {
+const DAY = 24 * 3_600_000;
+/** "gone in 5h" — photos are deleted 24 hours after they're sent. */
+const goneIn = (p: PhotoCheer, now = Date.now()) => {
+  const left = p.createdAt + DAY - now;
+  return left < 3_600_000 ? `gone in ${Math.max(1, Math.round(left / 60_000))}m` : `gone in ${Math.round(left / 3_600_000)}h`;
+};
+
+/** What happened to a photo you sent: loved, seen, or not yet. */
+export function sentStatus(p: PhotoCheer, name: string): { icon: string; text: string } {
+  if (p.heartedAt) return { icon: '💗', text: `${name} loved it` };
+  if (p.seenAt) return { icon: '👀', text: `${name} saw it ${relativeTime(p.seenAt)}` };
+  return { icon: '✓', text: `Sent · ${name} hasn't seen it yet` };
+}
+
+/**
+ * A photo, big. One you got: the line they wrote, a heart back and a snap back. One you sent: whether your
+ * friend saw it and loved it.
+ */
+export function PhotoViewer({ photo, meId, friend, onClose }: { photo: PhotoCheer; meId: string; friend: PublicUser | undefined; onClose: () => void }) {
   const [snapBack, setSnapBack] = useState(false);
   const [hearted, setHearted] = useState(Boolean(photo.heartedAt));
-  const name = sender?.displayName ?? 'Your friend';
+  const sent = photo.senderId === meId;
+  const name = friend?.displayName ?? 'Your friend';
   const heart = useAction(() => api.post(`/photos/${photo.id}/heart`), { invalidate: [['photos']], success: `💗 Sent to ${name}`, onSuccess: () => setHearted(true) });
   useEffect(() => {
-    if (photo.seenAt === null && !markedSeen.has(photo.id)) {
+    if (!sent && photo.seenAt === null && !markedSeen.has(photo.id)) {
       markedSeen.add(photo.id);
       void api.post(`/photos/${photo.id}/seen`);
     }
-  }, [photo]);
+  }, [photo, sent]);
 
-  if (snapBack && sender) return <PhotoCamera choices={[sender]} replyTo={photo.id} onClose={onClose} />;
+  if (snapBack && friend) return <PhotoCamera choices={[friend]} replyTo={photo.id} onClose={onClose} />;
+  const status = sent ? sentStatus(photo, name) : null;
   return (
-    <Modal title={`From ${name}`} onClose={onClose}>
-      <div className="stack" style={sender ? personVars(sender.accent) : undefined}>
+    <Modal title={sent ? `You sent ${name}` : `From ${name}`} onClose={onClose}>
+      <div className="stack" style={friend ? personVars(friend.accent) : undefined}>
         <figure className="polaroid big">
-          <img src={photo.image} alt={`Photo from ${name}`} />
+          <img src={photo.image} alt={sent ? `Your photo for ${name}` : `Photo from ${name}`} />
           {photo.caption && <figcaption>{photo.caption}</figcaption>}
         </figure>
         <p className="tiny muted" style={{ margin: 0, textAlign: 'center' }}>
-          {photo.replyTo ? '↩ A snap back to your photo · ' : ''}
-          {relativeTime(photo.createdAt)}
+          {photo.replyTo ? (sent ? '↩ Your snap back · ' : '↩ A snap back to your photo · ') : ''}
+          {relativeTime(photo.createdAt)} · {goneIn(photo)}
         </p>
+        {status ? (
+          <p className={`photo-status${photo.heartedAt ? ' loved' : ''}`} role="status">
+            <span aria-hidden="true">{status.icon}</span> {status.text}
+          </p>
+        ) : (
         <div className="row" style={{ justifyContent: 'center' }}>
           <button className="btn" disabled={hearted || heart.isPending} onClick={() => heart.mutate(undefined)}>
             {hearted ? '💗 Loved' : '💗 Heart back'}
           </button>
-          {sender && (
+          {friend && (
             <button className="btn primary" onClick={() => setSnapBack(true)}>
               📸 Snap back
             </button>
           )}
         </div>
+        )}
       </div>
     </Modal>
   );
 }
 
-/** On Home, while you're not studying: "Mira sent you a photo". Opening it counts as seeing it. */
-export function PhotoEnvelope({ meId }: { meId: string }) {
+/**
+ * On Home: every photo from the last 24 hours, sent and received, newest first. New ones are marked; ones you
+ * sent say whether your friend saw and loved them. Unopened photos also float onto your timer when you study.
+ */
+export function PhotoWall({ meId }: { meId: string }) {
   const [on] = usePref('photoCheers');
   const { data: photos } = usePhotos(on);
   const { data: friends } = useFriends();
   const [open, setOpen] = useState<PhotoCheer | null>(null);
-  const waiting = (photos ?? []).filter((p) => p.recipientId === meId && p.seenAt === null && !markedSeen.has(p.id));
-  if (!on) return null;
-  const first = waiting[waiting.length - 1]; // oldest first
-  const sender = (id: string) => friends?.friends.find((f) => f.user.id === id)?.user;
-  const who = first && sender(first.senderId);
+  useNow(60_000); // keep "gone in" fresh
+  if (!on || !photos?.length) return null;
+  const friendOf = (p: PhotoCheer) => friends?.friends.find((f) => f.user.id === (p.senderId === meId ? p.recipientId : p.senderId))?.user;
+  const fresh = photos.filter((p) => p.recipientId === meId && p.seenAt === null && !markedSeen.has(p.id)).length;
+
   return (
-    <>
-      {first && (
-        <button className="card photo-envelope" onClick={() => setOpen(first)} style={who ? personVars(who.accent) : undefined}>
-          <span className="envelope" aria-hidden="true">
-            💌
-          </span>
-          <span className="grow" style={{ textAlign: 'left' }}>
-            <b>
-              {who?.displayName ?? 'Your friend'} sent you {waiting.length > 1 ? `${waiting.length} photos` : 'a photo'}
-            </b>
-            <span className="tiny muted" style={{ display: 'block' }}>
-              Tap to open, or start studying and {waiting.length > 1 ? 'they' : 'it'}'ll float onto your timer.
-            </span>
-          </span>
-          {who && <Avatar user={who} size={36} />}
-        </button>
-      )}
-      {open && <PhotoViewer photo={open} sender={sender(open.senderId)} onClose={() => setOpen(null)} />}
-    </>
+    <div className="card stack photo-wall" style={{ gap: 10 }}>
+      <div className="row between">
+        <b>📸 Photo cheers {fresh > 0 && <span className="chip new-chip">{fresh} new</span>}</b>
+        <span className="tiny muted">Kept for 24 hours</span>
+      </div>
+      <div className="photo-strip" role="list">
+        {photos.map((p) => {
+          const sent = p.senderId === meId;
+          const who = friendOf(p)?.displayName ?? 'friend';
+          const unseen = !sent && p.seenAt === null && !markedSeen.has(p.id);
+          const status = sent ? sentStatus(p, who) : null;
+          return (
+            <button key={p.id} role="listitem" className={`photo-card${unseen ? ' unseen' : ''}`} onClick={() => setOpen(p)} aria-label={sent ? `Your photo for ${who}: ${status!.text}` : `Photo from ${who}${unseen ? ', new' : ''}`}>
+              <span className="polaroid mini">
+                <img src={p.image} alt="" />
+              </span>
+              <span className="tiny photo-card-label">
+                {sent ? `To ${who}` : `From ${who}`}
+                {unseen ? <b className="new-dot"> · New</b> : null}
+              </span>
+              <span className="tiny muted">
+                {sent ? (
+                  <>
+                    <span aria-hidden="true">{status!.icon}</span> {p.heartedAt ? 'Loved' : p.seenAt ? 'Seen' : 'Not seen'}
+                  </>
+                ) : p.heartedAt ? (
+                  '💗 You loved it'
+                ) : (
+                  goneIn(p)
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {open && <PhotoViewer photo={open} meId={meId} friend={friendOf(open)} onClose={() => setOpen(null)} />}
+    </div>
   );
 }
 
