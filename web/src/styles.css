@@ -741,3 +741,10 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .task-check:not(:disabled):hover { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c, var(--me)) 18%, transparent); }
 .btn.study-next { max-width: 100%; }
 .btn.study-next span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week-hours { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.week-hours li { display: grid; grid-template-columns: 56px 1fr 52px; align-items: center; gap: 8px; min-height: 44px; }
+.week-hours li.off > span:last-child { grid-column: 2 / 4; }
+.week-hours .chip-btn { justify-content: center; }
+.hours-inputs { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.hours-inputs .input { min-width: 0; width: 100%; max-width: 130px; padding-inline: 8px; }
+.split-day.changed > .tiny:first-child::after { content: '*'; }

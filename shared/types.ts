@@ -29,12 +29,25 @@ export interface PhotoCheer {
   heartedAt: number | null;
 }
 
+/** One work day's hours. An end earlier than the start is a night shift. */
+export interface WorkSlot {
+  day: number; // 0 = Sunday … 6 = Saturday
+  start: string; // "09:30"
+  end: string; // "18:30"
+}
+
+/** One date that went differently from the usual hours. */
+export type DayChange = { start: string; end: string } | { off: true };
+
 /** Sleep and work hours, for the day split (Settings → Motivation & focus). */
 export interface Routine {
   sleepMinutes: number;
-  workStart: string | null; // "09:30"
-  workEnd: string | null; // "18:30" (earlier than the start = a night shift)
-  workDays: number[]; // 0 = Sunday … 6 = Saturday
+  work?: WorkSlot[]; // each work day with its own hours (missing on routines saved before per-day hours)
+  dayChanges?: Record<string, DayChange>; // "YYYY-MM-DD" → that day's hours, kept for two weeks
+  // The old shape: the same hours on every work day. Still sent, for older app versions.
+  workStart: string | null;
+  workEnd: string | null;
+  workDays: number[];
 }
 
 /** A topic due for revision (1, 3, 7 and 21 days after you first finished it). */

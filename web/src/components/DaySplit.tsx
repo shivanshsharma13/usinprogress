@@ -1,8 +1,8 @@
 // Where your day goes (Settings → Motivation & focus → Day split). You tell us how much you sleep and when you
-// work; every day is then split into sleep, work, study and timepass — the free time you didn't study. Your
+// work — each work day with its own hours, and any single day can be changed on its own; every day is then split into sleep, work, study and timepass — the free time you didn't study. Your
 // friend's split shows next to yours while they have it on.
 import { useState } from 'react';
-import type { PublicUser, Routine } from '@shared/types';
+import type { DayChange, PublicUser, Routine, WorkSlot } from '@shared/types';
 import { api } from '../lib/api';
 import { usePref } from '../lib/prefs';
 import { useAction, useProgress, useRoutine } from '../lib/queries';
@@ -13,6 +13,7 @@ const INTRO_DISMISSED = 'us-in-progress-day-split-intro';
 // Mon-first, as people think of a work week.
 const WEEK = [1, 2, 3, 4, 5, 6, 0];
 const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const PARTS = [
   { key: 'sleep', label: 'Sleep' },
   { key: 'work', label: 'Work' },
@@ -26,17 +27,38 @@ const weekday = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
 const minutesOf = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
 const hours = (min: number) => fmt(Math.round(min) * 60_000);
 
-/** Work minutes on a working day (an end before the start is a night shift). */
-export function workMinutes(r: Routine): number {
-  if (!r.workStart || !r.workEnd) return 0;
-  const d = minutesOf(r.workEnd) - minutesOf(r.workStart);
+const DEFAULT_HOURS = { start: '09:30', end: '18:30' };
+
+/** Minutes from start to end (an end before the start is a night shift). */
+export function span(start: string, end: string): number {
+  const d = minutesOf(end) - minutesOf(start);
   return d > 0 ? d : d + DAY_MIN;
 }
+
+/** Each work day with its hours. Routines saved before per-day hours had one set of hours for all work days. */
+export function workSlots(r: Routine): WorkSlot[] {
+  if (r.work) return r.work;
+  return r.workStart && r.workEnd ? r.workDays.map((day) => ({ day, start: r.workStart!, end: r.workEnd! })) : [];
+}
+
+/** The work hours on a date: that day's own change if it has one, otherwise the usual hours for its weekday. */
+export function hoursOn(r: Routine, date: string): { start: string; end: string } | null {
+  const change = r.dayChanges?.[date];
+  if (change) return 'off' in change ? null : change;
+  return workSlots(r).find((s) => s.day === weekday(date)) ?? null;
+}
+
+const clock = (hhmm: string) => {
+  const [h, m] = [Number(hhmm.slice(0, 2)), hhmm.slice(3)];
+  return `${h % 12 || 12}${m === '00' ? '' : `:${m}`}${h < 12 ? 'am' : 'pm'}`;
+};
+const range = (h: { start: string; end: string }) => `${clock(h.start)}–${clock(h.end)}`;
 
 /** One day: sleep and work from the routine, study from the timer, and the rest of the free time is timepass. */
 export function splitDay(r: Routine, date: string, studyMs: number): Split {
   const sleep = r.sleepMinutes;
-  const work = r.workDays.includes(weekday(date)) ? workMinutes(r) : 0;
+  const hrs = hoursOn(r, date);
+  const work = hrs ? span(hrs.start, hrs.end) : 0;
   const study = Math.min(studyMs / 60_000, Math.max(0, DAY_MIN - sleep - work));
   return { sleep, work, study, timepass: Math.max(0, DAY_MIN - sleep - work - study) };
 }
@@ -67,6 +89,7 @@ function SplitBar({ split, label }: { split: Split; label: string }) {
 
 function PersonSplit({ user, isMe, routine, view, today }: { user: PublicUser; isMe: boolean; routine: Routine; view: 'today' | 'week'; today: string }) {
   const { data: stats } = useProgress(isMe ? undefined : user.id);
+  const [changing, setChanging] = useState(false);
   if (!stats) return null;
   const name = isMe ? 'You' : user.displayName;
   const studiedToday = stats.daily.find((d) => d.date === today)?.ms ?? stats.todayMs;
@@ -85,6 +108,15 @@ function PersonSplit({ user, isMe, routine, view, today }: { user: PublicUser; i
             ? `${hours(s.timepass)} free today and nothing studied yet${isMe ? ' — even 25 minutes counts.' : '.'}`
             : `${hours(s.study)} studied, ${hours(s.timepass)} of free time left as timepass.`}
         </p>
+        {isMe && (
+          <div className="row wrap small" style={{ gap: 6 }}>
+            <span className="muted">{workToday(routine, today)}</span>
+            <button className="btn ghost small" style={{ padding: '0 4px', minHeight: 0 }} onClick={() => setChanging(true)}>
+              Different today?
+            </button>
+          </div>
+        )}
+        {changing && <DayHoursModal routine={routine} date={today} onClose={() => setChanging(false)} />}
       </div>
     );
   }
@@ -103,7 +135,7 @@ function PersonSplit({ user, isMe, routine, view, today }: { user: PublicUser; i
       <SplitBar split={week} label={`${name}, last ${days.length} days`} />
       <div className="split-days">
         {splits.map(({ date, s }) => (
-          <div key={date} className="split-day" title={`${SHORT[weekday(date)]}: studied ${hours(s.study)}, timepass ${hours(s.timepass)}`}>
+          <div key={date} className={`split-day${routine.dayChanges?.[date] ? ' changed' : ''}`} title={`${SHORT[weekday(date)]}${routine.dayChanges?.[date] ? ' (hours changed that day)' : ''}: studied ${hours(s.study)}, timepass ${hours(s.timepass)}`}>
             <span className="tiny muted">{SHORT[weekday(date)]}</span>
             <div className="split-bar thin" aria-hidden="true">
               {PARTS.filter((p) => s[p.key] > 0).map((p) => (
@@ -190,14 +222,41 @@ export function DaySplitCard({ me, friend, today }: { me: PublicUser; friend: Pu
   );
 }
 
-/** How much you sleep, and when you work. */
+function workToday(r: Routine, today: string): string {
+  const hrs = hoursOn(r, today);
+  const changed = Boolean(r.dayChanges?.[today]);
+  if (!hrs) return changed ? 'No work today (changed for today).' : 'No work today.';
+  return `Work today ${range(hrs)}${changed ? ' (changed for today)' : ''}.`;
+}
+
+/** "From … To …" for one set of hours. */
+function HoursInputs({ value, onChange, label }: { value: { start: string; end: string }; onChange: (v: { start: string; end: string }) => void; label: string }) {
+  return (
+    <span className="hours-inputs" role="group" aria-label={label}>
+      <input className="input" type="time" aria-label={`${label} from`} value={value.start} onChange={(e) => onChange({ ...value, start: e.target.value })} />
+      <span className="muted" aria-hidden="true">–</span>
+      <input className="input" type="time" aria-label={`${label} to`} value={value.end} onChange={(e) => onChange({ ...value, end: e.target.value })} />
+    </span>
+  );
+}
+
+const validHours = (h: { start: string; end: string }) => Boolean(h.start && h.end && h.start !== h.end);
+
+/** How much you sleep, and when you work — each day with its own hours. */
 export function RoutineModal({ routine, onClose, onSaved }: { routine: Routine | null; onClose: () => void; onSaved?: () => void }) {
+  const saved = routine ? workSlots(routine) : null;
   const [sleep, setSleep] = useState(routine?.sleepMinutes ?? 7 * 60);
-  const [works, setWorks] = useState(routine ? Boolean(routine.workStart) : true);
-  const [start, setStart] = useState(routine?.workStart ?? '09:30');
-  const [end, setEnd] = useState(routine?.workEnd ?? '18:30');
-  const [days, setDays] = useState<number[]>(routine?.workDays ?? [1, 2, 3, 4, 5]);
-  const body: Routine = { sleepMinutes: sleep, workStart: works ? start : null, workEnd: works ? end : null, workDays: works ? days : [] };
+  const [works, setWorks] = useState(saved ? saved.length > 0 : true);
+  // Every weekday keeps its hours while switched off, so turning a day back on brings them back.
+  const [week, setWeek] = useState(() =>
+    WEEK.map((day) => {
+      const slot = saved?.find((s) => s.day === day);
+      return { day, on: saved ? Boolean(slot) : day >= 1 && day <= 5, start: slot?.start ?? saved?.[0]?.start ?? DEFAULT_HOURS.start, end: slot?.end ?? saved?.[0]?.end ?? DEFAULT_HOURS.end };
+    }),
+  );
+  const set = (day: number, patch: Partial<(typeof week)[number]>) => setWeek(week.map((d) => (d.day === day ? { ...d, ...patch } : d)));
+  const onDays = week.filter((d) => d.on);
+  const body = { sleepMinutes: sleep, work: works ? onDays.map(({ day, start, end }) => ({ day, start, end })) : [] };
   const save = useAction(() => api.put<{ routine: Routine }>('/routine', body), {
     invalidate: [['routine']],
     success: 'Saved ⏰',
@@ -206,7 +265,9 @@ export function RoutineModal({ routine, onClose, onSaved }: { routine: Routine |
       onClose();
     },
   });
-  const valid = !works || (start && end && start !== end && days.length > 0);
+  const valid = !works || (onDays.length > 0 && onDays.every(validHours));
+  const first = onDays[0];
+  const allSame = onDays.every((d) => first && d.start === first.start && d.end === first.end);
 
   return (
     <Modal
@@ -237,28 +298,92 @@ export function RoutineModal({ routine, onClose, onSaved }: { routine: Routine |
         <Switch checked={works} onChange={setWorks} label="I have office, work or college hours" />
         {works && (
           <>
-            <div className="row wrap" style={{ gap: 10 }}>
-              <label className="stack" style={{ gap: 4 }}>
-                <span className="tiny muted">From</span>
-                <input className="input" type="time" value={start} onChange={(e) => setStart(e.target.value)} />
-              </label>
-              <label className="stack" style={{ gap: 4 }}>
-                <span className="tiny muted">To</span>
-                <input className="input" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
-              </label>
-              {start && end && start !== end && <span className="small muted">= {hours(workMinutes(body))}</span>}
-            </div>
-            <div className="row wrap" style={{ gap: 6 }} role="group" aria-label="Work days">
-              {WEEK.map((d) => (
-                <button key={d} type="button" className={`chip-btn${days.includes(d) ? ' on' : ''}`} aria-pressed={days.includes(d)} onClick={() => setDays(days.includes(d) ? days.filter((x) => x !== d) : [...days, d])}>
-                  {SHORT[d]}
-                </button>
-              ))}
-            </div>
             <p className="tiny muted" style={{ margin: 0 }}>
-              On days off, only sleep is taken out of the day.
+              Tap a day to turn it on or off, and set its own hours.
+            </p>
+            <ul className="week-hours">
+              {week.map((d) => (
+                <li key={d.day} className={d.on ? '' : 'off'}>
+                  <button type="button" className={`chip-btn${d.on ? ' on' : ''}`} aria-pressed={d.on} onClick={() => set(d.day, { on: !d.on })}>
+                    {SHORT[d.day]}
+                  </button>
+                  {d.on ? (
+                    <>
+                      <HoursInputs label={SHORT[d.day]} value={d} onChange={(h) => set(d.day, h)} />
+                      <span className="tiny muted num">{validHours(d) ? hours(span(d.start, d.end)) : ''}</span>
+                    </>
+                  ) : (
+                    <span className="small muted">Off</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {first && onDays.length > 1 && !allSame && (
+              <button
+                type="button"
+                className="btn ghost small"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => setWeek(week.map((d) => (d.on ? { ...d, start: first.start, end: first.end } : d)))}
+              >
+                Use {SHORT[first.day]}'s hours for every day
+              </button>
+            )}
+            <p className="tiny muted" style={{ margin: 0 }}>
+              On days off, only sleep is taken out of the day. If one day goes differently, change just that day from Home.
             </p>
           </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/** Change one day's work hours without touching the usual ones. */
+function DayHoursModal({ routine, date, onClose }: { routine: Routine; date: string; onClose: () => void }) {
+  const change = routine.dayChanges?.[date];
+  const usual = workSlots(routine).find((s) => s.day === weekday(date)) ?? null;
+  const [off, setOff] = useState(Boolean(change && 'off' in change));
+  const [hrs, setHrs] = useState(hoursOn(routine, date) ?? usual ?? workSlots(routine)[0] ?? DEFAULT_HOURS);
+  const save = useAction((hours: DayChange | null) => api.put<{ routine: Routine }>('/routine/day', { date, hours }), {
+    invalidate: [['routine']],
+    success: (r) => (r.routine.dayChanges?.[date] ? 'Changed for today' : 'Back to your usual hours'),
+    onSuccess: onClose,
+  });
+
+  return (
+    <Modal
+      title="Work hours today"
+      onClose={onClose}
+      footer={
+        <>
+          {change && (
+            <button className="btn ghost" disabled={save.isPending} onClick={() => save.mutate(null)}>
+              Back to usual
+            </button>
+          )}
+          <button className="btn primary" disabled={(!off && !validHours(hrs)) || save.isPending} onClick={() => save.mutate(off ? { off: true } : hrs)}>
+            Save for today
+          </button>
+        </>
+      }
+    >
+      <div className="stack">
+        <p className="small muted" style={{ margin: 0 }}>
+          Usually {usual ? range(usual) : 'no work'} on {LONG[weekday(date)]}s. This only changes today.
+        </p>
+        <div className="row wrap" style={{ gap: 6 }} role="group" aria-label="Today">
+          <button type="button" className={`chip-btn${!off ? ' on' : ''}`} aria-pressed={!off} onClick={() => setOff(false)}>
+            I worked or had class
+          </button>
+          <button type="button" className={`chip-btn${off ? ' on' : ''}`} aria-pressed={off} onClick={() => setOff(true)}>
+            No work today
+          </button>
+        </div>
+        {!off && (
+          <div className="row wrap" style={{ gap: 10 }}>
+            <HoursInputs label="Today" value={hrs} onChange={setHrs} />
+            {validHours(hrs) && <span className="small muted">= {hours(span(hrs.start, hrs.end))}</span>}
+          </div>
         )}
       </div>
     </Modal>
