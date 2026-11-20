@@ -12,7 +12,7 @@ import { Plant } from '../components/Plant';
 import { RevisionsDue } from '../components/Revisions';
 import { StreaksAndRecap } from '../components/Streaks';
 import { DaySplitCard } from '../components/DaySplit';
-import { PhotoEnvelope } from '../components/PhotoCheers';
+import { PhotoWall } from '../components/PhotoCheers';
 import { ChallengeCard } from '../components/Challenge';
 import { CheckIcon, PlayIcon } from '../components/icons';
 
@@ -35,7 +35,7 @@ export function HomePage() {
   const { me, activeSession, primary, friends, today, plans, rooms, upcoming, plannedTasks } = data;
   // Goal tasks and calendar tasks together, soonest first.
   const comingUp = [
-    ...plannedTasks.map((p) => ({ key: p.id, date: p.date, title: p.title, time: '', detail: `${p.planTitle} · Sprint ${p.sprintNumber}${p.estMinutes ? ` · ~${p.estMinutes}m` : ''}`, study: p.roomId && p.topicId && p.date === me.today ? p.topicId : null, goal: p.planId })),
+    ...plannedTasks.map((p) => ({ key: p.id, date: p.date, title: p.title, time: '', detail: `${p.planTitle}${p.estMinutes ? ` · ~${p.estMinutes}m` : ''}`, study: p.roomId && p.topicId && p.date === me.today ? p.topicId : null, goal: p.planId })),
     ...upcoming.map((t) => ({ key: t.id, date: t.date!, title: t.title, time: t.startTime ?? '', detail: t.topicTitle ?? '', study: null, goal: null })),
   ]
     .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
@@ -56,7 +56,7 @@ export function HomePage() {
         </div>
       </div>
 
-      <PhotoEnvelope meId={me.id} />
+      <PhotoWall meId={me.id} />
       <DaySplitCard me={me} friend={friend?.user} today={me.today} />
       <StreaksAndRecap me={me} friends={friends.map((f) => f.user)} today={me.today} />
 
@@ -112,15 +112,15 @@ export function HomePage() {
               <Empty
                 title="Let's start small."
                 action={
-                  <Link className="btn primary big" to={friend ? (rooms.length ? `/rooms/${rooms[0].id}` : '/rooms?new=1') : '/friends'}>
-                    {friend ? 'Add your first topic or task' : 'Find your friend'}
+                  <Link className="btn primary big" to={friend ? (rooms.length ? `/rooms/${rooms[0].id}?add=1` : '/rooms?new=1') : '/friends'}>
+                    {friend ? (rooms.length ? 'Add a task for today' : 'Create a room together') : 'Find your friend'}
                   </Link>
                 }
               >
                 {friend
                   ? nothingYet
-                    ? `Create a room with ${friend.user.displayName}, add a topic, and press start. We'll keep track of the rest.`
-                    : 'Everything is done for now. Add a new topic or plan something on the calendar.'
+                    ? rooms.length ? `Add a task for today, then press start. We'll keep track of the rest.` : `Create a room with ${friend.user.displayName}, add a task, and press start. We'll keep track of the rest.`
+                    : 'Everything is done for now. Add another task for today, or plan one for tomorrow.'
                   : 'Us in Progress is better together. Find your friend by their username to begin.'}
               </Empty>
             </div>
@@ -243,7 +243,7 @@ export function HomePage() {
               <div className="row">
                 <Plant percent={0} size={48} />
                 <p className="small muted grow">
-                  No goals yet. <Link to="/goals?new=1">Make a plan</Link> — split it into sprints and days, then pull a sprint into your room.
+                  No goals yet. <Link to="/goals?new=1">Make one</Link> — a list of tasks, like a subject. Its tasks show up in your room.
                 </p>
               </div>
             )}

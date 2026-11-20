@@ -9,9 +9,11 @@ import type { ZodType } from 'zod';
 import * as v from '../../../shared/validation.ts';
 import { addDays, addMonths, localDate } from '../../../shared/dates.ts';
 import { focusedMs } from '../../../shared/timer.ts';
-import { buildPlan, buildSprint, dateOf, sprintFor, spansOf, summarizePlan, type PlanRow, type SprintRow, type SprintSpan } from '../../../shared/planView.ts';
+import { buildPlan, buildSprint, dateOf, goalTasks, sprintFor, spansOf, summarizePlan, type PlanRow, type SprintRow, type SprintSpan } from '../../../shared/planView.ts';
 import type {
   Activity,
+  GoalRef,
+  GoalTask,
   ActiveSession,
   CalendarPlanItem,
   CompletionSummary,
@@ -265,8 +267,22 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   }
 
   async function roomDetail(roomId: string): Promise<RoomDetail> {
-    const { values, error } = await together([roomsData(roomId), myId().then((id) => listActivity(id, { roomId, limit: 15 })), sharedSprints(roomId), rpc<Row[]>('room_forest', { p_room: roomId }), rpc<number>('room_blooms', { p_room: roomId })] as const);
-    const [data, activity, sprints, forest, blooms] = values as unknown as [Awaited<ReturnType<typeof roomsData>> | undefined, Activity[], RoomSprint[], Row[], number];
+    const { values, error } = await together([
+      roomsData(roomId),
+      myId().then((id) => listActivity(id, { roomId, limit: 15 })),
+      sharedSprints(roomId),
+      rpc<Row[]>('room_forest', { p_room: roomId }),
+      rpc<number>('room_blooms', { p_room: roomId }),
+      roomTasks(roomId),
+    ] as const);
+    const [data, activity, sprints, forest, blooms, goals] = values as unknown as [
+      Awaited<ReturnType<typeof roomsData>> | undefined,
+      Activity[],
+      RoomSprint[],
+      Row[],
+      number,
+      { goals: GoalRef[]; tasks: GoalTask[] } | undefined,
+    ];
     if (data && !data.summaries.length) throw notFound('That room could not be found.');
     if (error) throw error;
     const { summaries, topics } = data!;
@@ -278,6 +294,22 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       sprints,
       forest: Object.fromEntries(forest.map((f) => [f.user_id, f.full_days])),
       blooms: blooms ?? 0,
+      goals: goals?.goals ?? [],
+      tasks: goals?.tasks ?? [],
+    };
+  }
+
+  /** Both members' goals in a room and their tasks with real dates. */
+  async function roomTasks(roomId: string): Promise<{ goals: GoalRef[]; tasks: GoalTask[] }> {
+    const [list, roomTime] = await Promise.all([
+      rpc<Row[]>('room_goals', { p_room: roomId }),
+      rpc<Row[]>('room_topic_time', { p_room: roomId }).then((r) => new Map(r.map((x) => [x.topic_id, Number(x.ms)]))),
+    ]);
+    const plans: PlanRow[] = list.map((g) => ({ id: g.id, owner_id: g.owner_id, title: g.title, start_date: g.start_date, sprint_days: 7, status: 'active', created_at: 0 }));
+    const tasks = await planTasks(ids(plans.map((x) => x.id)), async () => roomTime);
+    return {
+      goals: plans.map((x) => ({ id: x.id, title: x.title, ownerId: x.owner_id })),
+      tasks: plans.flatMap((x) => goalTasks(x, tasks.get(x.id) ?? [])),
     };
   }
 
@@ -330,7 +362,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     const plans = await rows<PlanRow & { plan_sprints: Row[]; plan_tasks: Row[] }>(
       sb
         .from('plans')
-        .select(`*, plan_sprints(*, rooms(name)), plan_tasks(${PLAN_TASK_COLUMNS})`)
+        .select(`*, rooms(name), plan_sprints(*, rooms(name)), plan_tasks(${PLAN_TASK_COLUMNS})`)
         .eq('owner_id', viewer.id)
         .eq('plan_tasks.status', 'active')
         .eq('plan_tasks.topics.topic_completions.kind', 'first')
@@ -896,12 +928,29 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { plans: await listPlans() };
       case 'POST /plans': {
         const input = parse(v.planCreateSchema, body);
+        if ('roomId' in input) return { id: await rpc('create_goal', { p_title: input.title, p_room: input.roomId }) };
         return { id: await rpc('create_plan', { p_title: input.title, p_start: input.startDate, p_sprint_days: input.sprintDays }) };
       }
       case 'GET /plans/:id':
         return { plan: await getPlan(p[0]) };
-      case 'PATCH /plans/:id':
-        await rpc('update_plan', { p_plan: p[0], p_patch: parse(v.planUpdateSchema, body) });
+      case 'PATCH /plans/:id': {
+        const { roomId, ...patch } = parse(v.planUpdateSchema, body);
+        if (Object.keys(patch).length) await rpc('update_plan', { p_plan: p[0], p_patch: patch });
+        if (roomId) await rpc('set_goal_room', { p_plan: p[0], p_room: roomId });
+        return { ok: true };
+      }
+      case 'POST /plans/:id/merge':
+        return { moved: await rpc('merge_goal', { p_from: p[0], p_into: parse(v.goalMergeSchema, body).into }) };
+      case 'POST /plans/:id/goal-tasks': {
+        const input = parse(v.goalTaskCreateSchema, body);
+        return { id: await rpc('add_goal_task', { p_plan: p[0], p_date: input.date, p_title: input.title, p_est: input.estMinutes ?? null }) };
+      }
+      case 'POST /rooms/:id/tasks': {
+        const input = parse(v.goalTaskCreateSchema, body);
+        return { id: await rpc('add_room_task', { p_room: p[0], p_plan: input.planId ?? null, p_date: input.date, p_title: input.title, p_est: input.estMinutes ?? null }) };
+      }
+      case 'PATCH /goal-tasks/:id':
+        await rpc('edit_goal_task', { p_task: p[0], p_patch: parse(v.goalTaskUpdateSchema, body) });
         return { ok: true };
       case 'POST /plans/:id/sprints':
         return { number: await rpc('add_sprint', { p_plan: p[0], p_days: parse(v.sprintCreateSchema, body ?? {}).days ?? null }) };

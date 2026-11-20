@@ -4,7 +4,7 @@
 // parked in the backlog (day null). An unfinished task on a past day also counts as backlog; it never
 // moves forward on its own. A past day is judged by what was planned for it and done by that date.
 import { addDays } from './dates.ts';
-import type { DayStatus, Plan, PlanDay, PlanSprint, PlanSummary, PlanTask } from './types.ts';
+import type { DayStatus, GoalTask, Plan, PlanDay, PlanSprint, PlanSummary, PlanTask } from './types.ts';
 
 export interface PlanRow {
   id: string;
@@ -14,6 +14,8 @@ export interface PlanRow {
   sprint_days: number;
   status: 'active' | 'archived';
   created_at: number;
+  room_id?: string | null;
+  rooms?: { name: string } | null;
 }
 
 export interface SprintRow {
@@ -101,7 +103,26 @@ export function summarizePlan(plan: PlanRow, sprints: SprintSpan[], tasks: PlanT
     backlog: tasks.filter((t) => isBacklog(plan, t, today)).length,
     focusedMs: tasks.reduce((sum, t) => sum + t.focusedMs, 0),
     status: plan.status,
+    roomId: plan.room_id ?? null,
+    roomName: plan.rooms?.name ?? null,
   };
+}
+
+/** Tasks with their real dates (rooms and goal pages show dates, not plan days). */
+export function goalTasks(plan: PlanRow, tasks: PlanTask[]): GoalTask[] {
+  return tasks.map((t) => ({
+    id: t.id,
+    planId: plan.id,
+    planTitle: plan.title,
+    ownerId: plan.owner_id,
+    title: t.title,
+    date: t.day === null ? null : dateOf(plan, t.day),
+    estMinutes: t.estMinutes,
+    topicId: t.topicId,
+    done: t.done,
+    doneDate: t.doneDate,
+    focusedMs: t.focusedMs,
+  }));
 }
 
 export function buildPlan(plan: PlanRow, sprints: SprintSpan[], tasks: PlanTask[], today: string): Plan {
@@ -109,5 +130,6 @@ export function buildPlan(plan: PlanRow, sprints: SprintSpan[], tasks: PlanTask[
     ...summarizePlan(plan, sprints, tasks, today),
     sprints: sprints.map((s) => buildSprint(plan, s, tasks, today)),
     backlogTasks: tasks.filter((t) => isBacklog(plan, t, today)).sort((a, b) => (homeDay(a) ?? Infinity) - (homeDay(b) ?? Infinity)),
+    tasks: goalTasks(plan, tasks),
   };
 }

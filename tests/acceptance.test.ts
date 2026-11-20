@@ -872,6 +872,67 @@ test('day split: sleep and work hours are checked, and only friends see them whi
   await A.patch('/me', { prefs: { daySplit: false } });
 });
 
+test('simple goals: tasks live in a room with any date or none, and nothing needs pulling', async () => {
+  const roomTasks = async (c: Client) => (await c.get(`/rooms/${roomId}`)).body;
+  // Adding in a room with no goal there makes "My tasks" for you.
+  const first = await B.post(`/rooms/${roomId}/tasks`, { title: 'Read the cardiology chapter', date: today });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  let room = await roomTasks(B);
+  const mine = room.goals.filter((g: any) => g.ownerId === b.id);
+  assert.ok(mine.some((g: any) => g.title === 'My tasks'));
+
+  // A new goal is made right in the room; tasks take any date, or none.
+  const goal = (await B.post('/plans', { title: 'Obs & gynae', roomId })).body.id;
+  const add = (date: string | null, title: string) => B.post(`/plans/${goal}/goal-tasks`, { title, date });
+  await add(today, 'Antenatal care');
+  await add(addDays(today, 40), 'Revise placenta'); // past the first week: the goal stretches
+  await add(addDays(today, -3), 'Caught up: menstrual cycle'); // before the start: the goal starts earlier
+  await add(null, 'Make a mnemonic list');
+  const plan = (await B.get(`/plans/${goal}`)).body.plan;
+  assert.deepEqual(
+    plan.tasks.map((t: any) => [t.title, t.date]).sort(),
+    [
+      ['Antenatal care', today],
+      ['Caught up: menstrual cycle', addDays(today, -3)],
+      ['Make a mnemonic list', null],
+      ['Revise placenta', addDays(today, 40)],
+    ].sort(),
+  );
+  assert.equal(plan.roomId, roomId);
+  // Every task, undated too, can be studied in the room.
+  assert.ok(plan.tasks.every((t: any) => t.topicId));
+
+  // Your friend sees your dated tasks in the room (and the undated one as a topic).
+  room = await roomTasks(A);
+  const seen = room.tasks.filter((t: any) => t.planId === goal).map((t: any) => t.title);
+  assert.ok(seen.includes('Antenatal care') && seen.includes('Revise placenta'));
+  assert.ok(room.topics.some((t: any) => t.title === 'Make a mnemonic list'));
+  assert.equal((await A.post(`/plans/${goal}/goal-tasks`, { title: 'Not yours', date: today })).status, 404);
+
+  // Moving a task to another day, or to no date.
+  const placenta = plan.tasks.find((t: any) => t.title === 'Revise placenta');
+  await B.patch(`/goal-tasks/${placenta.id}`, { date: addDays(today, 1) });
+  await B.patch(`/goal-tasks/${plan.tasks.find((t: any) => t.title === 'Make a mnemonic list').id}`, { date: today });
+  const moved = (await B.get(`/plans/${goal}`)).body.plan.tasks;
+  assert.equal(moved.find((t: any) => t.id === placenta.id).date, addDays(today, 1));
+  assert.equal(moved.find((t: any) => t.title === 'Make a mnemonic list').date, today);
+
+  // Merging keeps dates and progress, and archives the emptied goal.
+  const dup = (await B.post('/plans', { title: 'obs', roomId })).body.id;
+  await B.post(`/plans/${dup}/goal-tasks`, { title: 'Pre-eclampsia', date: addDays(today, 2) });
+  const r = await B.post(`/plans/${dup}/merge`, { into: goal });
+  assert.equal(r.body.moved, 1);
+  const merged = (await B.get(`/plans/${goal}`)).body.plan.tasks;
+  assert.equal(merged.find((t: any) => t.title === 'Pre-eclampsia').date, addDays(today, 2));
+  assert.equal((await B.get('/plans')).body.plans.find((p: any) => p.id === dup).status, 'archived');
+  assert.equal((await A.post(`/plans/${goal}/merge`, { into: dup })).status, 404);
+
+  // A sprint that was "reviewed" the old way no longer hides anything.
+  await srv.db.query('UPDATE plan_sprints SET completed_at = 1 WHERE plan_id = ?', [goal]);
+  await B.post(`/plans/${goal}/goal-tasks`, { title: 'Labour stages', date: today });
+  assert.ok((await roomTasks(A)).tasks.some((t: any) => t.title === 'Labour stages'));
+});
+
 test('photo cheers: friends only, both switched on, private to the two of them, gone after a day', async () => {
   const jpeg = 'data:image/jpeg;base64,' + Buffer.from('not really a jpeg, but small').toString('base64');
   const send = (from: Client, to: string, extra: object = {}) => from.post('/photos', { to, image: jpeg, ...extra });
