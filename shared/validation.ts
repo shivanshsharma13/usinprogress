@@ -159,16 +159,33 @@ export const sessionCorrectSchema = z.object({
 
 const sprintLength = z.number().int().min(1, 'At least 1 day').max(60, 'Up to 60 days');
 
-export const planCreateSchema = z.object({
-  title,
-  startDate: date,
-  sprintDays: sprintLength,
-});
+export const planCreateSchema = z.union([
+  z.object({ title, roomId: z.string().uuid('Choose a room') }),
+  // The older shape (start date and sprint length), still accepted.
+  z.object({ title, startDate: date, sprintDays: sprintLength }),
+]);
 
 export const planUpdateSchema = z.object({
   title: title.optional(),
   status: z.enum(['active', 'archived']).optional(),
+  roomId: z.string().uuid().optional(),
 });
+
+// A task in a goal: a date ("YYYY-MM-DD") or null for no date.
+export const goalTaskCreateSchema = z.object({
+  title,
+  date: date.nullable(),
+  estMinutes: minutes.max(24 * 60).nullable().optional(),
+  planId: z.string().uuid().nullable().optional(), // rooms only: which of your goals here (default: your latest)
+});
+
+export const goalTaskUpdateSchema = z.object({
+  title: title.optional(),
+  date: date.nullable().optional(),
+  estMinutes: minutes.max(24 * 60).nullable().optional(),
+});
+
+export const goalMergeSchema = z.object({ into: z.string().uuid() });
 
 export const sprintCreateSchema = z.object({ days: sprintLength.optional() });
 export const sprintUpdateSchema = z.object({ days: sprintLength });

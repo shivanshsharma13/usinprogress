@@ -98,7 +98,7 @@ export function LeaveRoomModal({
     >
       <ul className="small stack" style={{ gap: 6, paddingLeft: 18, margin: 0 }}>
         <li>The room leaves your list. This can't be undone; you can always create a new room.</li>
-        <li>Your topics in it are archived and any sprint you pulled in goes back to your goals. Your study hours stay in your progress.</li>
+        <li>Your tasks in it are archived; your goals stay in Goals. Your study hours stay in your progress.</li>
         <li>{other ? `${other.displayName} keeps the room and their own topics.` : 'Nobody else is in this room, so it closes.'}</li>
         <li className="muted">Only want to pause it? Archive it instead — that can be undone.</li>
       </ul>
