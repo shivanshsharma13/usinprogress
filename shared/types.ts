@@ -194,6 +194,8 @@ export interface RoomDetail extends RoomSummary {
   sprints: RoomSprint[]; // both members' sprints pulled into this room
   forest: Record<string, number>; // per member: days they finished everything planned in this room
   blooms: number; // weekly challenges the two members won together (golden sunflowers)
+  goals: GoalRef[]; // both members' goals in this room
+  tasks: GoalTask[]; // their tasks (your friend's undated ones show only as topics)
 }
 
 export interface TopicHistoryEntry {
@@ -275,11 +277,36 @@ export interface PlanSummary {
   backlog: number;
   focusedMs: number;
   status: 'active' | 'archived';
+  roomId: string | null; // the room the goal lives in
+  roomName: string | null;
+}
+
+/** A goal's task with its real date, as rooms and goal pages list them. */
+export interface GoalTask {
+  id: string; // plan task id
+  planId: string;
+  planTitle: string;
+  ownerId: string;
+  title: string;
+  date: string | null; // null = no date
+  estMinutes: number | null;
+  topicId: string | null; // its topic in the goal's room (what you study)
+  done: boolean;
+  doneDate: string | null;
+  focusedMs: number;
+}
+
+/** A goal as a room lists it. */
+export interface GoalRef {
+  id: string;
+  title: string;
+  ownerId: string;
 }
 
 export interface Plan extends PlanSummary {
   sprints: PlanSprint[];
   backlogTasks: PlanTask[];
+  tasks: GoalTask[]; // every task, with its date
 }
 
 /** A goal task on a calendar day: yours, or your friend's from a sprint pulled into a shared room. */

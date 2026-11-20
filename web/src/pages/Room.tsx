@@ -1,30 +1,26 @@
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { daysBetween, formatDate } from '@shared/dates';
-import { formatMinutes } from '@shared/timer';
-import type { MemberProgress, PlanDay, RoomDetail, RoomSprint, Topic, TopicMemberProgress } from '@shared/types';
-import { useAction, useMe, useRoom, useTopicHistory } from '../lib/queries';
+import type { GoalTask, MemberProgress, RoomDetail, Topic } from '@shared/types';
+import { useAction, useMe, useRoom } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
-import { celebrate, plantGrowth } from '../lib/celebrate';
-import { getFocusSettings } from '../lib/focusSettings';
-import { toast } from '../lib/toast';
 import { personVars } from '../lib/theme';
-import { Avatar, Empty, ErrorNote, Field, fmt, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine, relativeTime } from '../components/ui';
+import { Avatar, ErrorNote, Field, LiveDot, Menu, Modal, ProgressBar, Spinner, StatusLine } from '../components/ui';
 import { ActivityFeed } from '../components/Encourage';
 import { Forest, TodayPlant } from '../components/Garden';
 import { LeaveRoomModal } from '../components/Social';
 import { RevisionsDue } from '../components/Revisions';
-import { DAY_STATUS_LABEL } from '../components/PlanBits';
-import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, PlayIcon, PlusIcon } from '../components/icons';
+import { AddTaskBox, TaskList } from '../components/GoalTasks';
+import { ChevronLeft, PlayIcon } from '../components/icons';
 
-// Each person owns the topics they add. Both lists are visible side by side, but only the owner
-// can study, complete or change their own topics (enforced by the server too).
+// Each person owns the tasks they add. Both lists are visible side by side, but only the owner can study,
+// complete or change their own (enforced by the server too).
 export function RoomPage() {
   const { id } = useParams();
   const { data: me } = useMe();
   const { data: room, isLoading, error, refetch } = useRoom(id);
+  const [params] = useSearchParams();
   const [editing, setEditing] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const navigate = useNavigate();
@@ -71,7 +67,7 @@ export function RoomPage() {
 
       <div className="grid-2" style={{ alignItems: 'start' }}>
         {room.members.map((m) => (
-          <PersonColumn key={m.user.id} room={room} member={m} isMe={m.user.id === me.id} />
+          <PersonColumn key={m.user.id} room={room} member={m} isMe={m.user.id === me.id} today={me.today} autoAdd={m.user.id === me.id && params.get('add') === '1'} />
         ))}
       </div>
 
@@ -90,34 +86,43 @@ export function RoomPage() {
   );
 }
 
-function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: MemberProgress; isMe: boolean }) {
+/** A topic with no goal task you can see: your friend's undated tasks, or topics from before goals lived in rooms. */
+function topicAsTask(t: Topic, ownerId: string): GoalTask {
+  const p = t.progress[ownerId];
+  return {
+    id: `topic:${t.id}`,
+    planId: '',
+    planTitle: '',
+    ownerId,
+    title: t.title,
+    date: null,
+    estMinutes: t.estimatedMinutes,
+    topicId: t.id,
+    done: p?.status === 'completed',
+    doneDate: p?.completedAt ? new Date(p.completedAt).toISOString().slice(0, 10) : null,
+    focusedMs: p?.focusedMs ?? 0,
+  };
+}
+
+/** One person's side of the room: today's plant, an "Add a task" box (yours), and their tasks by day. */
+function PersonColumn({ room, member, isMe, today, autoAdd }: { room: RoomDetail; member: MemberProgress; isMe: boolean; today: string; autoAdd?: boolean }) {
   const navigate = useNavigate();
   const ownerId = member.user.id;
   const name = isMe ? 'You' : member.user.displayName;
   const active = room.status === 'active';
-  const topics = room.topics.filter((t) => t.createdBy === ownerId);
-  const sprints = room.sprints.filter((s) => s.ownerId === ownerId);
-  const loose = topics.filter((t) => !t.planTaskId);
-  // Goal → its sprints in this room.
-  const goals = [...new Set(sprints.map((s) => s.planId))].map((planId) => sprints.filter((s) => s.planId === planId));
-  const ctx: RowContext = { ownerId, isMe, active };
-
-  // Today's work: the "today" day of each sprint in this room.
-  const byId = new Map(topics.map((t) => [t.id, t]));
-  const today = sprints.flatMap((s) =>
-    s.days
-      .filter((d) => d.status === 'today')
-      .flatMap((d) => d.tasks.map((task) => ({ task, sprint: s, topic: byId.get(task.topicId ?? '') }))),
-  );
-  const todayTopics = today.map((x) => x.topic).filter(Boolean) as Topic[];
-  const doneToday = today.filter((x) => x.task.done).length;
-  const percent = today.length ? (doneToday / today.length) * 100 : 0;
-  const allDone = today.length > 0 && doneToday === today.length;
+  const linked = new Set(room.tasks.map((t) => t.topicId));
+  const tasks: GoalTask[] = [
+    ...room.tasks.filter((t) => t.ownerId === ownerId),
+    ...room.topics.filter((t) => t.createdBy === ownerId && !linked.has(t.id)).map((t) => topicAsTask(t, ownerId)),
+  ];
+  const goals = room.goals.filter((g) => g.ownerId === ownerId);
+  const todays = tasks.filter((t) => t.date === today);
+  const doneToday = todays.filter((t) => t.done).length;
+  const allDone = todays.length > 0 && doneToday === todays.length;
   const trees = room.forest[ownerId] ?? 0;
-  const showLabels = new Set(today.map((x) => `${x.sprint.planId}:${x.sprint.number}`)).size > 1;
 
   return (
-    <section className="stack" style={personVars(member.user.accent)} aria-label={`${name}'s plan`}>
+    <section className="stack" style={personVars(member.user.accent)} aria-label={`${name}'s tasks`}>
       <div className="card tint stack" style={{ gap: 10 }}>
         <div className="row">
           <Avatar user={member.user} size={40} />
@@ -131,308 +136,55 @@ function PersonColumn({ room, member, isMe }: { room: RoomDetail; member: Member
             </div>
           </div>
         </div>
-
-        {sprints.length > 0 && (
-          <div className="today-tree">
-            <TodayPlant percent={percent} color="var(--c)" />
-            <div className="stack" style={{ gap: 6, alignItems: 'center', textAlign: 'center' }}>
-              <b className="num">{today.length ? `${doneToday} of ${today.length} done today` : 'Nothing planned today'}</b>
-              <span className="tiny muted">
-                {allDone
-                  ? `All done for today. A new tree is growing in ${isMe ? 'your' : 'the'} forest 🌳`
-                  : today.length
-                    ? `${isMe ? 'Your' : 'The'} plant grows a leaf with every task and blooms when today is finished.`
-                    : 'A rest day. The plant is napping, and so can you.'}
-              </span>
-            </div>
-            {today.length > 0 && <ProgressBar value={doneToday} max={today.length} accent={member.user.accent} label={`${name}: ${doneToday} of ${today.length} today`} />}
+        <div className="today-tree">
+          <TodayPlant percent={todays.length ? (doneToday / todays.length) * 100 : 0} color="var(--c)" />
+          <div className="stack" style={{ gap: 6, alignItems: 'center', textAlign: 'center' }}>
+            <b className="num">{todays.length ? `${doneToday} of ${todays.length} done today` : 'Nothing planned today'}</b>
+            <span className="tiny muted">
+              {allDone
+                ? `All done for today. A new tree is growing in ${isMe ? 'your' : 'the'} forest 🌳`
+                : todays.length
+                  ? `${isMe ? 'Your' : 'The'} plant grows a leaf with every task and blooms when today is finished.`
+                  : isMe
+                    ? 'Add a task for today below, and watch the plant grow.'
+                    : 'A rest day. The plant is napping.'}
+            </span>
           </div>
-        )}
-
+          {todays.length > 0 && <ProgressBar value={doneToday} max={todays.length} accent={member.user.accent} label={`${name}: ${doneToday} of ${todays.length} today`} />}
+        </div>
         {isMe && active && room.nextTopic && (
-          <button className="btn primary" onClick={() => navigate(`/study?topic=${room.nextTopic!.id}`)}>
-            <PlayIcon /> Study next: {room.nextTopic.title}
+          <button className="btn primary study-next" onClick={() => navigate(`/study?topic=${room.nextTopic!.id}`)}>
+            <PlayIcon /> <span>Study next: {room.nextTopic.title}</span>
           </button>
         )}
       </div>
 
       {isMe && active && <RevisionsDue roomId={room.id} />}
+      {isMe && active && <AddTaskBox roomId={room.id} goals={goals} today={today} autoFocus={autoAdd} />}
 
-      {!sprints.length && !topics.length && (
-        <p className="small muted">
-          {isMe ? (
-            <>
-              Nothing here yet. Open one of your <Link to="/goals">goals</Link> and pull its current sprint into this room.
-            </>
-          ) : (
-            `${member.user.displayName} hasn’t brought a sprint into this room yet.`
-          )}
-        </p>
-      )}
+      <TaskList
+        tasks={tasks}
+        today={today}
+        isMe={isMe}
+        active={active}
+        showGoal={goals.length > 1}
+        empty={<p className="small muted">{isMe ? 'No tasks yet. Add your first one above.' : `${member.user.displayName} hasn’t added any tasks here yet.`}</p>}
+      />
 
-      {sprints.length > 0 && (
-        <div className="goal-block">
-          <div className="goal-head">
-            <b className="grow">Today</b>
-            <span className="tiny muted num">{timeVsEstimate(today.reduce((n, x) => n + x.task.focusedMs, 0), today.reduce((n, x) => n + (x.task.estMinutes ?? 0), 0))}</span>
-          </div>
-          {todayTopics.length ? (
-            todayTopics.map((t, i) => (
-              <div key={t.id}>
-                {showLabels && <div className="tiny muted">{today.find((x) => x.topic?.id === t.id)?.sprint.planTitle}</div>}
-                <TopicRow topic={t} index={i} siblings={todayTopics} planned {...ctx} />
-              </div>
-            ))
-          ) : (
-            <p className="small muted">Nothing planned for today.</p>
-          )}
-        </div>
-      )}
-
-      {sprints.length > 0 && (
-        <div className="card forest-card">
-          <div className="row between">
-            <b>{isMe ? 'Your forest' : `${member.user.displayName}’s forest`}</b>
-            <span className="tiny muted num">
-              {trees} {trees === 1 ? 'tree' : 'trees'}
-            </span>
-          </div>
-          <Forest count={trees} color="var(--c)" blooms={room.blooms} />
-          <span className="tiny muted">
-            {trees ? 'One tree for every day everything planned was finished.' : 'Finish everything planned for a day to plant the first tree.'}
-            {room.blooms > 0 && ` 🌻 ${room.blooms === 1 ? 'A sunflower' : `${room.blooms} sunflowers`} for weekly challenges you won together.`}
+      <div className="card forest-card">
+        <div className="row between">
+          <b>{isMe ? 'Your forest' : `${member.user.displayName}’s forest`}</b>
+          <span className="tiny muted num">
+            {trees} {trees === 1 ? 'tree' : 'trees'}
           </span>
         </div>
-      )}
-
-      {sprints.length > 0 ? (
-        <details className="goal-block rest">
-          <summary>Rest of the sprint</summary>
-          <div className="stack" style={{ gap: 8, marginTop: 8 }}>
-            {goals.map((list) => (
-              <GoalGroup key={list[0].planId} sprints={list} topics={topics} {...ctx} />
-            ))}
-            {(loose.length > 0 || (isMe && active)) && (
-              <div className="goal-block nested">
-                <div className="goal-head">
-                  <b className="grow">Other topics</b>
-                </div>
-                {loose.map((t, i) => (
-                  <TopicRow key={t.id} topic={t} index={i} siblings={loose} {...ctx} />
-                ))}
-                {isMe && active && <AddTopic roomId={room.id} />}
-              </div>
-            )}
-          </div>
-        </details>
-      ) : (
-        (loose.length > 0 || (isMe && active)) && (
-          <div className="goal-block">
-            <div className="goal-head">
-              <b className="grow">Topics</b>
-            </div>
-            {loose.map((t, i) => (
-              <TopicRow key={t.id} topic={t} index={i} siblings={loose} {...ctx} />
-            ))}
-            {isMe && active && <AddTopic roomId={room.id} />}
-          </div>
-        )
-      )}
-    </section>
-  );
-}
-
-/** Whose rows these are, and whether the viewer may act on them. */
-interface RowContext {
-  ownerId: string;
-  isMe: boolean;
-  active: boolean;
-}
-
-const timeVsEstimate = (ms: number, est: number) => `${fmt(ms)}${est ? ` / ~${formatMinutes(est)}` : ''}`;
-
-/** One goal in the room with its pulled sprints nested inside. */
-function GoalGroup({ sprints, topics, ...ctx }: { sprints: RoomSprint[]; topics: Topic[] } & RowContext) {
-  const first = sprints[0];
-  const done = sprints.reduce((n, s) => n + s.done, 0);
-  const total = sprints.reduce((n, s) => n + s.total, 0);
-  const ms = sprints.reduce((n, s) => n + s.focusedMs, 0);
-  const est = sprints.reduce((n, s) => n + s.estMinutes, 0);
-  return (
-    <div className="goal-block">
-      <div className="goal-head">
-        <div className="grow" style={{ minWidth: 0 }}>
-          <div className="bold">{first.planTitle}</div>
-          <div className="tiny muted num">
-            {done} of {total} tasks done · {timeVsEstimate(ms, est)}
-          </div>
-        </div>
-        {ctx.isMe && (
-          <Link to={`/goals/${first.planId}`} className="btn ghost small">
-            Open goal
-          </Link>
-        )}
-      </div>
-      <ProgressBar value={done} max={total} thin label={first.planTitle} />
-      {sprints.map((s) => (
-        <SprintBlock key={s.number} sprint={s} topics={topics} {...ctx} />
-      ))}
-    </div>
-  );
-}
-
-/** A pulled sprint: today and upcoming days with their topics; earlier days fold into a short history. */
-function SprintBlock({ sprint, topics, ...ctx }: { sprint: RoomSprint; topics: Topic[] } & RowContext) {
-  const navigate = useNavigate();
-  const byId = new Map(topics.map((t) => [t.id, t]));
-  const unpull = useAction(() => api.post(`/plans/${sprint.planId}/sprints/${sprint.number}/unpull`), {
-    invalidate: [['room'], ['rooms'], ['plan', sprint.planId], ['plans']],
-    success: `Sprint ${sprint.number} taken out of the room`,
-  });
-  const ahead = sprint.days.filter((d) => d.status === 'today' || (d.status === 'upcoming' && d.tasks.length));
-  const earlier = sprint.days.filter((d) => d.status !== 'today' && d.status !== 'upcoming');
-  return (
-    <div className="goal-block nested">
-      <div className="goal-head">
-        <div className="grow" style={{ minWidth: 0 }}>
-          <div className="bold">Sprint {sprint.number}</div>
-          <div className="tiny muted num">
-            {sprint.done} of {sprint.total} done · {timeVsEstimate(sprint.focusedMs, sprint.estMinutes)} · {formatDate(sprint.startDate)} – {formatDate(sprint.endDate)}
-          </div>
-        </div>
-        {ctx.isMe && (
-          <Menu
-            label={`Sprint ${sprint.number} actions`}
-            items={[
-              { label: 'Edit sprint', onClick: () => navigate(`/goals/${sprint.planId}`) },
-              { label: 'Remove from room', danger: true, onClick: () => confirm(`Take sprint ${sprint.number} out of this room? Its topics are archived here and come back if you pull it in again.`) && unpull.mutate(undefined) },
-            ]}
-          />
-        )}
-      </div>
-      <ProgressBar value={sprint.done} max={sprint.total} thin label={`Sprint ${sprint.number}`} />
-      {ahead.map((d) => (
-        <SprintDay key={d.day} day={d} topics={d.tasks.map((t) => byId.get(t.topicId ?? '')).filter(Boolean) as Topic[]} {...ctx} />
-      ))}
-      {earlier.length > 0 && (
-        <details className="small">
-          <summary className="muted">Earlier days</summary>
-          <div className="stack" style={{ gap: 4, marginTop: 6 }}>
-            {earlier.map((d) => (
-              <div key={d.day} className="row between">
-                <span>
-                  Day {d.number} · {formatDate(d.date, { weekday: 'short', day: 'numeric', month: 'short' })}
-                </span>
-                <span className={`tiny day-status ${d.status}`}>{DAY_STATUS_LABEL[d.status]}</span>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-    </div>
-  );
-}
-
-function SprintDay({ day, topics, ...ctx }: { day: PlanDay; topics: Topic[] } & RowContext) {
-  const [open, setOpen] = useState(false); // today is already shown at the top of the column
-  const ms = day.tasks.reduce((n, t) => n + t.focusedMs, 0);
-  const est = day.tasks.reduce((n, t) => n + (t.estMinutes ?? 0), 0);
-  return (
-    <div className={`day-row${day.status === 'today' ? ' today' : ''}`}>
-      {day.status === 'today' && <span className="today-tag">Today</span>}
-      <button className="day-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className={day.status === 'today' ? 'bold' : ''}>
-          Day {day.number} · {formatDate(day.date, { weekday: 'short', day: 'numeric', month: 'short' })}
+        <Forest count={trees} color="var(--c)" blooms={room.blooms} />
+        <span className="tiny muted">
+          {trees ? 'One tree for every day everything planned was finished.' : 'Finish everything planned for a day to plant the first tree.'}
+          {room.blooms > 0 && ` 🌻 ${room.blooms === 1 ? 'A sunflower' : `${room.blooms} sunflowers`} for weekly challenges you won together.`}
         </span>
-        <span className="grow" />
-        <span className="tiny muted num">{timeVsEstimate(ms, est)}</span>
-        {open ? <ChevronDown width={16} /> : <ChevronRight width={16} />}
-      </button>
-      {open && (
-        <div className="day-body" style={{ gap: 8 }}>
-          {topics.length ? topics.map((t, i) => <TopicRow key={t.id} topic={t} index={i} siblings={topics} planned {...ctx} />) : <p className="small muted">Nothing planned.</p>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function statusText(p: TopicMemberProgress | undefined) {
-  if (!p) return 'Not started';
-  const time = p.focusedMs > 0 ? ` · ${fmt(p.focusedMs)}` : '';
-  if (p.status === 'completed') return `Done ${p.completedAt ? formatDate(new Date(p.completedAt).toISOString().slice(0, 10)) : ''}${time}`;
-  if (p.status === 'revising') return `Revising${time}`;
-  if (p.status === 'in_progress') return `In progress${time}`;
-  return 'Not started';
-}
-
-/** `planned` rows come from a goal's sprint: they're edited on the goal page, not here. */
-function TopicRow({ topic: t, index, siblings, ownerId, isMe, active, planned }: { topic: Topic; index: number; siblings: Topic[]; planned?: boolean } & RowContext) {
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const { data: me } = useMe();
-  const [editing, setEditing] = useState(false);
-  const [history, setHistory] = useState(false);
-  const p = t.progress[ownerId];
-  const done = p?.status === 'completed';
-
-  const inv = [['room', t.roomId], ['rooms'], ['plan'], ['plans'], ['progress'], ['session']];
-  const complete = useAction(() => api.post(`/topics/${t.id}/complete`), {
-    invalidate: inv,
-    onSuccess: () => {
-      const room = qc.getQueryData<RoomDetail>(['room', t.roomId]);
-      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, t.id) });
-      else toast('Topic complete 🌼', 'success');
-    },
-  });
-  const reopen = useAction((mode: 'revise' | 'undo') => api.post(`/topics/${t.id}/reopen`, { mode }), { invalidate: inv });
-  const archive = useAction(() => api.del(`/topics/${t.id}`), { invalidate: inv, success: 'Topic archived — its history is kept' });
-  const reorder = useAction((topicIds: string[]) => api.put(`/rooms/${t.roomId}/topics/order`, { topicIds }), { invalidate: inv });
-  const move = (delta: number) => {
-    const ids = siblings.map((s) => s.id);
-    [ids[index], ids[index + delta]] = [ids[index + delta], ids[index]];
-    reorder.mutate(ids);
-  };
-
-  const meta = [t.category, t.estimatedMinutes ? `~${formatMinutes(t.estimatedMinutes)}` : '', t.deadline ? `due ${formatDate(t.deadline)}` : ''].filter(Boolean).join(' · ');
-
-  return (
-    <div className="topic-row">
-      <span className={`idx${done ? ' done' : ''}`} aria-hidden="true">
-        {done ? <CheckIcon width={16} /> : index + 1}
-      </span>
-      <div style={{ minWidth: 0 }}>
-        <div className="bold">{t.title}</div>
-        <div className="tiny muted">
-          {planned ? `${statusText(p).split(' · ')[0]} · ${timeVsEstimate(p?.focusedMs ?? 0, t.estimatedMinutes ?? 0)}` : `${statusText(p)}${meta ? ` · ${meta}` : ''}`}
-        </div>
       </div>
-      {isMe && active && (
-        <div className="row actions" style={{ gap: 6 }}>
-          <button className="btn small" onClick={() => navigate(`/study?topic=${t.id}`)} aria-label={`Study ${t.title}`}>
-            <PlayIcon /> {done ? 'Revise' : 'Study'}
-          </button>
-          {!done && (
-            <button className="btn small" disabled={complete.isPending} onClick={() => complete.mutate(undefined)} aria-label={`Mark ${t.title} done`}>
-              <CheckIcon /> Done
-            </button>
-          )}
-          <Menu
-            label={`More actions for ${t.title}`}
-            items={[
-              { label: 'Edit', onClick: () => setEditing(true), hidden: planned },
-              { label: 'Move up', onClick: () => move(-1), hidden: planned || index === 0 },
-              { label: 'Move down', onClick: () => move(1), hidden: planned || index === siblings.length - 1 },
-              { label: 'History', onClick: () => setHistory(true) },
-              { label: 'Undo “done”', onClick: () => confirm('Undo this completion? It will stop counting toward your goals. The record stays in history.') && reopen.mutate('undo'), hidden: !done },
-              { label: 'Archive', danger: true, onClick: () => confirm(`Archive “${t.title}”? Its study time and history are kept.`) && archive.mutate(undefined), hidden: planned },
-            ]}
-          />
-        </div>
-      )}
-      {editing && <TopicModal topic={t} onClose={() => setEditing(false)} />}
-      {history && <HistoryModal topic={t} onClose={() => setHistory(false)} />}
-    </div>
+    </section>
   );
 }
 
@@ -455,198 +207,6 @@ function ArchivedTopics({ roomId, topics }: { roomId: string; topics: Topic[] })
   );
 }
 
-function AddTopic({ roomId }: { roomId: string }) {
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [more, setMore] = useState(false);
-  const [details, setDetails] = useState({ category: '', estimatedHours: '', target: '', deadline: '' });
-  const add = useAction(
-    () =>
-      api.post(`/rooms/${roomId}/topics`, {
-        title,
-        category: details.category || undefined,
-        estimatedMinutes: details.estimatedHours ? Math.round(Number(details.estimatedHours) * 60) : null,
-        sessionTargetMinutes: details.target ? Number(details.target) : null,
-        deadline: details.deadline || null,
-      }),
-    {
-      invalidate: [['room', roomId], ['rooms'], ['plan'], ['plans']],
-      onSuccess: () => {
-        setTitle('');
-        setDetails({ category: '', estimatedHours: '', target: '', deadline: '' });
-      },
-    },
-  );
-  if (!open)
-    return (
-      <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>
-        <PlusIcon /> Add a topic
-      </button>
-    );
-  return (
-    <form
-      className="stack"
-      style={{ gap: 6 }}
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (title.trim()) add.mutate(undefined);
-      }}
-    >
-      <div className="row">
-        <input className="input grow" placeholder="e.g. Binary Search" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} aria-label="Topic title" autoFocus />
-        <button className="btn primary" disabled={!title.trim() || add.isPending}>
-          Add
-        </button>
-      </div>
-      <div className="row between">
-        <button type="button" className="btn ghost small" onClick={() => setMore((m) => !m)}>
-          {more ? 'Fewer details' : 'More details'}
-        </button>
-        <button type="button" className="btn ghost small" onClick={() => setOpen(false)}>
-          Done adding
-        </button>
-      </div>
-      {more && (
-        <div className="form-grid">
-          <Field label="Subject">
-            <input className="input" value={details.category} onChange={(e) => setDetails({ ...details, category: e.target.value })} placeholder="e.g. Searching" />
-          </Field>
-          <Field label="Estimated hours to finish">
-            <input className="input" type="number" min="0" step="0.5" inputMode="decimal" value={details.estimatedHours} onChange={(e) => setDetails({ ...details, estimatedHours: e.target.value })} />
-          </Field>
-          <Field label="Session length (minutes)" hint="e.g. 45 — one sitting.">
-            <input className="input" type="number" min="1" max="600" inputMode="numeric" value={details.target} onChange={(e) => setDetails({ ...details, target: e.target.value })} />
-          </Field>
-          <Field label="Deadline">
-            <input className="input" type="date" value={details.deadline} onChange={(e) => setDetails({ ...details, deadline: e.target.value })} />
-          </Field>
-        </div>
-      )}
-    </form>
-  );
-}
-
-function TopicModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
-  const [f, setF] = useState({
-    title: topic.title,
-    description: topic.description,
-    category: topic.category,
-    estimatedHours: topic.estimatedMinutes ? String(topic.estimatedMinutes / 60) : '',
-    target: topic.sessionTargetMinutes ? String(topic.sessionTargetMinutes) : '',
-    deadline: topic.deadline ?? '',
-  });
-  const [err, setErr] = useState<string | null>(null);
-  const save = useAction(
-    () =>
-      api.patch(`/topics/${topic.id}`, {
-        title: f.title,
-        description: f.description,
-        category: f.category,
-        estimatedMinutes: f.estimatedHours ? Math.round(Number(f.estimatedHours) * 60) : null,
-        sessionTargetMinutes: f.target ? Number(f.target) : null,
-        deadline: f.deadline || null,
-      }),
-    {
-      invalidate: [['room', topic.roomId], ['rooms'], ['plan'], ['plans']],
-      success: 'Topic saved',
-      onSuccess: onClose,
-      onError: (e: ApiError) => {
-        setErr(e.message);
-        return true;
-      },
-    },
-  );
-  return (
-    <Modal
-      title="Edit topic"
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!f.title.trim() || save.isPending} onClick={() => save.mutate(undefined)}>
-            Save
-          </button>
-        </>
-      }
-    >
-      <div className="form-grid">
-        <Field label="Title" full>
-          <input className="input" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} maxLength={140} />
-        </Field>
-        <Field label="Subject">
-          <input className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} />
-        </Field>
-        <Field label="Deadline">
-          <input className="input" type="date" value={f.deadline} onChange={(e) => setF({ ...f, deadline: e.target.value })} />
-        </Field>
-        <Field label="Estimated hours to finish" hint="Kept separate from your actual time.">
-          <input className="input" type="number" min="0" step="0.5" value={f.estimatedHours} onChange={(e) => setF({ ...f, estimatedHours: e.target.value })} />
-        </Field>
-        <Field label="Session length (minutes)">
-          <input className="input" type="number" min="1" max="600" value={f.target} onChange={(e) => setF({ ...f, target: e.target.value })} />
-        </Field>
-        <Field label="Notes" full>
-          <textarea className="input" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
-        </Field>
-        {err && <div className="banner error full">{err}</div>}
-      </div>
-    </Modal>
-  );
-}
-
-const EVENT_LABEL: Record<string, string> = {
-  created: 'Added',
-  edited: 'Edited',
-  completed: 'Completed',
-  revision_completed: 'Finished a revision',
-  reopened_for_revision: 'Reopened to revise',
-  completion_undone: 'Undid a completion',
-  archived: 'Archived',
-  restored: 'Restored',
-};
-
-function HistoryModal({ topic, onClose }: { topic: Topic; onClose: () => void }) {
-  const { data, isLoading } = useTopicHistory(topic.id);
-  const p = topic.progress[topic.createdBy];
-  return (
-    <Modal title={topic.title} onClose={onClose}>
-      <div className="row wrap" style={{ gap: 20, marginBottom: 16 }}>
-        <div>
-          <div className="tiny muted">Estimated</div>
-          <b>{topic.estimatedMinutes ? formatMinutes(topic.estimatedMinutes) : '—'}</b>
-        </div>
-        <div>
-          <div className="tiny muted">Actual focused time</div>
-          <b>{fmt(p?.focusedMs ?? 0)}</b>
-        </div>
-        <div>
-          <div className="tiny muted">Sessions</div>
-          <b>{p?.sessions ?? 0}</b>
-        </div>
-      </div>
-      {isLoading ? (
-        <Spinner />
-      ) : (
-        <div className="list">
-          {[
-            ...(data?.events ?? []).map((e) => ({ key: e.id, at: e.createdAt, text: EVENT_LABEL[e.type] ?? e.type })),
-            ...(data?.sessions ?? []).map((s, i) => ({ key: `s${i}`, at: s.startedAt, text: `Studied ${fmt(s.focusedMs)}${s.isRevision ? ' (revision)' : ''}` })),
-          ]
-            .sort((a, b) => b.at - a.at)
-            .map((row) => (
-              <div key={row.key} className="list-item small">
-                <span className="grow">{row.text}</span>
-                <span className="tiny muted">{relativeTime(row.at)}</span>
-              </div>
-            ))}
-          {!data?.events.length && !data?.sessions.length && <Empty title="No history yet" />}
-        </div>
-      )}
-    </Modal>
-  );
-}
 
 function EditRoomModal({ room, onClose }: { room: RoomDetail; onClose: () => void }) {
   const [f, setF] = useState({ name: room.name, description: room.description, startDate: room.startDate, endDate: room.endDate, color: room.color });

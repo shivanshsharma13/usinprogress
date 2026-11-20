@@ -64,11 +64,11 @@ export function CalendarPage() {
   const byDate = new Map<string, Task[]>();
   // Range queries only return scheduled tasks, so every date is set.
   for (const t of tasks ?? []) byDate.set(t.date!, [...(byDate.get(t.date!) ?? []), t]);
-  // Goal tasks (yours, and your friend's pulled sprints) sit alongside calendar tasks.
+  // Goal tasks (yours, and your friend's in rooms you share) sit alongside calendar tasks.
   const planByDate = new Map<string, CalendarPlanItem[]>();
   for (const p of data?.planItems ?? []) planByDate.set(p.date, [...(planByDate.get(p.date) ?? []), p]);
   const sprintMarks = data?.sprints ?? [];
-  const day = (d: string): DayItems => ({ tasks: byDate.get(d) ?? [], plan: planByDate.get(d) ?? [], sprintStarts: sprintMarks.filter((m) => m.startDate === d), sprints: sprintMarks.filter((m) => m.startDate <= d && m.endDate >= d) });
+  const day = (d: string): DayItems => ({ tasks: byDate.get(d) ?? [], plan: planByDate.get(d) ?? [], sprintStarts: [], sprints: sprintMarks.filter((m) => m.startDate <= d && m.endDate >= d) });
   const busy = (d: string) => (byDate.get(d)?.length ?? 0) + (planByDate.get(d)?.length ?? 0) > 0;
 
   const shift = (dir: number) => {
@@ -171,7 +171,7 @@ export function CalendarPage() {
                 </button>
               ))}
               {(planByDate.get(d) ?? []).map((p) => (
-                <span key={p.id} className={`cal-pill plan${p.done ? ' done' : ''}`} style={{ ...personVars(people[p.ownerId]?.accent), whiteSpace: 'normal' }} title={`${p.planTitle} · Sprint ${p.sprintNumber}`}>
+                <span key={p.id} className={`cal-pill plan${p.done ? ' done' : ''}`} style={{ ...personVars(people[p.ownerId]?.accent), whiteSpace: 'normal' }} title={p.planTitle}>
                   {p.done ? '✓' : '○'} {p.title}
                 </span>
               ))}
@@ -284,7 +284,7 @@ function MonthGrid({
               </span>
             ))}
             {plan.slice(0, room).map((p) => (
-              <span key={p.id} className={`cal-pill plan${p.done ? ' done' : ''}`} style={personVars(people[p.ownerId]?.accent)} title={`${p.planTitle} · Sprint ${p.sprintNumber}`}>
+              <span key={p.id} className={`cal-pill plan${p.done ? ' done' : ''}`} style={personVars(people[p.ownerId]?.accent)} title={p.planTitle}>
                 {p.done ? '✓' : '○'} {p.title}
               </span>
             ))}
@@ -348,7 +348,7 @@ interface DayItems {
 }
 
 function DayAgenda({ date, today, items, people, meId, actions, onAdd, compact }: { date: string; today: string; items: DayItems; people: Record<string, PublicUser>; meId: string; actions: Actions; onAdd: () => void; compact?: boolean }) {
-  const { tasks, plan, sprints } = items;
+  const { tasks, plan } = items;
   return (
     <div className="stack" style={{ gap: 8 }}>
       <div className="row between">
@@ -362,15 +362,6 @@ function DayAgenda({ date, today, items, people, meId, actions, onAdd, compact }
           </button>
         )}
       </div>
-      {sprints.length > 0 && (
-        <div className="row wrap" style={{ gap: 6 }}>
-          {sprints.map((m) => (
-            <span key={m.planId + m.number} className="chip c" style={personVars(people[m.ownerId]?.accent)}>
-              {m.planTitle} · Sprint {m.number} · day {Math.round((Date.parse(date) - Date.parse(m.startDate)) / 86_400_000) + 1}
-            </span>
-          ))}
-        </div>
-      )}
       {!tasks.length && !plan.length && <p className="small muted">Nothing planned.</p>}
       {plan.map((p) => (
         <PlanItemRow key={p.id} item={p} date={date} today={today} owner={people[p.ownerId]} mine={p.ownerId === meId} />
