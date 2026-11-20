@@ -1,0 +1,318 @@
+// Tasks, the simple way: a goal is a list of tasks in a room, each with a date or none. Rooms and goal pages
+// both use these pieces: one "Add a task" box, and a list grouped into Missed / Today / Upcoming / No date / Done.
+import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router';
+import { addDays, formatDate } from '@shared/dates';
+import { formatMinutes } from '@shared/timer';
+import type { GoalRef, GoalTask, RoomDetail } from '@shared/types';
+import { api } from '../lib/api';
+import { celebrate, plantGrowth } from '../lib/celebrate';
+import { getFocusSettings } from '../lib/focusSettings';
+import { useAction, useMe } from '../lib/queries';
+import { toast } from '../lib/toast';
+import { Field, fmt, Menu, Modal } from './ui';
+import { CheckIcon, PlayIcon } from './icons';
+
+const INVALIDATE = [['room'], ['rooms'], ['plan'], ['plans'], ['home'], ['tasks'], ['progress']];
+const EST = [15, 30, 45, 60, 90];
+
+/** "Today", "Tomorrow", "Mon 24 Nov". */
+export function dayLabel(date: string, today: string): string {
+  if (date === today) return 'Today';
+  if (date === addDays(today, 1)) return 'Tomorrow';
+  if (date === addDays(today, -1)) return 'Yesterday';
+  return formatDate(date, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/** Today · Tomorrow · 📅 a date · No date. */
+export function DateChoice({ value, onChange, today }: { value: string | null; onChange: (d: string | null) => void; today: string }) {
+  const picker = useRef<HTMLInputElement>(null);
+  const tomorrow = addDays(today, 1);
+  const custom = value !== null && value !== today && value !== tomorrow;
+  return (
+    <div className="row wrap date-choice" role="group" aria-label="When" style={{ gap: 6 }}>
+      <button type="button" className={`chip-btn${value === today ? ' on' : ''}`} aria-pressed={value === today} onClick={() => onChange(today)}>
+        Today
+      </button>
+      <button type="button" className={`chip-btn${value === tomorrow ? ' on' : ''}`} aria-pressed={value === tomorrow} onClick={() => onChange(tomorrow)}>
+        Tomorrow
+      </button>
+      <label className={`chip-btn date-pick${custom ? ' on' : ''}`}>
+        📅 {custom ? dayLabel(value!, today) : 'Pick a day'}
+        <input ref={picker} type="date" value={value ?? ''} onChange={(e) => e.target.value && onChange(e.target.value)} aria-label="Pick a day" />
+      </label>
+      <button type="button" className={`chip-btn${value === null ? ' on' : ''}`} aria-pressed={value === null} onClick={() => onChange(null)}>
+        No date
+      </button>
+    </div>
+  );
+}
+
+/**
+ * One box to add tasks. In a room, it goes into the goal you pick (your latest one by default; with no goal
+ * yet, a "My tasks" goal is made for you). On a goal page, into that goal.
+ */
+export function AddTaskBox({ roomId, planId, goals = [], today, autoFocus }: { roomId?: string; planId?: string; goals?: GoalRef[]; today: string; autoFocus?: boolean }) {
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState<string | null>(today);
+  const [est, setEst] = useState<number | null>(null);
+  const [goal, setGoal] = useState<string>(goals[0]?.id ?? '');
+  const [open, setOpen] = useState(Boolean(autoFocus));
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (autoFocus) input.current?.focus();
+  }, [autoFocus]);
+  useEffect(() => {
+    if (!goals.some((g) => g.id === goal)) setGoal(goals[0]?.id ?? '');
+  }, [goals.map((g) => g.id).join()]);
+
+  const add = useAction(
+    () =>
+      planId
+        ? api.post(`/plans/${planId}/goal-tasks`, { title: title.trim(), date, estMinutes: est })
+        : api.post(`/rooms/${roomId}/tasks`, { title: title.trim(), date, estMinutes: est, planId: goal || null }),
+    {
+      invalidate: INVALIDATE,
+      success: () => (date ? `Added for ${date === today || date === addDays(today, 1) ? dayLabel(date, today).toLowerCase() : dayLabel(date, today)} ✓` : 'Added ✓'),
+      onSuccess: () => {
+        setTitle('');
+        input.current?.focus();
+      },
+    },
+  );
+  const submit = () => title.trim() && !add.isPending && add.mutate(undefined);
+
+  return (
+    <form
+      className="card add-task stack"
+      style={{ gap: 10 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
+    >
+      <div className="row" style={{ gap: 8 }}>
+        <input
+          ref={input}
+          className="input grow"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onFocus={() => setOpen(true)}
+          placeholder="Add a task… e.g. Read chapter 4"
+          maxLength={140}
+          aria-label="New task"
+        />
+        <button className="btn primary" disabled={!title.trim() || add.isPending}>
+          Add
+        </button>
+      </div>
+      {open && (
+        <>
+          <DateChoice value={date} onChange={setDate} today={today} />
+          <div className="row wrap" style={{ gap: 6 }} role="group" aria-label="How long (optional)">
+            {EST.map((m) => (
+              <button key={m} type="button" className={`chip-btn small${est === m ? ' on' : ''}`} aria-pressed={est === m} onClick={() => setEst(est === m ? null : m)}>
+                ~{formatMinutes(m)}
+              </button>
+            ))}
+          </div>
+          {!planId && goals.length > 1 && (
+            <label className="row small" style={{ gap: 8 }}>
+              <span className="muted">Goal</span>
+              <select className="input" style={{ width: 'auto', minHeight: 36, padding: '4px 10px' }} value={goal} onChange={(e) => setGoal(e.target.value)}>
+                {goals.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </>
+      )}
+    </form>
+  );
+}
+
+type Group = { key: string; title: string; tasks: GoalTask[]; collapsed?: boolean; action?: React.ReactNode };
+
+/** Your (or your friend's) tasks, grouped so today is always on top and nothing gets lost. */
+export function TaskList({ tasks, today, isMe, active = true, showGoal, empty }: { tasks: GoalTask[]; today: string; isMe: boolean; active?: boolean; showGoal?: boolean; empty?: React.ReactNode }) {
+  const missed = tasks.filter((t) => !t.done && t.date !== null && t.date < today);
+  const todays = tasks.filter((t) => t.date === today).sort((a, b) => Number(a.done) - Number(b.done));
+  const upcoming = tasks.filter((t) => !t.done && t.date !== null && t.date > today).sort((a, b) => a.date!.localeCompare(b.date!));
+  const soon = upcoming.filter((t) => t.date! <= addDays(today, 7));
+  const later = upcoming.filter((t) => t.date! > addDays(today, 7));
+  const undated = tasks.filter((t) => !t.done && t.date === null);
+  const done = tasks.filter((t) => t.done && t.date !== today).sort((a, b) => (b.doneDate ?? '').localeCompare(a.doneDate ?? ''));
+
+  const moveAll = useAction((ids: string[]) => Promise.all(ids.map((id) => api.patch(`/goal-tasks/${id}`, { date: today }))), {
+    invalidate: INVALIDATE,
+    success: 'Moved to today',
+  });
+
+  const groups: Group[] = [
+    {
+      key: 'missed',
+      title: `Missed (${missed.length})`,
+      tasks: missed,
+      collapsed: missed.length > 5,
+      action: isMe && active && missed.length > 0 && (
+        <button className="btn ghost small" disabled={moveAll.isPending} onClick={() => moveAll.mutate(missed.filter((t) => !t.id.startsWith('topic:')).map((t) => t.id))}>
+          Move all to today
+        </button>
+      ),
+    },
+    { key: 'today', title: 'Today', tasks: todays },
+    { key: 'soon', title: 'Upcoming', tasks: soon },
+    { key: 'later', title: `Later (${later.length})`, tasks: later, collapsed: true },
+    { key: 'undated', title: 'No date', tasks: undated },
+    { key: 'done', title: `Done (${done.length})`, tasks: done, collapsed: true },
+  ].filter((g) => g.tasks.length || g.key === 'today');
+
+  if (!tasks.length && empty) return <>{empty}</>;
+  return (
+    <div className="stack task-groups">
+      {groups.map((g) => {
+        const rows = (
+          <div className="task-rows">
+            {g.tasks.length ? (
+              g.tasks.map((t) => <TaskRow key={t.id} task={t} today={today} isMe={isMe} active={active} showGoal={showGoal} showDate={g.key !== 'today'} />)
+            ) : (
+              <p className="small muted" style={{ margin: '4px 0' }}>
+                {isMe ? 'Nothing for today yet. Add a task above.' : 'Nothing planned for today.'}
+              </p>
+            )}
+          </div>
+        );
+        return g.collapsed ? (
+          <details key={g.key} className="task-group">
+            <summary className="row between">
+              <b className="small">{g.title}</b>
+              {g.action}
+            </summary>
+            {rows}
+          </details>
+        ) : (
+          <section key={g.key} className="task-group">
+            <div className="row between">
+              <b className="small">{g.title}</b>
+              {g.action}
+            </div>
+            {rows}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function TaskRow({ task: t, today, isMe, active, showGoal, showDate }: { task: GoalTask; today: string; isMe: boolean; active: boolean; showGoal?: boolean; showDate: boolean }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { data: me } = useMe();
+  const [editing, setEditing] = useState(false);
+  const legacy = t.id.startsWith('topic:'); // a topic without a goal task (from before goals lived in rooms)
+  const complete = useAction(() => api.post(`/topics/${t.topicId}/complete`), {
+    invalidate: INVALIDATE,
+    onSuccess: () => {
+      const room = qc.getQueriesData<RoomDetail>({ queryKey: ['room'] }).find(([, r]) => r?.tasks?.some((x) => x.topicId === t.topicId))?.[1];
+      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, t.topicId!) });
+      else toast('Done 🌼', 'success');
+    },
+  });
+  const undo = useAction(() => api.post(`/topics/${t.topicId}/reopen`, { mode: 'undo' }), { invalidate: INVALIDATE });
+  const move = useAction((date: string | null) => api.patch(`/goal-tasks/${t.id}`, { date }), { invalidate: INVALIDATE });
+  const remove = useAction(() => api.del(`/plan-tasks/${t.id}`), { invalidate: INVALIDATE, success: 'Task removed' });
+  const canAct = isMe && active && Boolean(t.topicId);
+
+  const meta = [
+    showDate && t.date ? (t.date < today && !t.done ? `was ${dayLabel(t.date, today)}` : dayLabel(t.date, today)) : '',
+    showGoal && t.planTitle ? t.planTitle : '',
+    t.estMinutes ? `~${formatMinutes(t.estMinutes)}` : '',
+    t.focusedMs ? `${fmt(t.focusedMs)} spent` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div className={`task-row${t.done ? ' done' : ''}`}>
+      <button
+        className="task-check"
+        disabled={!canAct || complete.isPending || undo.isPending}
+        onClick={() => (t.done ? confirm('Mark this as not done?') && undo.mutate(undefined) : complete.mutate(undefined))}
+        aria-label={t.done ? `${t.title} is done. Mark as not done` : `Mark ${t.title} done`}
+        aria-pressed={t.done}
+      >
+        {t.done && <CheckIcon width={15} />}
+      </button>
+      <div className="grow" style={{ minWidth: 0 }}>
+        <div className="task-title">{t.title}</div>
+        {meta && <div className="tiny muted">{meta}</div>}
+      </div>
+      {canAct && (
+        <div className="row" style={{ gap: 4 }}>
+          {!t.done && (
+            <button className="btn small" onClick={() => navigate(`/study?topic=${t.topicId}`)} aria-label={`Study ${t.title}`}>
+              <PlayIcon />
+              <span className="hide-narrow">Study</span>
+            </button>
+          )}
+          {!legacy && (
+            <Menu
+              label={`More for ${t.title}`}
+              items={[
+                { label: 'Edit', onClick: () => setEditing(true) },
+                { label: 'Do it today', onClick: () => move.mutate(today), hidden: t.date === today || t.done },
+                { label: 'Move to tomorrow', onClick: () => move.mutate(addDays(today, 1)), hidden: t.date === addDays(today, 1) || t.done },
+                { label: 'No date', onClick: () => move.mutate(null), hidden: t.date === null || t.done },
+                { label: 'Remove', danger: true, onClick: () => confirm(`Remove “${t.title}”? Its study time stays in your history.`) && remove.mutate(undefined) },
+              ]}
+            />
+          )}
+        </div>
+      )}
+      {editing && <EditTaskModal task={t} today={today} onClose={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+function EditTaskModal({ task, today, onClose }: { task: GoalTask; today: string; onClose: () => void }) {
+  const [title, setTitle] = useState(task.title);
+  const [date, setDate] = useState<string | null>(task.date);
+  const [est, setEst] = useState(task.estMinutes ? String(task.estMinutes) : '');
+  const save = useAction(() => api.patch(`/goal-tasks/${task.id}`, { title: title.trim(), date, estMinutes: est ? Number(est) : null }), {
+    invalidate: INVALIDATE,
+    success: 'Saved',
+    onSuccess: onClose,
+  });
+  return (
+    <Modal
+      title="Edit task"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!title.trim() || save.isPending} onClick={() => save.mutate(undefined)}>
+            Save
+          </button>
+        </>
+      }
+    >
+      <div className="stack">
+        <Field label="Task">
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} />
+        </Field>
+        <Field label="When">
+          <DateChoice value={date} onChange={setDate} today={today} />
+        </Field>
+        <Field label="Minutes (optional)">
+          <input className="input" type="number" min="1" max="1440" inputMode="numeric" value={est} onChange={(e) => setEst(e.target.value)} style={{ maxWidth: 140 }} />
+        </Field>
+      </div>
+    </Modal>
+  );
+}

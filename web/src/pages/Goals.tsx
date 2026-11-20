@@ -1,13 +1,11 @@
-// Your goals: each one is a plan split into sprints of days. Open one to plan its days, or pull a
-// sprint into a shared room to study it there.
+// Your goals: each one is a list of tasks in a room. Open one to add tasks and pick their days.
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { addDays, formatDate } from '@shared/dates';
-import { planCreateSchema } from '@shared/validation';
-import { useAction, useMe, usePlans } from '../lib/queries';
-import { api, ApiError } from '../lib/api';
+import { useAction, useMe, usePlans, useRooms } from '../lib/queries';
+import { api } from '../lib/api';
 import { Empty, ErrorNote, Field, Modal, Spinner } from '../components/ui';
 import { PlanLine } from '../components/PlanBits';
+import { RoomPicker } from './Plan';
 import { Plant } from '../components/Plant';
 import { PlusIcon } from '../components/icons';
 
@@ -28,7 +26,7 @@ export function GoalsPage() {
       <div className="page-head">
         <div>
           <h1>Goals</h1>
-          <p className="muted">Plan a goal in sprints of days. Pull a sprint into a room when you're ready to study it together.</p>
+          <p className="muted">A goal is a list of tasks, like a subject or a project. Its tasks show up in your room, next to your friend's.</p>
         </div>
         <button className="btn primary" onClick={() => setCreating(true)}>
           <PlusIcon /> New goal
@@ -42,11 +40,11 @@ export function GoalsPage() {
             art={<Plant percent={10} size={96} />}
             action={
               <button className="btn primary big" onClick={() => setCreating(true)}>
-                Make your first plan
+                Make your first goal
               </button>
             }
           >
-            For example “GTFO 2026”: sprints of 12 days, with a few problems or chapters on each day. Add sprints as you go.
+            For example “Obs & gynae” or “DSA”. Then add tasks with a day — today, tomorrow, any day, or none.
           </Empty>
         </div>
       )}
@@ -76,7 +74,6 @@ export function GoalsPage() {
 
       {creating && (
         <NewPlanModal
-          today={me.today}
           onClose={() => {
             setCreating(false);
             if (params.get('new')) setParams({}, { replace: true });
@@ -87,24 +84,22 @@ export function GoalsPage() {
   );
 }
 
-function NewPlanModal({ today, onClose }: { today: string; onClose: () => void }) {
+function NewPlanModal({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
-  const [f, setF] = useState({ title: '', startDate: today, sprintDays: '12' });
-  const [err, setErr] = useState<string | null>(null);
-  const body = { title: f.title, startDate: f.startDate, sprintDays: Number(f.sprintDays) };
-  const valid = planCreateSchema.safeParse(body).success;
-  const create = useAction(() => api.post<{ id: string }>('/plans', body), {
-    invalidate: [['plans']],
+  const { data: rooms } = useRooms();
+  const open = (rooms ?? []).filter((r) => r.status === 'active');
+  const [title, setTitle] = useState('');
+  const [room, setRoom] = useState('');
+  const roomId = room || (open.length === 1 ? open[0].id : '');
+  const create = useAction(() => api.post<{ id: string }>('/plans', { title: title.trim(), roomId }), {
+    invalidate: [['plans'], ['room'], ['rooms']],
     success: 'Goal created 🌱',
     onSuccess: (r) => {
       onClose();
       navigate(`/goals/${r.id}`);
     },
-    onError: (e: ApiError) => {
-      setErr(e.message);
-      return true;
-    },
   });
+  const valid = title.trim() && roomId;
 
   return (
     <Modal
@@ -122,31 +117,23 @@ function NewPlanModal({ today, onClose }: { today: string; onClose: () => void }
       }
     >
       <form
-        className="form-grid"
+        className="stack"
         onSubmit={(e) => {
           e.preventDefault();
           if (valid) create.mutate(undefined);
         }}
       >
-        <Field label="Goal" full>
-          <input className="input" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="e.g. GTFO 2026" maxLength={140} />
+        <Field label="Goal">
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Obs & gynae, or DSA" maxLength={140} autoFocus />
         </Field>
-        <Field label="Starts on" full>
-          <input className="input" type="date" value={f.startDate} onChange={(e) => setF({ ...f, startDate: e.target.value })} />
-        </Field>
-        <Field label="Days per sprint" hint="You can give each sprint its own length later." full>
-          <input className="input" type="number" min="1" max="60" inputMode="numeric" value={f.sprintDays} onChange={(e) => setF({ ...f, sprintDays: e.target.value })} />
-        </Field>
-        {valid && (
-          <p className="small muted full">
-            Sprint 1 runs {formatDate(f.startDate)} – {formatDate(addDays(f.startDate, body.sprintDays - 1), { day: 'numeric', month: 'short', year: 'numeric' })}. Add more sprints whenever you need them.
-          </p>
+        {open.length !== 1 && (
+          <Field label="Room">
+            <RoomPicker value={roomId} onChange={setRoom} />
+          </Field>
         )}
-        {err && (
-          <div className="banner error full" role="alert">
-            {err}
-          </div>
-        )}
+        <p className="small muted" style={{ margin: 0 }}>
+          Next, add tasks to it — each with a day, or none. They show up in {open.length === 1 ? `“${open[0].name}”` : 'the room'} next to your friend's.
+        </p>
       </form>
     </Modal>
   );
