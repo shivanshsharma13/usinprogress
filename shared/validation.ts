@@ -147,11 +147,21 @@ export const photoCheerSchema = z.object({
 });
 
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 09:30');
-export const routineSchema = z.object({
-  sleepMinutes: z.number().int().min(180, 'At least 3 hours of sleep').max(720, 'At most 12 hours of sleep'),
-  workStart: clock.nullable(),
-  workEnd: clock.nullable(),
-  workDays: z.array(z.number().int().min(0).max(6)).max(7),
+const sleepMinutes = z.number().int().min(180, 'At least 3 hours of sleep').max(720, 'At most 12 hours of sleep');
+export const routineSchema = z.union([
+  z.object({
+    sleepMinutes,
+    work: z
+      .array(z.object({ day: z.number().int().min(0).max(6), start: clock, end: clock }).refine((s) => s.start !== s.end, "Start and end can't be the same"))
+      .max(7),
+  }),
+  // The old shape: the same hours on every work day.
+  z.object({ sleepMinutes, workStart: clock.nullable(), workEnd: clock.nullable(), workDays: z.array(z.number().int().min(0).max(6)).max(7) }),
+]);
+
+export const dayHoursSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  hours: z.union([z.object({ start: clock, end: clock }), z.object({ off: z.literal(true) })]).nullable(),
 });
 
 export const sessionUpdateSchema = z.object({

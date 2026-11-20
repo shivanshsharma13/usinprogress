@@ -854,6 +854,7 @@ test('studying together: join a friend, share breaks, and part ways when one fin
 });
 
 test('day split: sleep and work hours are checked, and only friends see them while it is on', async () => {
+  // The old shape (one set of hours for every work day) still saves, for app versions from before per-day hours.
   const routine = { sleepMinutes: 420, workStart: '09:30', workEnd: '18:30', workDays: [1, 2, 3, 4, 5, 5] };
   const saved = await A.put('/routine', routine);
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
@@ -870,6 +871,32 @@ test('day split: sleep and work hours are checked, and only friends see them whi
   assert.equal((await B.get(`/routine?userId=${a.id}`)).body.routine.workStart, '09:30', 'your friend sees it once it is on');
   assert.equal((await C.get(`/routine?userId=${a.id}`)).body.routine, null, 'strangers never do');
   await A.patch('/me', { prefs: { daySplit: false } });
+});
+
+test('day split: each work day has its own hours, and one day can be changed on its own', async () => {
+  const work = [
+    { day: 1, start: '09:00', end: '17:00' },
+    { day: 6, start: '10:00', end: '13:00' },
+    { day: 1, start: '08:00', end: '16:00' },
+  ];
+  const saved = await A.put('/routine', { sleepMinutes: 450, work });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual(saved.body.routine.work, [{ day: 1, start: '08:00', end: '16:00' }, { day: 6, start: '10:00', end: '13:00' }], 'one entry a day, the last one wins');
+  assert.deepEqual(saved.body.routine.workDays, [1, 6], 'the old fields still filled in');
+  assert.equal((await A.put('/routine', { sleepMinutes: 450, work: [{ day: 7, start: '09:00', end: '10:00' }] })).status, 400);
+  assert.equal((await A.put('/routine', { sleepMinutes: 450, work: [{ day: 2, start: '09:00', end: '09:00' }] })).status, 400);
+
+  const off = await A.put('/routine/day', { date: today, hours: { off: true } });
+  assert.equal(off.status, 200, JSON.stringify(off.body));
+  assert.deepEqual(off.body.routine.dayChanges[today], { off: true });
+  const late = await A.put('/routine/day', { date: today, hours: { start: '14:00', end: '22:00' } });
+  assert.deepEqual(late.body.routine.dayChanges[today], { start: '14:00', end: '22:00' }, 'changing the same day replaces it');
+  assert.equal((await A.put('/routine/day', { date: '2020-01-01', hours: { off: true } })).status, 400, 'only recent days');
+  const resaved = await A.put('/routine', { sleepMinutes: 480, work });
+  assert.deepEqual(resaved.body.routine.dayChanges[today], { start: '14:00', end: '22:00' }, 'editing the usual hours keeps day changes');
+  const back = await A.put('/routine/day', { date: today, hours: null });
+  assert.equal(back.body.routine.dayChanges[today], undefined, 'back to the usual hours');
+  assert.equal((await C.put('/routine/day', { date: today, hours: { off: true } })).status, 409, 'needs usual hours first');
 });
 
 test('simple goals: tasks live in a room with any date or none, and nothing needs pulling', async () => {
