@@ -690,6 +690,23 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 @keyframes envelope-wiggle { 0%, 70%, 100% { rotate: 0deg; } 76% { rotate: -12deg; } 84% { rotate: 10deg; } 92% { rotate: -6deg; } }
 @media (prefers-reduced-motion: reduce) { .photo-envelope .envelope { animation: none; } }
 
+/* Day split: sleep · work · study · timepass (colours checked for colour-blind separation, light and dark) */
+:root { --split-sleep: #4F6BD1; --split-work: #B05C8F; --split-study: #2F9A6A; --split-timepass: #D98A2B; }
+:root[data-theme='dark'] { --split-sleep: #6F87E0; --split-work: #C673A6; --split-study: #2E9F6C; --split-timepass: #C27E22; }
+.split-bar { display: flex; gap: 2px; height: 18px; border-radius: 4px; overflow: hidden; background: var(--surface); }
+.split-bar.thin { height: 8px; }
+.split-bar .seg { display: block; min-width: 2px; flex-basis: 0; }
+.seg.sleep, .swatch.sleep { background: var(--split-sleep); }
+.seg.work, .swatch.work { background: var(--split-work); }
+.seg.study, .swatch.study { background: var(--split-study); }
+.seg.timepass, .swatch.timepass { background: var(--split-timepass); }
+.split-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--text-2); }
+.split-legend b { color: var(--text); margin-left: 2px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.split-days { display: grid; gap: 4px; }
+.split-day { display: grid; grid-template-columns: 34px 1fr 52px; align-items: center; gap: 8px; }
+.split-day .num { text-align: right; }
+@media (forced-colors: active) { .split-bar .seg { border: 1px solid CanvasText; } }
 /* Photo wall: the last 24 hours of photo cheers on Home */
 .photo-strip { display: flex; gap: 12px; overflow-x: auto; padding: 4px 2px 8px; scroll-snap-type: x proximity; }
 .photo-card { flex: none; width: 104px; display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: inherit; scroll-snap-align: start; text-align: center; }

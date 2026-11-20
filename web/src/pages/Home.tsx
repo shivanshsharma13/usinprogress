@@ -11,6 +11,7 @@ import { Buddy } from '../components/Buddy';
 import { Plant } from '../components/Plant';
 import { RevisionsDue } from '../components/Revisions';
 import { StreaksAndRecap } from '../components/Streaks';
+import { DaySplitCard } from '../components/DaySplit';
 import { PhotoWall } from '../components/PhotoCheers';
 import { ChallengeCard } from '../components/Challenge';
 import { CheckIcon, PlayIcon } from '../components/icons';
@@ -56,6 +57,7 @@ export function HomePage() {
       </div>
 
       <PhotoWall meId={me.id} />
+      <DaySplitCard me={me} friend={friend?.user} today={me.today} />
       <StreaksAndRecap me={me} friends={friends.map((f) => f.user)} today={me.today} />
 
       <div className="home-grid">

@@ -9,6 +9,8 @@ import { disablePush, enablePush, pushConfigured, pushOnHere, pushSupported } fr
 import { toast } from '../lib/toast';
 import { Switch } from './ui';
 import { FocusSettingsCard } from './FocusSettingsCard';
+import { RoutineModal } from './DaySplit';
+import { useMe, useRoutine } from '../lib/queries';
 
 export function MotivationSettings() {
   return (
@@ -34,6 +36,10 @@ export function MotivationSettings() {
         <PrefSwitch k="photoCheers" label="Photo cheers 📸">
           Snap a selfie with your camera and send it to your friend, with a fun frame and a line. It floats around their study timer, then pins to
           the corner. Only the two of you see it, and it's deleted after 24 hours. Both of you need this on.
+        </PrefSwitch>
+        <PrefSwitch k="daySplit" label="Day split ⏰">
+          Say how much you sleep and your work hours; each day on Home then splits into sleep, work, study and timepass (free time you didn't
+          study). Your friend sees yours while this is on. <DaySplitEdit />
         </PrefSwitch>
         <PrefSwitch k="recap" label="Sunday recap">
           On Sunday (and Monday, looking back), a card sums up both your weeks: hours, best day, topics finished and trees planted.
@@ -156,5 +162,21 @@ function InstallCard() {
         </p>
       </div>
     </div>
+  );
+}
+
+/** "Edit my hours" under the Day split switch. */
+function DaySplitEdit() {
+  const { data: me } = useMe();
+  const [on, setOn] = usePref('daySplit');
+  const { data: routine } = useRoutine(true, me?.id);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button className="btn ghost small" style={{ padding: '0 4px', minHeight: 0 }} onClick={() => setOpen(true)}>
+        {routine ? 'Edit my hours' : 'Set my hours'}
+      </button>
+      {open && <RoutineModal routine={routine ?? null} onClose={() => setOpen(false)} onSaved={() => !on && setOn(true)} />}
+    </>
   );
 }

@@ -29,6 +29,14 @@ export interface PhotoCheer {
   heartedAt: number | null;
 }
 
+/** Sleep and work hours, for the day split (Settings → Motivation & focus). */
+export interface Routine {
+  sleepMinutes: number;
+  workStart: string | null; // "09:30"
+  workEnd: string | null; // "18:30" (earlier than the start = a night shift)
+  workDays: number[]; // 0 = Sunday … 6 = Saturday
+}
+
 /** A topic due for revision (1, 3, 7 and 21 days after you first finished it). */
 export interface RevisionDue {
   topicId: string;

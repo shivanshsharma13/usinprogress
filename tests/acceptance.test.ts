@@ -853,6 +853,25 @@ test('studying together: join a friend, share breaks, and part ways when one fin
   await A.post(`/sessions/${joined.body.session.id}/discard`);
 });
 
+test('day split: sleep and work hours are checked, and only friends see them while it is on', async () => {
+  const routine = { sleepMinutes: 420, workStart: '09:30', workEnd: '18:30', workDays: [1, 2, 3, 4, 5, 5] };
+  const saved = await A.put('/routine', routine);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual(saved.body.routine.workDays, [1, 2, 3, 4, 5], 'duplicates dropped');
+  assert.equal((await A.put('/routine', { ...routine, sleepMinutes: 60 })).status, 400);
+  assert.equal((await A.put('/routine', { ...routine, workEnd: '9am' })).status, 400);
+  assert.equal((await A.put('/routine', { ...routine, workStart: null })).status, 400, 'start and end go together');
+  assert.equal((await A.put('/routine', { sleepMinutes: 480, workStart: null, workEnd: null, workDays: [] })).status, 200, 'no work hours is fine');
+  await A.put('/routine', routine);
+
+  assert.equal((await A.get(`/routine?userId=${a.id}`)).body.routine.sleepMinutes, 420, 'you always see your own');
+  assert.equal((await B.get(`/routine?userId=${a.id}`)).body.routine, null, 'hidden from your friend while the switch is off');
+  await A.patch('/me', { prefs: { daySplit: true } });
+  assert.equal((await B.get(`/routine?userId=${a.id}`)).body.routine.workStart, '09:30', 'your friend sees it once it is on');
+  assert.equal((await C.get(`/routine?userId=${a.id}`)).body.routine, null, 'strangers never do');
+  await A.patch('/me', { prefs: { daySplit: false } });
+});
+
 test('simple goals: tasks live in a room with any date or none, and nothing needs pulling', async () => {
   const roomTasks = async (c: Client) => (await c.get(`/rooms/${roomId}`)).body;
   // Adding in a room with no goal there makes "My tasks" for you.
