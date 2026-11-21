@@ -12,6 +12,7 @@ import { Forest, TodayPlant } from '../components/Garden';
 import { LeaveRoomModal } from '../components/Social';
 import { RevisionsDue } from '../components/Revisions';
 import { AddTaskBox, TaskList } from '../components/GoalTasks';
+import { CamCallButton } from '../components/StudyCam';
 import { ChevronLeft, PlayIcon } from '../components/icons';
 
 // Each person owns the tasks they add. Both lists are visible side by side, but only the owner can study,
@@ -51,6 +52,8 @@ export function RoomPage() {
           {room.description && <p className="small">{room.description}</p>}
         </div>
         <div className="row" style={{ gap: 6 }}>
+          {room.status === 'active' &&
+            room.members.filter((m) => m.user.id !== me.id).map((m) => <CamCallButton key={m.user.id} friend={m.user} className="btn" />)}
           <button className="btn" onClick={() => setEditing(true)}>
             Edit room
           </button>

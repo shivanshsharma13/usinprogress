@@ -8,6 +8,7 @@ import { Avatar, ErrorNote, fmt, LiveDot, Menu, ProgressBar, Spinner, StatusLine
 import { ActivityFeed, EncourageButtons } from '../components/Encourage';
 import { LeaveRoomModal, UnfriendModal } from '../components/Social';
 import { ChevronLeft } from '../components/icons';
+import { CamCallButton } from '../components/StudyCam';
 import { CreateRoomModal } from './Rooms';
 
 export function FriendPage() {
@@ -48,6 +49,7 @@ export function FriendPage() {
             </div>
           </div>
           <div className="social-actions">
+            <CamCallButton friend={user} />
             <button className="btn primary small" onClick={() => setCreating(true)}>
               New room
             </button>

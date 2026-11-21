@@ -12,6 +12,7 @@ import { personVars } from '../lib/theme';
 import { Avatar, useNow } from './ui';
 import { XIcon } from './icons';
 import { SendPhotoButton } from './PhotoCheers';
+import { CamCallButton } from './StudyCam';
 
 const FRESH_MS = 15 * 60_000; // "just started"
 const SKIPPED = 'us-in-progress-together-skipped';
@@ -145,6 +146,7 @@ export function TogetherPanel({ session, me }: { session: ActiveSession; me: Me 
             ☕ Break for both
           </button>
           <SendPhotoButton to={partner ?? { id: partnerId, displayName: name }} className="btn small" label={`📸 Photo for ${name}`} />
+          <CamCallButton friend={partner ?? { id: partnerId, displayName: name }} />
         </div>
       )}
     </div>
