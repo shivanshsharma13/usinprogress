@@ -960,6 +960,31 @@ test('simple goals: tasks live in a room with any date or none, and nothing need
   assert.ok((await roomTasks(A)).tasks.some((t: any) => t.title === 'Labour stages'));
 });
 
+test('study cam: call messages only between friends who both have it on, and only they can read them', async () => {
+  const callId = '7a0c1d3e-2b4f-4c5d-8e6f-9a0b1c2d3e4f';
+  const signal = (from: Client, to: string, kind = 'ring', payload: object = {}) => from.post('/cam/signal', { to, callId, kind, payload });
+
+  assert.match((await signal(A, b.id)).body.error.message, /Turn on Study cam/, 'off by default: nothing changes until you switch it on');
+  await A.patch('/me', { prefs: { studyCam: true } });
+  assert.equal((await signal(A, b.id)).body.error.data?.code, 'CAM_OFF', 'the friend has it off');
+  await B.patch('/me', { prefs: { studyCam: true } });
+  await C.patch('/me', { prefs: { studyCam: true } });
+  assert.equal((await signal(A, c.id)).status, 404, 'strangers can’t be called');
+  assert.equal((await signal(A, b.id, 'shout')).status, 400);
+  assert.equal((await signal(A, b.id, 'offer', { sdp: 'x'.repeat(30_000) })).status, 400, 'too big');
+
+  assert.equal((await signal(A, b.id)).status, 200);
+  assert.equal((await signal(B, a.id, 'accept')).status, 200);
+  const seen = async (cl: Client) => ((await cl.sb.from('cam_signals').select('kind').eq('call_id', callId)).data ?? []).map((r: any) => r.kind).sort();
+  assert.deepEqual(await seen(B), ['accept', 'ring']);
+  assert.deepEqual(await seen(C), [], 'nobody else can read them');
+  assert.notEqual((await C.sb.from('cam_signals').insert({ from_user: c.id, to_user: b.id, call_id: callId, kind: 'ring', created_at: Date.now() })).error, null, 'no direct writes');
+
+  await B.patch('/me', { prefs: { studyCam: false } });
+  assert.equal((await signal(A, b.id, 'ring')).body.error.data?.code, 'CAM_OFF', 'switching it off stops calls');
+  for (const cl of [A, C]) await cl.patch('/me', { prefs: { studyCam: false } });
+});
+
 test('photo cheers: friends only, both switched on, private to the two of them, gone after a day', async () => {
   const jpeg = 'data:image/jpeg;base64,' + Buffer.from('not really a jpeg, but small').toString('base64');
   const send = (from: Client, to: string, extra: object = {}) => from.post('/photos', { to, image: jpeg, ...extra });

@@ -748,3 +748,24 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .hours-inputs { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .hours-inputs .input { min-width: 0; width: 100%; max-width: 130px; padding-inline: 8px; }
 .split-day.changed > .tiny:first-child::after { content: '*'; }
+
+/* Study cam */
+.cam-tile { position: fixed; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 60; width: 200px; border-radius: 16px; overflow: hidden;
+  background: var(--card); border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22); display: flex; flex-direction: column; transition: width 0.2s; }
+.cam-tile.big { width: min(360px, calc(100vw - 24px)); }
+/* Focusing: small and up out of the way of the timer's buttons. */
+.cam-tile.focus { width: 132px; top: calc(68px + env(safe-area-inset-top)); bottom: auto; }
+@media (min-width: 900px) { .cam-tile { bottom: 16px; right: 16px; } .cam-tile.focus { top: 16px; bottom: auto; } }
+.cam-stage { position: relative; display: block; width: 100%; aspect-ratio: 4 / 3; padding: 0; border: 0; background: #111; cursor: pointer; }
+.cam-stage:disabled { cursor: default; }
+.cam-remote { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam-self { position: absolute; right: 6px; bottom: 6px; width: 30%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; border: 2px solid var(--card); transform: scaleX(-1); }
+.cam-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; background: #1c1c1c; }
+.cam-bar { display: flex; align-items: center; gap: 4px; padding: 6px; }
+.cam-mode { flex: 1; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cam-tile.focus .cam-mode { font-size: 0.7rem; }
+.cam-bar .btn.icon { min-width: 32px; min-height: 32px; padding: 0; }
+.cam-ring { position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 70; width: min(440px, calc(100vw - 24px));
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 16px; background: var(--card); border: 1px solid var(--me, var(--border)); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22); }
+.cam-toast { position: fixed; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 60; padding: 8px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); font-size: 0.85rem; }
+@media (min-width: 900px) { .cam-toast { bottom: 16px; right: 16px; } }

@@ -159,6 +159,13 @@ export const routineSchema = z.union([
   z.object({ sleepMinutes, workStart: clock.nullable(), workEnd: clock.nullable(), workDays: z.array(z.number().int().min(0).max(6)).max(7) }),
 ]);
 
+export const camSignalSchema = z.object({
+  to: z.string().uuid(),
+  callId: z.string().uuid(),
+  kind: z.enum(['ring', 'accept', 'decline', 'busy', 'offer', 'answer', 'ice', 'hangup']),
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
+
 export const dayHoursSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   hours: z.union([z.object({ start: clock, end: clock }), z.object({ off: z.literal(true) })]).nullable(),

@@ -14,6 +14,7 @@ import { Plant } from '../components/Plant';
 import { CheckIcon, ChevronLeft, NextIcon, PauseIcon, PlayIcon, StopIcon, XIcon } from '../components/icons';
 import { TogetherPanel } from '../components/Together';
 import { TimerPhotoButton, TimerPhotos } from '../components/PhotoCheers';
+import { CamBeforeStart } from '../components/StudyCam';
 import { TodayPlant } from '../components/Garden';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { usePref } from '../lib/prefs';
@@ -609,6 +610,8 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
           <p className="muted">Pick a topic and press start. We'll keep track of the time.</p>
         </div>
       </div>
+
+      <CamBeforeStart />
 
       {studyingFriend &&
         (joining ? (

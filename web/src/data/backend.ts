@@ -1037,6 +1037,11 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { routine: await rpc('routine_of', { p_user: query.get('userId') ?? (await myId()) }) };
       case 'PUT /routine':
         return { routine: await rpc('set_routine', { p: parse(v.routineSchema, body) }) };
+      case 'POST /cam/signal': {
+        const m = parse(v.camSignalSchema, body);
+        await rpc('send_cam_signal', { p_to: m.to, p_call: m.callId, p_kind: m.kind, p_payload: m.payload });
+        return { ok: true };
+      }
       case 'PUT /routine/day': {
         const { date, hours } = parse(v.dayHoursSchema, body);
         return { routine: await rpc('set_day_hours', { p_date: date, p_hours: hours }) };

@@ -13,6 +13,7 @@ import { FocusCompanion } from './FocusCompanion';
 import { TogetherNudge } from './Together';
 import { CelebrationHost } from './Celebration';
 import { PhotoNudge } from './PhotoCheers';
+import { CamHost } from './StudyCam';
 import { refreshPush } from '../lib/push';
 import { notify } from '../lib/notifications';
 import { CalendarIcon, ChartIcon, FriendsIcon, GoalIcon, HomeIcon, MoonIcon, PauseIcon, PlayIcon, RoomIcon, SunIcon } from './icons';
@@ -104,6 +105,7 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
       <FocusCompanion />
       <TogetherNudge />
       <PhotoNudge />
+      <CamHost me={me} />
       <CelebrationHost />
     </div>
   );

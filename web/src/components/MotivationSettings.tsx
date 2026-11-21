@@ -37,6 +37,11 @@ export function MotivationSettings() {
           Snap a selfie with your camera and send it to your friend, with a fun frame and a line. It floats around their study timer, then pins to
           the corner. Only the two of you see it, and it's deleted after 24 hours. Both of you need this on.
         </PrefSwitch>
+        <PrefSwitch k="studyCam" label="Study cam 📹">
+          Video call a friend from a room, their page or the timer. Talk before you start; once your timer runs, your mic goes off and their
+          sound is muted, so you just see each other studying. Pause or take a break to talk again. Video goes straight between your phones.
+          Both of you need this on.
+        </PrefSwitch>
         <PrefSwitch k="daySplit" label="Day split ⏰">
           Say how much you sleep and your work hours; each day on Home then splits into sleep, work, study and timepass (free time you didn't
           study). Your friend sees yours while this is on. <DaySplitEdit />
