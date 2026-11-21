@@ -452,6 +452,7 @@ details > summary { cursor: pointer; font-weight: 700; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 .menu { position: relative; }
 .menu-pop { position: absolute; right: 0; top: calc(100% + 4px); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,0.12); padding: 6px; z-index: 15; min-width: 200px; display: flex; flex-direction: column; }
+.menu-pop.up { top: auto; bottom: calc(100% + 4px); }
 .menu-pop button { border: none; background: transparent; text-align: left; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
 .menu-pop button:hover { background: var(--mint); }
 .menu-pop button.danger { color: var(--danger); }
@@ -729,7 +730,10 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .task-group > summary::-webkit-details-marker { display: none; }
 .task-group > summary b::before { content: '▸ '; color: var(--text-2); }
 .task-group[open] > summary b::before { content: '▾ '; }
-.task-rows { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.task-rows { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+/* No overflow clipping here: a row's ⋯ menu has to be able to hang outside the list. */
+.task-rows > :first-child { border-top-left-radius: 13px; border-top-right-radius: 13px; }
+.task-rows > :last-child { border-bottom-left-radius: 13px; border-bottom-right-radius: 13px; }
 .task-rows > p { padding: 10px 14px; }
 .task-row { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; min-height: 56px; }
 .task-row + .task-row { border-top: 1px solid var(--border); }

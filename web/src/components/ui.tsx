@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { LiveStatus, PublicUser } from '@shared/types';
 import { focusedMs, formatClock, formatDuration } from '@shared/timer';
@@ -151,7 +151,15 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
 
 export function Menu({ items, label = 'More actions' }: { items: { label: string; onClick: () => void; danger?: boolean; hidden?: boolean }[]; label?: string }) {
   const [open, setOpen] = useState(false);
+  const [up, setUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  // Near the bottom of the screen (or above the phone's tab bar), open upwards so every item stays reachable.
+  useLayoutEffect(() => {
+    if (!open || !pop.current || !ref.current) return setUp(false);
+    const below = window.innerHeight - ref.current.getBoundingClientRect().bottom;
+    setUp(below < pop.current.offsetHeight + 80 && ref.current.getBoundingClientRect().top > pop.current.offsetHeight + 8);
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
@@ -169,7 +177,7 @@ export function Menu({ items, label = 'More actions' }: { items: { label: string
         <MoreIcon />
       </button>
       {open && (
-        <div className="menu-pop" role="menu">
+        <div ref={pop} className={`menu-pop${up ? ' up' : ''}`} role="menu">
           {items
             .filter((i) => !i.hidden)
             .map((i) => (
