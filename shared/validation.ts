@@ -120,7 +120,14 @@ export const sessionStartSchema = z.object({
   targetMinutes: minutes.max(600).nullable().optional(),
   remindAfterHour: z.boolean().optional(),
   taskId: z.string().nullable().optional(),
+  subtopicId: z.string().uuid().nullable().optional(),
 });
+
+const subtopicTitle = z.string().trim().min(1, 'Give the subtopic a name.').max(140);
+export const subtopicCreateSchema = z.object({ title: subtopicTitle });
+export const subtopicUpdateSchema = z.object({ title: subtopicTitle.optional(), done: z.boolean().optional() });
+export const topicMergeSchema = z.object({ intoId: z.string().uuid() });
+export const sessionSubtopicSchema = z.object({ subtopicId: z.string().uuid().nullable() });
 
 export const sessionFinishSchema = z.object({
   completeTopic: z.boolean().optional(),

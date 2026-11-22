@@ -42,6 +42,11 @@ export function MotivationSettings() {
           sound is muted, so you just see each other studying. Pause or take a break to talk again. Video goes straight between your phones.
           Both of you need this on.
         </PrefSwitch>
+        <PrefSwitch k="subtopics" label="Subtopics 🧩">
+          Tap a task in a room or goal to give it a description and subtopics (like Pascal's Triangle → I, II, III). To revise or go deeper, add a
+          subtopic instead of a new task with the same name, and pick it when you start the timer. Progress shows which topics take the longest and
+          how many subtopics went into them. You can also merge two topics that turned out to be the same.
+        </PrefSwitch>
         <PrefSwitch k="daySplit" label="Day split ⏰">
           Say how much you sleep and your work hours; each day on Home then splits into sleep, work, study and timepass (free time you didn't
           study). Your friend sees yours while this is on. <DaySplitEdit />

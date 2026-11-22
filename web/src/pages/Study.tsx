@@ -18,6 +18,7 @@ import { CamBeforeStart } from '../components/StudyCam';
 import { TodayPlant } from '../components/Garden';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { usePref } from '../lib/prefs';
+import { SubtopicPicker, useSubtopicsOn } from '../components/Subtopics';
 
 interface FinishResult {
   session: SessionRecord | null;
@@ -55,6 +56,7 @@ export function StudyPage() {
 // ───────────── Running / paused ─────────────
 
 function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSession; requestedTopic: string | null; onOutcome: (o: Outcome) => void }) {
+  const subtopicsOn = useSubtopicsOn();
   const qc = useQueryClient();
   const { data: me } = useMe();
   useRoom(session.roomId); // the room plant, for the celebration when you complete the topic
@@ -185,6 +187,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           {session.isRevision && <span className="chip outline">Revision</span>}
         </div>
         <h1 className="focus-title">{session.topicTitle}</h1>
+        {session.subtopicTitle && subtopicsOn && <SubtopicDone session={session} />}
 
         <div className="timer-ring">
           <span className="halo" aria-hidden="true" />
@@ -297,6 +300,26 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
         >
           <p>This time won't count toward anything. A record stays in your history so nothing disappears silently.</p>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+/** The part you're on, under the timer's title, with a tick for when you've finished it. */
+function SubtopicDone({ session }: { session: ActiveSession }) {
+  const [done, setDone] = useState(false);
+  const mark = useAction(() => api.patch(`/subtopics/${session.subtopicId}`, { done: true }), {
+    invalidate: [['subtopics'], ['room'], ['plan']],
+    success: 'Part done ✓',
+    onSuccess: () => setDone(true),
+  });
+  return (
+    <div className="row wrap" style={{ justifyContent: 'center', gap: 8 }}>
+      <span className="small muted">› {session.subtopicTitle}</span>
+      {!done && (
+        <button className="btn ghost small" disabled={mark.isPending} onClick={() => mark.mutate(undefined)}>
+          <CheckIcon width={14} /> Part done
+        </button>
       )}
     </div>
   );
@@ -553,20 +576,28 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
   useEffect(() => {
     setTargetText(selected?.sessionTargetMinutes ? String(selected.sessionTargetMinutes) : '');
   }, [selected?.id]);
+  // Subtopics: which part of the topic (?sub= when you pressed ▶ on one).
+  const subtopicsOn = useSubtopicsOn();
+  const [subtopicId, setSubtopicId] = useState<string | null>(params.get('sub'));
+  useEffect(() => setSubtopicId(params.get('sub')), [topicId]);
+  const sub = subtopicsOn ? subtopicId : null;
 
   const start = useAction(
     () =>
       joining
-        ? api.post<{ session: ActiveSession }>('/together/join', {
-            friendId: joining.user.id,
-            topicId: selected!.id,
-            targetMinutes: targetText ? Math.round(Number(targetText)) : null,
-          })
+        ? api
+            .post<{ session: ActiveSession }>('/together/join', {
+              friendId: joining.user.id,
+              topicId: selected!.id,
+              targetMinutes: targetText ? Math.round(Number(targetText)) : null,
+            })
+            .then((r) => (sub ? api.post<{ session: ActiveSession }>(`/sessions/${r.session.id}/subtopic`, { subtopicId: sub }) : r))
         : api.post<{ session: ActiveSession }>('/sessions', {
             topicId: selected!.id,
             targetMinutes: targetText ? Math.round(Number(targetText)) : null,
             remindAfterHour: remind,
             taskId,
+            subtopicId: sub,
           }),
     {
       invalidate: [['session'], ['room', roomId ?? ''], ['rooms']],
@@ -669,6 +700,7 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
             <span className="chip c">{statusLabel(myProgress?.status)}</span>
           </div>
           {selected.description && <p className="small muted">{selected.description}</p>}
+          {subtopicsOn && <SubtopicPicker topicId={selected.id} value={subtopicId} onChange={setSubtopicId} />}
           <div className="grid-3" style={{ gap: 10 }}>
             <Stat label="Estimated to finish" value={selected.estimatedMinutes ? formatMinutes(selected.estimatedMinutes) : '—'} />
             <Stat label="Time spent so far" value={fmt(myProgress?.focusedMs ?? 0)} />

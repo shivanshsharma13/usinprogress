@@ -12,7 +12,8 @@ import { getFocusSettings } from '../lib/focusSettings';
 import { useAction, useMe } from '../lib/queries';
 import { toast } from '../lib/toast';
 import { Field, fmt, Menu, Modal } from './ui';
-import { CheckIcon, PlayIcon } from './icons';
+import { CheckIcon, ChevronDown, PlayIcon } from './icons';
+import { MergeTopicModal, SameNameHint, SubtopicPanel, useSubtopicsOn } from './Subtopics';
 
 const INVALIDATE = [['room'], ['rooms'], ['plan'], ['plans'], ['home'], ['tasks'], ['progress']];
 const EST = [15, 30, 45, 60, 90];
@@ -53,7 +54,8 @@ export function DateChoice({ value, onChange, today }: { value: string | null; o
  * One box to add tasks. In a room, it goes into the goal you pick (your latest one by default; with no goal
  * yet, a "My tasks" goal is made for you). On a goal page, into that goal.
  */
-export function AddTaskBox({ roomId, planId, goals = [], today, autoFocus }: { roomId?: string; planId?: string; goals?: GoalRef[]; today: string; autoFocus?: boolean }) {
+export function AddTaskBox({ roomId, planId, goals = [], today, autoFocus, existing = [] }: { roomId?: string; planId?: string; goals?: GoalRef[]; today: string; autoFocus?: boolean; existing?: GoalTask[] }) {
+  const subtopicsOn = useSubtopicsOn();
   const [title, setTitle] = useState('');
   const [date, setDate] = useState<string | null>(today);
   const [est, setEst] = useState<number | null>(null);
@@ -107,6 +109,7 @@ export function AddTaskBox({ roomId, planId, goals = [], today, autoFocus }: { r
           Add
         </button>
       </div>
+      {subtopicsOn && <SameNameHint title={title} existing={existing} onAdded={() => setTitle('')} />}
       {open && (
         <>
           <DateChoice value={date} onChange={setDate} today={today} />
@@ -178,7 +181,7 @@ export function TaskList({ tasks, today, isMe, active = true, showGoal, empty }:
         const rows = (
           <div className="task-rows">
             {g.tasks.length ? (
-              g.tasks.map((t) => <TaskRow key={t.id} task={t} today={today} isMe={isMe} active={active} showGoal={showGoal} showDate={g.key !== 'today'} />)
+              g.tasks.map((t) => <TaskRow key={t.id} task={t} siblings={tasks} today={today} isMe={isMe} active={active} showGoal={showGoal} showDate={g.key !== 'today'} />)
             ) : (
               <p className="small muted" style={{ margin: '4px 0' }}>
                 {isMe ? 'Nothing for today yet. Add a task above.' : 'Nothing planned for today.'}
@@ -208,11 +211,14 @@ export function TaskList({ tasks, today, isMe, active = true, showGoal, empty }:
   );
 }
 
-function TaskRow({ task: t, today, isMe, active, showGoal, showDate }: { task: GoalTask; today: string; isMe: boolean; active: boolean; showGoal?: boolean; showDate: boolean }) {
+function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }: { task: GoalTask; siblings: GoalTask[]; today: string; isMe: boolean; active: boolean; showGoal?: boolean; showDate: boolean }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: me } = useMe();
   const [editing, setEditing] = useState(false);
+  const subtopicsOn = useSubtopicsOn() && Boolean(t.topicId);
+  const [expanded, setExpanded] = useState(false);
+  const [merging, setMerging] = useState(false);
   const legacy = t.id.startsWith('topic:'); // a topic without a goal task (from before goals lived in rooms)
   const complete = useAction(() => api.post(`/topics/${t.topicId}/complete`), {
     invalidate: INVALIDATE,
@@ -232,11 +238,14 @@ function TaskRow({ task: t, today, isMe, active, showGoal, showDate }: { task: G
     showGoal && t.planTitle ? t.planTitle : '',
     t.estMinutes ? `~${formatMinutes(t.estMinutes)}` : '',
     t.focusedMs ? `${fmt(t.focusedMs)} spent` : '',
+    subtopicsOn && t.parts?.total ? `${t.parts.done}/${t.parts.total} subtopics` : '',
+    subtopicsOn && t.description ? '📝' : '',
   ]
     .filter(Boolean)
     .join(' · ');
 
   return (
+    <div className="task-entry">
     <div className={`task-row${t.done ? ' done' : ''}`}>
       <button
         className="task-check"
@@ -247,10 +256,19 @@ function TaskRow({ task: t, today, isMe, active, showGoal, showDate }: { task: G
       >
         {t.done && <CheckIcon width={15} />}
       </button>
-      <div className="grow" style={{ minWidth: 0 }}>
-        <div className="task-title">{t.title}</div>
-        {meta && <div className="tiny muted">{meta}</div>}
-      </div>
+      {subtopicsOn ? (
+        <button className="grow task-open" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={`${t.title}: ${expanded ? 'hide' : 'show'} description and subtopics`}>
+          <span className="task-title">
+            {t.title} <ChevronDown width={14} className="task-chevron" />
+          </span>
+          {meta && <span className="tiny muted">{meta}</span>}
+        </button>
+      ) : (
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="task-title">{t.title}</div>
+          {meta && <div className="tiny muted">{meta}</div>}
+        </div>
+      )}
       {canAct && (
         <div className="row" style={{ gap: 4 }}>
           {!t.done && (
@@ -259,21 +277,25 @@ function TaskRow({ task: t, today, isMe, active, showGoal, showDate }: { task: G
               <span className="hide-narrow">Study</span>
             </button>
           )}
-          {!legacy && (
+          {(!legacy || subtopicsOn) && (
             <Menu
               label={`More for ${t.title}`}
               items={[
-                { label: 'Edit', onClick: () => setEditing(true) },
-                { label: 'Do it today', onClick: () => move.mutate(today), hidden: t.date === today || t.done },
-                { label: 'Move to tomorrow', onClick: () => move.mutate(addDays(today, 1)), hidden: t.date === addDays(today, 1) || t.done },
-                { label: 'No date', onClick: () => move.mutate(null), hidden: t.date === null || t.done },
-                { label: 'Remove', danger: true, onClick: () => confirm(`Remove “${t.title}”? Its study time stays in your history.`) && remove.mutate(undefined) },
+                { label: 'Edit', onClick: () => setEditing(true), hidden: legacy },
+                { label: 'Do it today', onClick: () => move.mutate(today), hidden: legacy || t.date === today || t.done },
+                { label: 'Move to tomorrow', onClick: () => move.mutate(addDays(today, 1)), hidden: legacy || t.date === addDays(today, 1) || t.done },
+                { label: 'No date', onClick: () => move.mutate(null), hidden: legacy || t.date === null || t.done },
+                { label: 'Merge into another topic…', onClick: () => setMerging(true), hidden: !subtopicsOn },
+                { label: 'Remove', danger: true, onClick: () => confirm(`Remove “${t.title}”? Its study time stays in your history.`) && remove.mutate(undefined), hidden: legacy },
               ]}
             />
           )}
         </div>
       )}
       {editing && <EditTaskModal task={t} today={today} onClose={() => setEditing(false)} />}
+      {merging && <MergeTopicModal task={t} candidates={siblings} onClose={() => setMerging(false)} />}
+    </div>
+    {subtopicsOn && expanded && <SubtopicPanel topicId={t.topicId!} description={t.description ?? ''} canAct={canAct} />}
     </div>
   );
 }

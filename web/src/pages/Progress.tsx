@@ -114,6 +114,7 @@ export function ProgressPage() {
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="bold small">
                     {s.topicTitle}
+                    {s.subtopicTitle && <span className="muted"> › {s.subtopicTitle}</span>}
                     {s.isRevision && <span className="chip outline" style={{ marginLeft: 6 }}>Revision</span>}
                   </div>
                   <div className="tiny muted">

@@ -1075,3 +1075,69 @@ test('phone notifications: the right people, only if they opted in, and never bl
     server.close();
   }
 });
+
+test('subtopics: parts of a topic, sessions on a part, hours by part, and merging a duplicate topic', async () => {
+  const active = (await A.get('/sessions/active')).body.session;
+  if (active) await A.post(`/sessions/${active.id}/discard`);
+  const mk = async (title: string) => (await A.post(`/rooms/${roomId}/topics`, { title })).body.id as string;
+  const pascal = await mk('Pascal’s Triangle');
+  const dupe = await mk('pascal’s triangle ');
+  const part3 = await mk('Pascal’s Triangle III');
+
+  const add = (topic: string, title: string) => A.post(`/topics/${topic}/subtopics`, { title });
+  const one = (await add(pascal, 'I')).body.id;
+  const two = (await add(pascal, '  II ')).body.id;
+  assert.equal((await add(pascal, '   ')).status, 400);
+  assert.equal((await B.post(`/topics/${pascal}/subtopics`, { title: 'mine' })).status, 403, 'only the owner adds parts');
+  assert.equal((await C.get(`/topics/${pascal}/subtopics`)).body.subtopics?.length ?? 0, 0, 'strangers see nothing');
+  assert.equal((await B.patch(`/subtopics/${one}`, { done: true })).status, 403);
+  assert.equal((await A.patch(`/subtopics/${one}`, { done: true })).status, 200);
+  const list = (await B.get(`/topics/${pascal}/subtopics`)).body.subtopics;
+  assert.deepEqual(list.map((s: any) => [s.title, Boolean(s.doneAt)]), [['I', true], ['II', false]], 'room members can see them, in order');
+
+  // A session on a part, labelled from the start; it can be moved to another part of the same topic only.
+  const s = (await A.post('/sessions', { topicId: pascal, subtopicId: two })).body.session;
+  assert.equal(s.subtopicTitle, 'II');
+  assert.equal((await A.post(`/sessions/${s.id}/subtopic`, { subtopicId: one })).body.session.subtopicTitle, 'I');
+  const elsewhere = (await A.post(`/topics/${part3}/subtopics`, { title: 'x' })).body.id;
+  assert.equal((await A.post(`/sessions/${s.id}/subtopic`, { subtopicId: elsewhere })).status, 404);
+  assert.equal((await A.post(`/sessions/${s.id}/subtopic`, { subtopicId: two })).status, 200);
+  await A.del(`/subtopics/${elsewhere}`);
+  await srv.db.query('UPDATE study_sessions SET started_at = started_at - 600000 WHERE id = ?', [s.id]);
+  assert.equal((await A.post(`/sessions/${s.id}/finish`, {})).status, 200);
+
+  const room = (await A.get(`/rooms/${roomId}`)).body;
+  assert.deepEqual(room.topics.find((t: any) => t.id === pascal).parts, { done: 1, total: 2 });
+  const parts = (await A.get(`/topics/${pascal}/subtopics`)).body.subtopics;
+  assert.equal(parts.find((p: any) => p.id === two).sessions, 1);
+  assert.ok(parts.find((p: any) => p.id === two).focusedMs >= 9 * 60000);
+
+  // Hours by topic say how many parts there are and which ones took the time; your friend sees it too.
+  const hours = (cl: Client) => cl.get(`/progress/hours?userId=${a.id}&from=${today}&to=${today}`).then((r) => r.body.report.topics.find((t: any) => t.topicId === pascal));
+  for (const cl of [A, B]) {
+    const t = await hours(cl);
+    assert.equal(t.subtopicsTotal, 2);
+    assert.equal(t.subtopicsDone, 1);
+    assert.deepEqual(t.subtopics.map((x: any) => x.title), ['II']);
+  }
+  assert.equal((await A.get('/sessions')).body.sessions.find((x: any) => x.id === s.id).subtopicTitle, 'II');
+
+  // Merging: the same-named duplicate folds in as is; a differently named topic becomes a part, keeping its time.
+  assert.equal((await A.post(`/topics/${pascal}/merge`, { intoId: pascal })).status, 400);
+  assert.equal((await B.post(`/topics/${dupe}/merge`, { intoId: pascal })).status, 403);
+  assert.equal((await A.post(`/topics/${dupe}/merge`, { intoId: bTopics[0] })).status, 403, 'only into your own topics');
+  const s3 = (await A.post('/sessions', { topicId: part3 })).body.session;
+  assert.equal((await A.post(`/topics/${part3}/merge`, { intoId: pascal })).status, 409, 'not while studying it');
+  await srv.db.query('UPDATE study_sessions SET started_at = started_at - 300000 WHERE id = ?', [s3.id]);
+  await A.post(`/sessions/${s3.id}/finish`, { completeTopic: true });
+
+  assert.equal((await A.post(`/topics/${dupe}/merge`, { intoId: pascal })).status, 200);
+  assert.equal((await A.post(`/topics/${part3}/merge`, { intoId: pascal })).status, 200);
+  const after = (await A.get(`/rooms/${roomId}`)).body;
+  assert.ok(!after.topics.some((t: any) => t.id === dupe || t.id === part3), 'merged topics are archived');
+  const merged = after.topics.find((t: any) => t.id === pascal);
+  assert.equal(merged.progress[a.id].sessions, 2, 'their time moved across');
+  assert.equal(merged.progress[a.id].status, 'completed', 'a completion moves too');
+  const titles = (await A.get(`/topics/${pascal}/subtopics`)).body.subtopics.map((x: any) => [x.title, Boolean(x.doneAt), x.sessions]);
+  assert.deepEqual(titles, [['I', true, 0], ['II', false, 1], ['Pascal’s Triangle III', true, 1]]);
+});
