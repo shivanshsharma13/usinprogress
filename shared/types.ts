@@ -105,6 +105,8 @@ export interface ActiveSession {
   isRevision: boolean;
   taskId: string | null;
   togetherId?: string | null; // studying together with a friend (see Together)
+  subtopicId?: string | null; // the part of the topic this session is on (Subtopics)
+  subtopicTitle?: string | null;
 }
 
 /** Two friends studying at the same time: a shared timer, and a break either can call for both. */
@@ -206,6 +208,23 @@ export interface Topic {
   status: 'active' | 'archived';
   createdAt: number;
   progress: Record<string, TopicMemberProgress>; // keyed by user id
+  parts: SubtopicCount;
+}
+
+/** How many subtopics a topic has, and how many are done. */
+export interface SubtopicCount {
+  done: number;
+  total: number;
+}
+
+/** A part of a topic ("Pascal's Triangle" → "II"), with its owner's time on it. */
+export interface Subtopic {
+  id: string;
+  topicId: string;
+  title: string;
+  doneAt: number | null;
+  focusedMs: number;
+  sessions: number;
 }
 
 export interface RoomDetail extends RoomSummary {
@@ -233,6 +252,7 @@ export interface SessionRecord {
   roomName: string;
   topicId: string;
   topicTitle: string;
+  subtopicTitle?: string | null;
   state: 'running' | 'paused' | 'finished' | 'discarded';
   startedAt: number;
   endedAt: number | null;
@@ -256,6 +276,8 @@ export interface PlanTask {
   done: boolean;
   doneDate: string | null; // owner's calendar date it was completed
   focusedMs: number;
+  description?: string; // its topic's description
+  parts?: SubtopicCount; // its topic's subtopics
 }
 
 export type DayStatus = 'upcoming' | 'today' | 'done' | 'partial' | 'missed' | 'rest';
@@ -315,6 +337,8 @@ export interface GoalTask {
   done: boolean;
   doneDate: string | null;
   focusedMs: number;
+  description?: string;
+  parts?: SubtopicCount;
 }
 
 /** A goal as a room lists it. */
@@ -414,7 +438,17 @@ export interface HoursReport {
   to: string;
   today: string;
   daily: { date: string; ms: number }[];
-  topics: { topicId: string; title: string; roomId: string; roomName: string; ms: number; sessions: number }[];
+  topics: {
+    topicId: string;
+    title: string;
+    roomId: string;
+    roomName: string;
+    ms: number;
+    sessions: number;
+    subtopicsTotal?: number;
+    subtopicsDone?: number;
+    subtopics?: { id: string; title: string; ms: number; done: boolean }[]; // studied in the range, longest first
+  }[];
   otherMs: number;
 }
 

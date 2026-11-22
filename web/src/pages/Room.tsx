@@ -104,6 +104,8 @@ function topicAsTask(t: Topic, ownerId: string): GoalTask {
     done: p?.status === 'completed',
     doneDate: p?.completedAt ? new Date(p.completedAt).toISOString().slice(0, 10) : null,
     focusedMs: p?.focusedMs ?? 0,
+    description: t.description,
+    parts: t.parts,
   };
 }
 
@@ -163,7 +165,7 @@ function PersonColumn({ room, member, isMe, today, autoAdd }: { room: RoomDetail
       </div>
 
       {isMe && active && <RevisionsDue roomId={room.id} />}
-      {isMe && active && <AddTaskBox roomId={room.id} goals={goals} today={today} autoFocus={autoAdd} />}
+      {isMe && active && <AddTaskBox roomId={room.id} goals={goals} today={today} autoFocus={autoAdd} existing={tasks} />}
 
       <TaskList
         tasks={tasks}

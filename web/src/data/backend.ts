@@ -30,6 +30,7 @@ import type {
   RoomSummary,
   SessionRecord,
   SprintMark,
+  SubtopicCount,
   Task,
   Topic,
   TopicMemberProgress,
@@ -137,7 +138,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     // One request for topics with their progress and first completions; per-room totals alongside it.
     let query = sb
       .from('topics')
-      .select('*, topic_progress(*), topic_completions(topic_id, user_id, completed_at)')
+      .select('*, topic_progress(*), topic_completions(topic_id, user_id, completed_at), subtopics(done_at)')
       .in('room_id', roomIds)
       .eq('topic_completions.kind', 'first')
       .is('topic_completions.revoked_at', null)
@@ -185,9 +186,12 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         status: t.status,
         createdAt: t.created_at,
         progress: prog,
+        parts: countParts(t.subtopics),
       };
     });
   }
+
+  const countParts = (list: Row[] | undefined): SubtopicCount => ({ done: (list ?? []).filter((x) => x.done_at !== null).length, total: list?.length ?? 0 });
 
   const isDone = (p: TopicMemberProgress | undefined) => Boolean(p && (p.status === 'completed' || p.firstCompletedAt));
 
@@ -316,7 +320,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   // ───────────── goals (plans) ─────────────
 
   /** Tasks with done state and time. `timeFor` supplies focused time per topic. */
-  const PLAN_TASK_COLUMNS = '*, topics(topic_completions(local_date))';
+  const PLAN_TASK_COLUMNS = '*, topics(description, subtopics(done_at), topic_completions(local_date))';
 
   async function planTasks(planIds: string[], timeFor: (topicIds: string[]) => Promise<Map<string, number>>, days?: { min: number; max: number }, loaded?: Row[]): Promise<Map<string, PlanTask[]>> {
     const byPlan = new Map<string, PlanTask[]>(planIds.map((id) => [id, []]));
@@ -349,6 +353,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         done: doneDate !== null,
         doneDate,
         focusedMs: t.topic_id ? (time.get(t.topic_id) ?? 0) : 0,
+        description: t.topics?.description ?? '',
+        parts: countParts(t.topics?.subtopics),
       });
     }
     return byPlan;
@@ -620,7 +626,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
   async function listSessions(viewerId: string): Promise<SessionRecord[]> {
     const list = await rows(
-      sb.from('study_sessions').select('*, topics(title), rooms(name), session_corrections(old_ms, new_ms, reason, created_at), session_pauses(paused_at, resumed_at)').eq('user_id', viewerId).order('started_at', { ascending: false }).limit(50),
+      sb.from('study_sessions').select('*, topics(title), subtopics(title), rooms(name), session_corrections(old_ms, new_ms, reason, created_at), session_pauses(paused_at, resumed_at)').eq('user_id', viewerId).order('started_at', { ascending: false }).limit(50),
     );
     return list.map((s) => {
       const live = s.state === 'running' || s.state === 'paused';
@@ -631,6 +637,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         roomName: s.rooms?.name ?? '',
         topicId: s.topic_id,
         topicTitle: s.topics?.title ?? '',
+        subtopicTitle: s.subtopics?.title ?? null,
         state: s.state,
         startedAt: s.started_at,
         endedAt: s.ended_at,
@@ -882,6 +889,19 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       case 'POST /topics/:id/reopen':
         await rpc('reopen_topic', { p_topic: p[0], p_mode: body?.mode === 'undo' ? 'undo' : 'revise' });
         return { ok: true };
+      case 'GET /topics/:id/subtopics':
+        return { subtopics: await rpc('topic_subtopics', { p_topic: p[0] }) };
+      case 'POST /topics/:id/subtopics':
+        return { id: await rpc('add_subtopic', { p_topic: p[0], p_title: parse(v.subtopicCreateSchema, body).title }) };
+      case 'PATCH /subtopics/:id':
+        await rpc('update_subtopic', { p_id: p[0], p_patch: parse(v.subtopicUpdateSchema, body) });
+        return { ok: true };
+      case 'DELETE /subtopics/:id':
+        await rpc('delete_subtopic', { p_id: p[0] });
+        return { ok: true };
+      case 'POST /topics/:id/merge':
+        await rpc('merge_topic', { p_from: p[0], p_into: parse(v.topicMergeSchema, body).intoId });
+        return { ok: true };
       case 'GET /topics/:id/history': {
         const [events, sessions] = await Promise.all([
           rows(sb.from('topic_events').select('*').eq('topic_id', p[0]).order('created_at', { ascending: false }).limit(100)),
@@ -899,8 +919,13 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { sessions: await listSessions(await myId()) };
       case 'POST /sessions': {
         const input = parse(v.sessionStartSchema, body);
-        return { session: await rpc('start_session', { p_topic: input.topicId, p_target: input.targetMinutes ?? null, p_remind: input.remindAfterHour ?? false, p_task: input.taskId ?? null }) };
+        const session = await rpc<ActiveSession>('start_session', { p_topic: input.topicId, p_target: input.targetMinutes ?? null, p_remind: input.remindAfterHour ?? false, p_task: input.taskId ?? null });
+        // On a subtopic (Subtopics): label the session as soon as it starts.
+        if (input.subtopicId) return { session: await rpc('set_session_subtopic', { p_session: session.id, p_subtopic: input.subtopicId }) };
+        return { session };
       }
+      case 'POST /sessions/:id/subtopic':
+        return { session: await rpc('set_session_subtopic', { p_session: p[0], p_subtopic: parse(v.sessionSubtopicSchema, body).subtopicId }) };
       case 'POST /sessions/:id/pause':
         return { session: await rpc('pause_session', { p_session: p[0] }) };
       case 'POST /sessions/:id/resume':
@@ -1072,7 +1097,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
 /** Path segments that are ids: uuids, sprint numbers, and the id after /requests/. */
 function isId(s: string, prev?: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) || (prev === 'sprints' && /^\d+$/.test(s)) || ['rooms', 'topics', 'sessions', 'plans', 'plan-tasks', 'tasks', 'friends', 'requests'].includes(prev ?? '') && !['requests', 'search', 'active', 'order', 'topics'].includes(s);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) || (prev === 'sprints' && /^\d+$/.test(s)) || ['rooms', 'topics', 'subtopics', 'sessions', 'plans', 'plan-tasks', 'tasks', 'friends', 'requests'].includes(prev ?? '') && !['requests', 'search', 'active', 'order', 'topics'].includes(s);
 }
 
 export type Backend = ReturnType<typeof createBackend>;

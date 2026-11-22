@@ -59,7 +59,7 @@ export function PlanPage() {
           </button>
         </div>
       )}
-      {active && plan.roomId && <AddTaskBox planId={plan.id} today={me.today} />}
+      {active && plan.roomId && <AddTaskBox planId={plan.id} today={me.today} existing={plan.tasks} />}
 
       <TaskList
         tasks={plan.tasks}

@@ -6,6 +6,7 @@ import type { HoursReport as Report, PublicUser } from '@shared/types';
 import { useHoursReport } from '../lib/queries';
 import { personVars } from '../lib/theme';
 import { fmt, Spinner } from './ui';
+import { useSubtopicsOn } from './Subtopics';
 
 type Period = 'week' | 'month' | 'quarter';
 const PERIODS: { key: Period; label: string }[] = [
@@ -227,14 +228,22 @@ function Bars({ title, groups, people, labelEvery }: { title: string; groups: { 
 
 function TopicBars({ person }: { person: Person }) {
   const [all, setAll] = useState(false);
+  const subtopicsOn = useSubtopicsOn();
   const topics = person.report?.topics ?? [];
   const other = person.report?.otherMs ?? 0;
   if (!person.report) return <Spinner />;
   if (!topics.length && !other) return <p className="small muted">No study time in this period.</p>;
   const max = Math.max(1, ...topics.map((t) => t.ms), other);
   const shown = all ? topics : topics.slice(0, 8);
+  const longest = topics[0];
   return (
     <div className="stack" style={{ gap: 10, ...personVars(person.user.accent) }}>
+      {subtopicsOn && longest && (
+        <p className="small longest-topic">
+          ⏳ Longest: <b>{longest.title}</b>, {fmt(longest.ms)} over {longest.sessions} {longest.sessions === 1 ? 'session' : 'sessions'}
+          {longest.subtopics?.length ? ` and ${longest.subtopics.length} ${longest.subtopics.length === 1 ? 'subtopic' : 'subtopics'}` : ''}.
+        </p>
+      )}
       {shown.map((t) => (
         <div key={`${t.topicId}:${t.roomId}`} className="topic-bar">
           <div className="row between" style={{ gap: 8 }}>
@@ -248,7 +257,28 @@ function TopicBars({ person }: { person: Person }) {
           <div className="topic-bar-track">
             <i className={person.hatched ? 'hatched' : ''} style={{ width: `${Math.max(2, (t.ms / max) * 100)}%` }} />
           </div>
-          <span className="tiny muted">{t.roomName}</span>
+          <span className="tiny muted">
+            {t.roomName}
+            {subtopicsOn && t.subtopicsTotal ? ` · ${t.subtopicsDone}/${t.subtopicsTotal} subtopics done` : ''}
+          </span>
+          {subtopicsOn && Boolean(t.subtopics?.length) && (
+            <details className="topic-parts">
+              <summary className="tiny muted">
+                {t.subtopics!.length} {t.subtopics!.length === 1 ? 'subtopic' : 'subtopics'} studied
+              </summary>
+              <ul>
+                {t.subtopics!.map((x) => (
+                  <li key={x.id} className="row between tiny">
+                    <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                      {x.done ? '✓ ' : ''}
+                      {x.title}
+                    </span>
+                    <span className="num">{fmt(x.ms)}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       ))}
       {other > 0 && (
