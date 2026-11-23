@@ -800,3 +800,25 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .longest-topic { margin: 0; }
 .topic-parts summary { cursor: pointer; }
 .topic-parts ul { list-style: none; margin: 4px 0 0; padding: 0 0 0 10px; display: flex; flex-direction: column; gap: 2px; border-left: 2px solid var(--border); }
+
+/* Full-screen focus */
+.zen {
+  position: fixed; inset: 0; z-index: 55; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.zen-main { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 16px; text-align: center; }
+.zen-title { margin: 0; font-size: clamp(1.4rem, 1rem + 2.4vw, 2.6rem); max-width: 28ch; overflow-wrap: anywhere; }
+.zen-subtitle { margin: -4px 0 0; font-size: clamp(1rem, 0.9rem + 0.8vw, 1.4rem); overflow-wrap: anywhere; }
+.zen-clock { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; border-radius: 24px; max-width: 100%; }
+.zen-clock:focus-visible { outline: 3px solid color-mix(in srgb, var(--me) 45%, transparent); outline-offset: 8px; }
+.zen .timer-face { font-size: min(24vw, 34vh); color: var(--me); transition: opacity 0.4s; }
+.zen .timer-face.long { font-size: min(17vw, 30vh); }
+.zen-sub { font-size: clamp(0.85rem, 0.8rem + 0.4vw, 1.05rem); }
+/* The edges hold the controls; they fade in only while the cursor is over them (or after a tap). */
+.zen-bar { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 20px 16px; min-height: 88px; opacity: 0; transition: opacity 0.25s; }
+.zen-top { justify-content: space-between; }
+.zen-bar:hover, .zen-bar:focus-within, .zen.show .zen-bar { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .zen-bar { transition: none; } }
+.zen:focus { outline: none; }
+/* Touch screens: hidden controls can't be pressed by accident; the first tap only shows them. */
+@media (hover: none) { .zen:not(.show) .zen-bar { pointer-events: none; } }

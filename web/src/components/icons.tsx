@@ -29,3 +29,5 @@ export const ArrowUp = (p: P) => (<svg {...base} {...p}><path d="M12 19V5M6 11l6
 export const ArrowDown = (p: P) => (<svg {...base} {...p}><path d="M12 5v14M6 13l6 6 6-6" /></svg>);
 export const RefreshIcon = (p: P) => (<svg {...base} {...p}><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" /><path d="M19.5 4.5v4h-4" /></svg>);
 export const NextIcon = (p: P) => (<svg {...base} {...p}><path d="M6 5.5v13l9-6.5Z" fill="currentColor" stroke="none" /><path d="M18 5.5v13" /></svg>);
+export const ExpandIcon = (p: P) => (<svg {...base} {...p}><path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15" /></svg>);
+export const CollapseIcon = (p: P) => (<svg {...base} {...p}><path d="M9 4.5V9H4.5M19.5 9H15V4.5M15 19.5V15h4.5M4.5 15H9v4.5" /></svg>);
