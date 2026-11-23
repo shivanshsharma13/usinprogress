@@ -47,6 +47,10 @@ export function MotivationSettings() {
           subtopic instead of a new task with the same name, and pick it when you start the timer. Progress shows which topics take the longest and
           how many subtopics went into them. You can also merge two topics that turned out to be the same.
         </PrefSwitch>
+        <PrefSwitch k="fullFocus" label="Full-screen focus 🖥️">
+          A Full screen button on the timer: only the clock and what you're working on fill the screen, so you can set the phone or laptop aside
+          and work. The buttons stay hidden until you move the cursor to the top or bottom edge (tap the screen on a phone), and the screen stays on.
+        </PrefSwitch>
         <PrefSwitch k="daySplit" label="Day split ⏰">
           Say how much you sleep and your work hours; each day on Home then splits into sleep, work, study and timepass (free time you didn't
           study). Your friend sees yours while this is on. <DaySplitEdit />

@@ -11,7 +11,7 @@ import { toast } from '../lib/toast';
 import { personVars } from '../lib/theme';
 import { Empty, ErrorNote, Field, fmt, Modal, Spinner, Switch, useNow } from '../components/ui';
 import { Plant } from '../components/Plant';
-import { CheckIcon, ChevronLeft, NextIcon, PauseIcon, PlayIcon, StopIcon, XIcon } from '../components/icons';
+import { CheckIcon, ChevronLeft, ExpandIcon, NextIcon, PauseIcon, PlayIcon, StopIcon, XIcon } from '../components/icons';
 import { TogetherPanel } from '../components/Together';
 import { TimerPhotoButton, TimerPhotos } from '../components/PhotoCheers';
 import { CamBeforeStart } from '../components/StudyCam';
@@ -19,6 +19,7 @@ import { TodayPlant } from '../components/Garden';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { usePref } from '../lib/prefs';
 import { SubtopicPicker, useSubtopicsOn } from '../components/Subtopics';
+import { FocusZen, useFullFocusOn } from '../components/FocusZen';
 
 interface FinishResult {
   session: SessionRecord | null;
@@ -57,6 +58,8 @@ export function StudyPage() {
 
 function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSession; requestedTopic: string | null; onOutcome: (o: Outcome) => void }) {
   const subtopicsOn = useSubtopicsOn();
+  const fullFocusOn = useFullFocusOn();
+  const [zen, setZen] = useState(false);
   const qc = useQueryClient();
   const { data: me } = useMe();
   useRoom(session.roomId); // the room plant, for the celebration when you complete the topic
@@ -185,6 +188,11 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
         <div className="row wrap" style={{ justifyContent: 'center' }}>
           <span className="chip c">{paused ? 'Paused' : reached ? 'Target reached' : 'Focusing'}</span>
           {session.isRevision && <span className="chip outline">Revision</span>}
+          {fullFocusOn && (
+            <button className="btn ghost small" onClick={() => setZen(true)}>
+              <ExpandIcon width={16} /> Full screen
+            </button>
+          )}
         </div>
         <h1 className="focus-title">{session.topicTitle}</h1>
         {session.subtopicTitle && subtopicsOn && <SubtopicDone session={session} />}
@@ -266,6 +274,22 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
         </button>
       </div>
 
+      {zen && fullFocusOn && (
+        <FocusZen
+          title={session.topicTitle}
+          subtitle={subtopicsOn ? session.subtopicTitle : null}
+          face={face}
+          sub={target ? (reached ? `${formatClock(elapsed)} focused · ${target}m reached` : `of ${target}m · ${formatClock(elapsed)} focused`) : 'focused this session'}
+          paused={paused}
+          busy={busy}
+          onTogglePause={togglePause}
+          // Finishing may ask a question (a very long session), so step out of full screen first.
+          onFinish={() => (setZen(false), finish.mutate({}))}
+          onComplete={() => (setZen(false), finish.mutate({ completeTopic: true }))}
+          onExit={() => setZen(false)}
+          style={me ? personVars(me.accent) : undefined}
+        />
+      )}
       {longSession && (
         <LongSessionDialog
           measuredMs={longSession.measuredMs}
