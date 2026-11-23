@@ -806,7 +806,7 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
   position: fixed; inset: 0; z-index: 55; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
-.zen-main { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 16px; text-align: center; }
+.zen-main { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 16px; text-align: center; }
 .zen-title { margin: 0; font-size: clamp(1.4rem, 1rem + 2.4vw, 2.6rem); max-width: 28ch; overflow-wrap: anywhere; }
 .zen-subtitle { margin: -4px 0 0; font-size: clamp(1rem, 0.9rem + 0.8vw, 1.4rem); overflow-wrap: anywhere; }
 .zen-clock { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; border-radius: 24px; max-width: 100%; }
@@ -815,10 +815,54 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .zen .timer-face.long { font-size: min(17vw, 30vh); }
 .zen-sub { font-size: clamp(0.85rem, 0.8rem + 0.4vw, 1.05rem); }
 /* The edges hold the controls; they fade in only while the cursor is over them (or after a tap). */
-.zen-bar { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 20px 16px; min-height: 88px; opacity: 0; transition: opacity 0.25s; }
-.zen-top { justify-content: space-between; }
+.zen-bar { position: relative; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 20px 16px; min-height: 88px; opacity: 0; transition: opacity 0.25s, translate 0.3s ease; }
+.zen-top { justify-content: space-between; translate: 0 -10px; }
+.zen-bottom { translate: 0 10px; }
+.zen-bar:hover, .zen-bar:focus-within, .zen.show .zen-bar { translate: 0 0; }
 .zen-bar:hover, .zen-bar:focus-within, .zen.show .zen-bar { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .zen-bar { transition: none; } }
 .zen:focus { outline: none; }
 /* Touch screens: hidden controls can't be pressed by accident; the first tap only shows them. */
 @media (hover: none) { .zen:not(.show) .zen-bar { pointer-events: none; } }
+
+/* Full-screen focus: calm motion. A glow that breathes behind the clock, leaves drifting up, a line that fills
+   toward your session length, and a soft bloom when you reach it. All of it rests while the timer is paused. */
+.zen { overflow: hidden; animation: zen-in 0.5s ease both; }
+.zen-main > * { animation: zen-rise 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.zen-main > :nth-child(2) { animation-delay: 0.08s; }
+.zen-main > :nth-child(3) { animation-delay: 0.16s; }
+.zen-main > :nth-child(n + 4) { animation-delay: 0.24s; }
+.zen-sky { position: absolute; inset: 0; pointer-events: none; }
+.zen-glow {
+  position: absolute; left: 50%; top: 50%; width: min(90vw, 90vh); aspect-ratio: 1; margin: calc(min(90vw, 90vh) / -2) 0 0 calc(min(90vw, 90vh) / -2);
+  border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--me) 20%, transparent) 0%, color-mix(in srgb, var(--leaf) 9%, transparent) 45%, transparent 68%);
+  animation: breathe 11s ease-in-out infinite; transition: background 1.2s, opacity 0.8s;
+}
+.zen.is-reached .zen-glow { background: radial-gradient(circle, color-mix(in srgb, var(--leaf) 24%, transparent) 0%, color-mix(in srgb, var(--me) 8%, transparent) 45%, transparent 68%); }
+.zen.is-paused .zen-glow { opacity: 0.35; }
+.zen-leaf { position: absolute; bottom: -24px; fill: var(--leaf); opacity: 0; animation: zen-float linear infinite; }
+.zen-leaf.me { fill: var(--me); }
+.zen.is-paused .zen-glow, .zen.is-paused .zen-leaf { animation-play-state: paused; }
+.zen-progress { width: min(460px, 64vw); height: 6px; border-radius: 4px; background: color-mix(in srgb, var(--me) 14%, transparent); overflow: hidden; }
+.zen-progress span { display: block; height: 100%; border-radius: inherit; transform-origin: left; background: linear-gradient(90deg, var(--me), var(--leaf)); transition: transform 1s linear; }
+.zen.is-reached .zen-progress span { background: var(--leaf); }
+.zen-bloom {
+  position: absolute; left: 50%; top: 50%; width: min(60vw, 60vh); aspect-ratio: 1; translate: -50% -50%; border-radius: 50%;
+  border: 3px solid var(--leaf); opacity: 0; pointer-events: none; animation: zen-bloom 2.4s ease-out 2 both !important;
+}
+@keyframes zen-in { from { opacity: 0; } }
+@keyframes zen-rise { from { opacity: 0; translate: 0 14px; } }
+@keyframes zen-float {
+  0% { translate: 0 0; rotate: 0deg; opacity: 0; }
+  10% { opacity: 0.75; }
+  30% { translate: 26px -30vh; rotate: 60deg; }
+  55% { translate: -18px -58vh; rotate: 140deg; opacity: 0.6; }
+  80% { translate: 22px -86vh; rotate: 220deg; opacity: 0.4; }
+  100% { translate: -6px -112vh; rotate: 300deg; opacity: 0; }
+}
+@keyframes zen-bloom { 0% { scale: 0.5; opacity: 0.7; } 100% { scale: 1.5; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .zen, .zen-main > *, .zen-glow, .zen-bloom { animation: none !important; }
+  .zen-leaf, .zen-bloom { display: none; }
+  .zen-bar { translate: none !important; }
+}

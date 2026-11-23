@@ -10,12 +10,25 @@ export const useFullFocusOn = () => usePref('fullFocus')[0];
 
 const SHOW_MS = 4000;
 
+// Leaves drifting up the screen: where each starts, how long it takes, and how big and which colour it is.
+const LEAVES = [
+  { x: 8, delay: 0, dur: 26, size: 22 },
+  { x: 22, delay: 9, dur: 31, size: 18, me: true },
+  { x: 37, delay: 17, dur: 24, size: 20 },
+  { x: 52, delay: 4, dur: 34, size: 17, me: true },
+  { x: 66, delay: 13, dur: 28, size: 23 },
+  { x: 79, delay: 21, dur: 25, size: 19, me: true },
+  { x: 91, delay: 7, dur: 30, size: 21 },
+];
+
 export function FocusZen({
   title,
   subtitle,
   face,
   sub,
   paused,
+  reached,
+  progress,
   busy,
   onTogglePause,
   onFinish,
@@ -28,6 +41,8 @@ export function FocusZen({
   face: string;
   sub: string;
   paused: boolean;
+  reached: boolean;
+  progress: number; // 0–1 toward the session length (or through the hour when there's none)
   busy: boolean;
   onTogglePause: () => void;
   onFinish: () => void;
@@ -96,7 +111,21 @@ export function FocusZen({
   };
 
   return createPortal(
-    <div className={`zen${paused ? ' is-paused' : ''}${show ? ' show' : ''}`} role="dialog" aria-modal="true" aria-label="Full-screen focus" tabIndex={-1} ref={rootRef} style={style} onPointerUp={reveal}>
+    <div className={`zen${paused ? ' is-paused' : ''}${reached ? ' is-reached' : ''}${show ? ' show' : ''}`} role="dialog" aria-modal="true" aria-label="Full-screen focus" tabIndex={-1} ref={rootRef} style={style} onPointerUp={reveal}>
+      <div className="zen-sky" aria-hidden="true">
+        <span className="zen-glow" />
+        {LEAVES.map((l, i) => (
+          <svg
+            key={i}
+            viewBox="0 0 12 12"
+            className={`zen-leaf${l.me ? ' me' : ''}`}
+            style={{ left: `${l.x}%`, width: l.size, height: l.size, animationDelay: `-${l.delay}s`, animationDuration: `${l.dur}s` }}
+          >
+            <path d="M6 1C9 3 10 7 6 11 2 7 3 3 6 1Z" />
+          </svg>
+        ))}
+      </div>
+
       <div className="zen-bar zen-top">
         <span className="chip c">{paused ? 'Paused' : 'Focusing'}</span>
         <button className="btn ghost small" onClick={onExit}>
@@ -112,6 +141,10 @@ export function FocusZen({
             {face}
           </span>
         </button>
+        <div className="zen-progress" aria-hidden="true">
+          <span style={{ transform: `scaleX(${Math.max(0, Math.min(1, progress))})` }} />
+        </div>
+        {reached && <span className="zen-bloom" aria-hidden="true" />}
         <span className="zen-sub muted num">{paused ? 'Paused · tap the clock or press Space to resume' : sub}</span>
       </div>
 

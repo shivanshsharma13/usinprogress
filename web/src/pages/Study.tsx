@@ -281,6 +281,8 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           face={face}
           sub={target ? (reached ? `${formatClock(elapsed)} focused · ${target}m reached` : `of ${target}m · ${formatClock(elapsed)} focused`) : 'focused this session'}
           paused={paused}
+          reached={reached}
+          progress={progress}
           busy={busy}
           onTogglePause={togglePause}
           // Finishing may ask a question (a very long session), so step out of full screen first.
