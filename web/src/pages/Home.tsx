@@ -1,8 +1,7 @@
 import { Link, useNavigate } from 'react-router';
 import { formatDate } from '@shared/dates';
 import { focusedMs, formatClock } from '@shared/timer';
-import { useAction, useHome } from '../lib/queries';
-import { api } from '../lib/api';
+import { useHome } from '../lib/queries';
 import { personVars } from '../lib/theme';
 import { Avatar, Empty, ErrorNote, fmt, LiveDot, ProgressBar, Spinner, StatusLine, useNow } from '../components/ui';
 import { EncourageButtons } from '../components/Encourage';
@@ -14,7 +13,7 @@ import { StreaksAndRecap } from '../components/Streaks';
 import { DaySplitCard } from '../components/DaySplit';
 import { PhotoWall } from '../components/PhotoCheers';
 import { ChallengeCard } from '../components/Challenge';
-import { CheckIcon, PlayIcon } from '../components/icons';
+import { PlayIcon } from '../components/icons';
 
 function greeting() {
   const h = new Date().getHours();
@@ -28,20 +27,13 @@ export function HomePage() {
   const { data, isLoading, error, refetch } = useHome();
   const navigate = useNavigate();
   const now = useNow();
-  const completeTask = useAction((id: string) => api.patch(`/tasks/${id}`, { completed: true }), { invalidate: [['tasks'], ['plan'], ['plans']], success: 'Nice work — marked as done 🌼' });
 
   if (isLoading) return <Spinner />;
   if (error || !data) return <ErrorNote error={error} retry={refetch} />;
-  const { me, activeSession, primary, friends, today, plans, rooms, upcoming, plannedTasks } = data;
-  // Goal tasks and calendar tasks together, soonest first.
-  const comingUp = [
-    ...plannedTasks.map((p) => ({ key: p.id, date: p.date, title: p.title, time: '', detail: `${p.planTitle}${p.estMinutes ? ` · ~${p.estMinutes}m` : ''}`, study: p.roomId && p.topicId && p.date === me.today ? p.topicId : null, goal: p.planId })),
-    ...upcoming.map((t) => ({ key: t.id, date: t.date!, title: t.title, time: t.startTime ?? '', detail: t.topicTitle ?? '', study: null, goal: null })),
-  ]
-    .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
-    .slice(0, 7);
+  const { me, activeSession, primary, friends, today, plans, rooms, comingUp } = data;
+  const studyLink = (t: { topicId: string | null; subtopicId?: string }) => `/study?topic=${t.topicId}${t.subtopicId ? `&sub=${t.subtopicId}` : ''}`;
   const friend = friends[0];
-  const nothingYet = !rooms.length && !upcoming.length && !primary;
+  const nothingYet = !rooms.length && !comingUp.length && !primary;
 
   return (
     <div className="stack-lg">
@@ -88,22 +80,15 @@ export function HomePage() {
                 </>
               ) : (
                 <>
-                  <h2>{primary.task.title}</h2>
+                  {primary.item.subtopicId && <span className="small muted">{primary.item.title} ›</span>}
+                  <h2>{primary.item.subtopicTitle ?? primary.item.title}</h2>
                   <p className="muted small">
-                    Planned for today{primary.task.startTime ? ` at ${primary.task.startTime}` : ''}
-                    {primary.task.roomName ? ` · ${primary.task.roomName}` : ''}
+                    Planned for today · {primary.item.planTitle}
+                    {primary.item.estMinutes ? ` · ~${primary.item.estMinutes}m` : ''}
                   </p>
-                  <div className="row wrap">
-                    {primary.task.topicId ? (
-                      <button className="btn primary big grow" onClick={() => navigate(`/study?topic=${primary.task.topicId}&task=${primary.task.id}`)}>
-                        <PlayIcon /> Start studying
-                      </button>
-                    ) : (
-                      <button className="btn primary big grow" onClick={() => completeTask.mutate(primary.task.id)} disabled={completeTask.isPending}>
-                        <CheckIcon /> Mark as done
-                      </button>
-                    )}
-                  </div>
+                  <button className="btn primary big" onClick={() => navigate(studyLink(primary.item))}>
+                    <PlayIcon /> Start studying
+                  </button>
                 </>
               )}
             </div>
@@ -147,8 +132,8 @@ export function HomePage() {
                 <div className="small muted">topics completed</div>
               </div>
               <div>
-                <div className="num bold" style={{ fontSize: '1.6rem' }}>{today.completedTasks}</div>
-                <div className="small muted">tasks done</div>
+                <div className="num bold" style={{ fontSize: '1.6rem' }}>{today.partsDone}</div>
+                <div className="small muted">subtopics done</div>
               </div>
             </div>
             {today.completedTopics.length > 0 && (
@@ -253,40 +238,34 @@ export function HomePage() {
           <div className="card">
             <div className="card-head">
               <h2>Coming up</h2>
-              <Link to="/calendar" className="small muted">
-                Calendar
+              <Link to="/goals" className="small muted">
+                Goals
               </Link>
             </div>
             {comingUp.length ? (
               <div className="list">
                 {comingUp.map((t) => (
-                  <div key={t.key} className="list-item">
-                    <span className={`dot${t.goal ? ' ring' : ''}`} style={personVars(me.accent)} />
+                  <div key={t.id} className="list-item">
+                    <span className="dot ring" style={personVars(me.accent)} />
                     <div className="grow" style={{ minWidth: 0 }}>
-                      <div className="bold small">{t.title}</div>
+                      {t.subtopicId && <div className="tiny muted">{t.title} ›</div>}
+                      <div className="bold small">{t.subtopicTitle ?? t.title}</div>
                       <div className="tiny muted">
-                        {t.date === me.today ? 'Today' : formatDate(t.date, { weekday: 'short', month: 'short', day: 'numeric' })}
-                        {t.time ? ` · ${t.time}` : ''}
-                        {t.detail ? ` · ${t.detail}` : ''}
+                        {t.date === me.today ? 'Today' : formatDate(t.date!, { weekday: 'short', month: 'short', day: 'numeric' })} · {t.planTitle}
+                        {t.estMinutes ? ` · ~${t.estMinutes}m` : ''}
                       </div>
                     </div>
-                    {t.study ? (
-                      <button className="btn small" onClick={() => navigate(`/study?topic=${t.study}`)} aria-label={`Study ${t.title}`}>
+                    {t.date === me.today && (
+                      <button className="btn small" onClick={() => navigate(studyLink(t))} aria-label={`Study ${t.subtopicTitle ?? t.title}`}>
                         <PlayIcon />
                       </button>
-                    ) : (
-                      t.goal && (
-                        <Link className="btn small ghost" to={`/goals/${t.goal}`}>
-                          Goal
-                        </Link>
-                      )
                     )}
                   </div>
                 ))}
               </div>
             ) : (
               <p className="small muted">
-                Nothing planned. Add tasks to a <Link to="/goals">goal</Link> or <Link to="/calendar?new=1">plan a task</Link>.
+                Nothing planned. Open a <Link to="/goals">goal</Link>, add subtopics to a topic and give them a day.
               </p>
             )}
           </div>

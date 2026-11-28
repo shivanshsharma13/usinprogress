@@ -36,7 +36,7 @@ export function UnfriendModal({ friend, rooms, onClose, onDone }: { friend: Publ
     >
       <div className="stack">
         <ul className="small stack" style={{ gap: 6, paddingLeft: 18, margin: 0 }}>
-          <li>You'll stop seeing each other's live status, hours and shared calendar items.</li>
+          <li>You'll stop seeing each other's live status, hours and plans.</li>
           <li>They won't be told. You can add each other again any time.</li>
           {shared.length > 0 ? (
             <li>

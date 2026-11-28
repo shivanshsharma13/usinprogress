@@ -7,15 +7,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ZodType } from 'zod';
 import * as v from '../../../shared/validation.ts';
-import { addDays, addMonths, localDate } from '../../../shared/dates.ts';
+import { addDays, localDate } from '../../../shared/dates.ts';
 import { focusedMs } from '../../../shared/timer.ts';
-import { buildPlan, buildSprint, dateOf, goalTasks, sprintFor, spansOf, summarizePlan, type PlanRow, type SprintRow, type SprintSpan } from '../../../shared/planView.ts';
+import { buildPlan, goalTasks, plannedItems, spansOf, summarizePlan, type PlanRow, type SprintRow, type SprintSpan } from '../../../shared/planView.ts';
 import type {
   Activity,
   GoalRef,
   GoalTask,
   ActiveSession,
-  CalendarPlanItem,
   CompletionSummary,
   Friend,
   FriendRequest,
@@ -26,12 +25,9 @@ import type {
   ProgressStats,
   PublicUser,
   RoomDetail,
-  RoomSprint,
   RoomSummary,
   SessionRecord,
-  SprintMark,
   SubtopicCount,
-  Task,
   Topic,
   TopicMemberProgress,
   UserSearchResult,
@@ -285,15 +281,13 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     const { values, error } = await together([
       roomsData(roomId),
       myId().then((id) => listActivity(id, { roomId, limit: 15 })),
-      sharedSprints(roomId),
       rpc<Row[]>('room_forest', { p_room: roomId }),
       rpc<number>('room_blooms', { p_room: roomId }),
       roomTasks(roomId),
     ] as const);
-    const [data, activity, sprints, forest, blooms, goals] = values as unknown as [
+    const [data, activity, forest, blooms, goals] = values as unknown as [
       Awaited<ReturnType<typeof roomsData>> | undefined,
       Activity[],
-      RoomSprint[],
       Row[],
       number,
       { goals: GoalRef[]; tasks: GoalTask[] } | undefined,
@@ -306,7 +300,6 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       topics: topics.filter((t) => t.status === 'active'),
       archivedTopics: topics.filter((t) => t.status === 'archived'),
       activity,
-      sprints,
       forest: Object.fromEntries(forest.map((f) => [f.user_id, f.full_days])),
       blooms: blooms ?? 0,
       goals: goals?.goals ?? [],
@@ -420,120 +413,6 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     const plan = plans.find((p) => p.id === planId);
     if (!plan) throw notFound('That goal could not be found.');
     return buildPlan(plan, spans.get(plan.id)!, tasks.get(plan.id)!, viewer.today);
-  }
-
-  interface VisibleSprint {
-    plan: PlanRow;
-    span: SprintSpan;
-  }
-
-  /** Open sprints pulled into rooms you're in (optionally one room) — yours and your friend's. */
-  async function visibleSprints(roomId?: string): Promise<VisibleSprint[]> {
-    const list = await rpc<Row[]>('visible_sprints', { p_room: roomId ?? null });
-    return list.map((s) => ({
-      plan: { id: s.plan_id, owner_id: s.owner_id, title: s.plan_title, start_date: s.start_date, sprint_days: s.days, status: 'active', created_at: 0 },
-      span: { plan_id: s.plan_id, number: s.number, days: s.days, room_id: s.room_id, room_name: s.room_name, completed_at: null, first: s.first_day, last: s.last_day },
-    }));
-  }
-
-  async function sharedSprints(roomId: string): Promise<RoomSprint[]> {
-    const [list, roomTime] = await Promise.all([visibleSprints(roomId), rpc<Row[]>('room_topic_time', { p_room: roomId }).then((r) => new Map(r.map((x) => [x.topic_id, Number(x.ms)])))]);
-    if (!list.length) return [];
-    const planIds = ids(list.map((s) => s.plan.id));
-    const [tasks, owners] = await Promise.all([
-      planTasks(planIds, async () => roomTime, {
-        min: Math.min(...list.map((s) => s.span.first)),
-        max: Math.max(...list.map((s) => s.span.last)),
-      }),
-      profiles(ids(list.map((s) => s.plan.owner_id))),
-    ]);
-    return list.map(({ plan, span }) => {
-      // Day status follows the owner's own calendar day.
-      const today = localDate(now(), owners.get(plan.owner_id)?.timezone ?? 'UTC');
-      return { ...buildSprint(plan, span, tasks.get(plan.id)!, today), planId: plan.id, planTitle: plan.title, ownerId: plan.owner_id };
-    });
-  }
-
-  /** Goal tasks and sprint markers for a date range: all of yours, plus friends' pulled sprints. */
-  async function calendarPlanItems(viewer: Me, from: string, to: string, friends: boolean, ownLoad = ownPlans()): Promise<{ items: CalendarPlanItem[]; sprints: SprintMark[] }> {
-    const friendsLoad = async () => {
-      const shared = friends ? (await visibleSprints()).filter((s) => s.plan.owner_id !== viewer.id) : [];
-      const planIds = ids(shared.map((s) => s.plan.id));
-      return { shared, planIds, tasks: await planTasks(planIds, async () => new Map()) };
-    };
-    const [own, { shared, planIds: friendPlanIds, tasks: friendTasks }] = await Promise.all([ownLoad, friendsLoad()]);
-    const items: CalendarPlanItem[] = [];
-    const marks: SprintMark[] = [];
-    const add = (plan: PlanRow, spans: SprintSpan[], tasks: PlanTask[], mine: boolean) => {
-      for (const s of spans) {
-        const startDate = dateOf(plan, s.first);
-        const endDate = dateOf(plan, s.last);
-        if (startDate <= to && endDate >= from) marks.push({ planId: plan.id, planTitle: plan.title, ownerId: plan.owner_id, number: s.number, startDate, endDate, roomName: s.room_name });
-      }
-      for (const t of tasks) {
-        if (t.day === null) continue;
-        const date = dateOf(plan, t.day);
-        const s = sprintFor(spans, t.day);
-        if (date < from || date > to || !s) continue;
-        items.push({
-          id: t.id,
-          planId: plan.id,
-          planTitle: plan.title,
-          sprintNumber: s.number,
-          ownerId: plan.owner_id,
-          title: t.title,
-          date,
-          estMinutes: t.estMinutes,
-          done: t.done,
-          topicId: mine ? t.topicId : null,
-          roomId: s.room_id,
-          roomName: s.room_name,
-        });
-      }
-    };
-    for (const p of own.plans.filter((x) => x.status === 'active')) add(p, own.spans.get(p.id)!, own.tasks.get(p.id)!, true);
-    for (const id of friendPlanIds) {
-      const mine = shared.filter((s) => s.plan.id === id);
-      add(mine[0].plan, mine.map((s) => s.span), friendTasks.get(id)!, false);
-    }
-    items.sort((a, b) => a.date.localeCompare(b.date));
-    return { items, sprints: marks };
-  }
-
-  // ───────────── calendar tasks ─────────────
-
-  async function listTasks(viewerId: string, from: string, to: string, includeFriends = true): Promise<Task[]> {
-    let query = sb.from('tasks').select('*, rooms(name), topics(title), task_notes(note)').eq('status', 'active').gte('date', from).lte('date', to).order('date').order('start_time', { nullsFirst: false }).order('created_at');
-    if (!includeFriends) query = query.eq('owner_id', viewerId);
-    const list = await rows(query);
-    const noteOf = (t: Row): string => (t.owner_id === viewerId ? ([t.task_notes].flat()[0]?.note ?? '') : '');
-    return list.map((t) => ({
-      id: t.id,
-      ownerId: t.owner_id,
-      title: t.title,
-      description: t.owner_id === viewerId ? t.description : '',
-      date: t.date,
-      startTime: t.start_time,
-      durationMinutes: t.duration_minutes,
-      roomId: t.rooms ? t.room_id : null,
-      roomName: t.rooms?.name ?? null,
-      topicId: t.topics ? t.topic_id : null,
-      topicTitle: t.topics?.title ?? null,
-      shared: t.shared,
-      note: noteOf(t),
-      completed: t.completed_at !== null,
-      completedAt: t.completed_at,
-      status: t.status,
-    }));
-  }
-
-  async function getTask(taskId: string): Promise<Task> {
-    const viewer = await myId();
-    const t = (await rows(sb.from('tasks').select('date').eq('id', taskId)))[0];
-    if (!t) throw notFound('That task could not be found.');
-    const found = (await listTasks(viewer, t.date, t.date)).find((x) => x.id === taskId);
-    if (!found) throw notFound('That task could not be found.');
-    return found;
   }
 
   // ───────────── activity & friends ─────────────
@@ -680,27 +559,29 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     const viewer = await me();
     const today = viewer.today;
     const own = ownPlans();
-    const [roomsAll, tasks, plans, planned, friends, stats, completedToday, tasksDone, unread, activeSession] = await Promise.all([
+    const [roomsAll, plans, ownLoaded, friends, stats, completedToday, unread, activeSession] = await Promise.all([
       listRooms(),
-      listTasks(viewer.id, addDays(today, -1), addDays(today, 14), false),
       listPlans(own),
-      calendarPlanItems(viewer, today, addDays(today, 14), false, own),
+      own,
       friendsAndRequests(),
       rpc<ProgressStats>('progress_stats', { p_user: viewer.id }),
       rows(sb.from('topic_completions').select('topic_id, completed_at, topics(title, room_id, rooms(name))').eq('user_id', viewer.id).eq('local_date', today).is('revoked_at', null).order('completed_at', { ascending: false })),
-      sb.from('tasks').select('id', { count: 'exact', head: true }).eq('owner_id', viewer.id).eq('completed_date', today).eq('status', 'active'),
       unreadCount(viewer.id),
       rpc<ActiveSession | null>('active_session'),
     ]);
     const rooms = roomsAll.filter((r) => r.status === 'active');
-    const todaysOpen = tasks.filter((t) => t.date! <= today && !t.completed && (t.date === today || t.topicId));
-    let primary: HomeData['primary'] = null;
-    const scheduled = todaysOpen.find((t) => t.date === today);
-    if (scheduled) primary = { kind: 'task', task: scheduled };
-    else {
-      const room = rooms.find((r) => r.nextTopic);
-      if (room?.nextTopic) primary = { kind: 'topic', roomId: room.id, roomName: room.name, topicId: room.nextTopic.id, topicTitle: room.nextTopic.title };
-    }
+    // Everything planned in your active goals that live in a room: subtopics by their day, small topics whole.
+    const items = ownLoaded.plans
+      .filter((p) => p.status === 'active' && p.room_id)
+      .flatMap((p) => plannedItems(goalTasks(p, ownLoaded.tasks.get(p.id) ?? [])));
+    const open = items.filter((t) => !t.done && t.date !== null).sort((a, b) => a.date!.localeCompare(b.date!));
+    const scheduled = open.find((t) => t.date === today);
+    const room = rooms.find((r) => r.nextTopic);
+    const primary: HomeData['primary'] = scheduled
+      ? { kind: 'item', item: scheduled }
+      : room?.nextTopic
+        ? { kind: 'topic', roomId: room.id, roomName: room.name, topicId: room.nextTopic.id, topicTitle: room.nextTopic.title }
+        : null;
     return {
       me: viewer,
       activeSession,
@@ -709,12 +590,11 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       today: {
         focusedMs: stats.todayMs,
         completedTopics: completedToday.filter((c) => c.topics).map((c) => ({ topicId: c.topic_id, topicTitle: c.topics.title, roomId: c.topics.room_id, roomName: c.topics.rooms?.name ?? '', completedAt: c.completed_at })),
-        completedTasks: tasksDone.count ?? 0,
+        partsDone: items.filter((t) => t.subtopicId && t.doneDate === today).length,
       },
       plans: plans.filter((p) => p.status === 'active').slice(0, 4),
       rooms,
-      upcoming: tasks.filter((t) => t.date! >= today && !t.completed).slice(0, 5),
-      plannedTasks: planned.items.filter((t) => !t.done).slice(0, 8),
+      comingUp: open.filter((t) => t.date! >= today && t.date! <= addDays(today, 14)).slice(0, 8),
       unread,
     };
   }
@@ -889,10 +769,6 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
           }),
         };
       }
-      case 'PUT /rooms/:id/topics/order':
-        await rpc('reorder_topics', { p_room: p[0], p_ids: parse(v.reorderSchema, body).topicIds });
-        return { ok: true };
-
       case 'GET /topics/:id': {
         const t = (await rows(sb.from('topics').select('id, room_id, rooms(name)').eq('id', p[0])))[0];
         if (!t) throw notFound('That topic could not be found.');
@@ -942,7 +818,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { sessions: await listSessions(await myId()) };
       case 'POST /sessions': {
         const input = parse(v.sessionStartSchema, body);
-        const session = await rpc<ActiveSession>('start_session', { p_topic: input.topicId, p_target: input.targetMinutes ?? null, p_remind: input.remindAfterHour ?? false, p_task: input.taskId ?? null });
+        const session = await rpc<ActiveSession>('start_session', { p_topic: input.topicId, p_target: input.targetMinutes ?? null, p_remind: input.remindAfterHour ?? false });
         // On a subtopic (Subtopics): label the session as soon as it starts.
         if (input.subtopicId) return { session: await rpc('set_session_subtopic', { p_session: session.id, p_subtopic: input.subtopicId }) };
         return { session };
@@ -1003,51 +879,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       case 'PATCH /goal-tasks/:id':
         await rpc('edit_goal_task', { p_task: p[0], p_patch: parse(v.goalTaskUpdateSchema, body) });
         return { ok: true };
-      case 'POST /plans/:id/sprints':
-        return { number: await rpc('add_sprint', { p_plan: p[0], p_days: parse(v.sprintCreateSchema, body ?? {}).days ?? null }) };
-      case 'PATCH /plans/:id/sprints/:id':
-        await rpc('resize_sprint', { p_plan: p[0], p_n: Number(p[1]), p_days: parse(v.sprintUpdateSchema, body).days });
-        return { ok: true };
-      case 'DELETE /plans/:id/sprints/:id':
-        await rpc('remove_sprint', { p_plan: p[0], p_n: Number(p[1]) });
-        return { ok: true };
-      case 'POST /plans/:id/sprints/:id/pull':
-        return { roomId: await rpc('pull_sprint', { p_plan: p[0], p_n: Number(p[1]), p_room: parse(v.pullSprintSchema, body).roomId }) };
-      case 'POST /plans/:id/sprints/:id/unpull':
-        await rpc('unpull_sprint', { p_plan: p[0], p_n: Number(p[1]) });
-        return { ok: true };
-      case 'POST /plans/:id/sprints/:id/complete':
-      case 'POST /plans/:id/sprints/:id/reopen':
-        await rpc('set_sprint_completed', { p_plan: p[0], p_n: Number(p[1]), p_completed: seg[4] === 'complete' });
-        return { ok: true };
-      case 'POST /plans/:id/tasks': {
-        const input = parse(v.planTaskCreateSchema, body);
-        return { id: await rpc('add_plan_task', { p_plan: p[0], p_day: input.day, p_title: input.title, p_est: input.estMinutes ?? null }) };
-      }
-      case 'PATCH /plan-tasks/:id':
-        await rpc('update_plan_task', { p_task: p[0], p_patch: parse(v.planTaskUpdateSchema, body) });
-        return { ok: true };
       case 'DELETE /plan-tasks/:id':
         await rpc('remove_plan_task', { p_task: p[0] });
-        return { ok: true };
-
-      case 'GET /tasks': {
-        const viewer = await me();
-        const valid = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null);
-        const from = valid(query.get('from')) ?? addMonths(viewer.today, -1);
-        const to = valid(query.get('to')) ?? addMonths(viewer.today, 2);
-        const [tasks, planned] = await Promise.all([listTasks(viewer.id, from, to), calendarPlanItems(viewer, from, to, true)]);
-        return { tasks, planItems: planned.items, sprints: planned.sprints };
-      }
-      case 'POST /tasks': {
-        const input = parse(v.taskCreateSchema, body);
-        return { task: await getTask(await rpc('create_task', { p: input })) };
-      }
-      case 'PATCH /tasks/:id':
-        await rpc('update_task', { p_task: p[0], p: parse(v.taskUpdateSchema, body) });
-        return { task: await getTask(p[0]) };
-      case 'DELETE /tasks/:id':
-        await rpc('update_task', { p_task: p[0], p: { status: 'archived' } });
         return { ok: true };
 
       case 'GET /progress': {
@@ -1123,7 +956,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
 
 /** Path segments that are ids: uuids, sprint numbers, and the id after /requests/. */
 function isId(s: string, prev?: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) || (prev === 'sprints' && /^\d+$/.test(s)) || ['rooms', 'topics', 'subtopics', 'sessions', 'plans', 'plan-tasks', 'tasks', 'friends', 'requests'].includes(prev ?? '') && !['requests', 'search', 'active', 'order', 'topics'].includes(s);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) || ['rooms', 'topics', 'subtopics', 'sessions', 'plans', 'plan-tasks', 'friends', 'requests'].includes(prev ?? '') && !['requests', 'search', 'active', 'topics'].includes(s);
 }
 
 export type Backend = ReturnType<typeof createBackend>;

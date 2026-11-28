@@ -6,7 +6,6 @@ type P = SVGProps<SVGSVGElement>;
 
 export const HomeIcon = (p: P) => (<svg {...base} {...p}><path d="M4 11.5 12 5l8 6.5" /><path d="M6 10v9h12v-9" /><path d="M10 19v-5h4v5" /></svg>);
 export const GoalIcon = (p: P) => (<svg {...base} {...p}><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /><circle cx="12" cy="12" r="0.8" fill="currentColor" /></svg>);
-export const CalendarIcon = (p: P) => (<svg {...base} {...p}><rect x="4" y="5.5" width="16" height="14" rx="3" /><path d="M8 3.5v4M16 3.5v4M4 10h16" /></svg>);
 export const RoomIcon = (p: P) => (<svg {...base} {...p}><path d="M12 20c0-6 0-9 0-11" /><path d="M12 12c-4 0-6-2-6-5 3 0 6 1.5 6 5Z" /><path d="M12 9.5c0-3 2.5-5 6-5 0 3.5-2.5 5-6 5Z" /><path d="M7 20h10" /></svg>);
 export const FriendsIcon = (p: P) => (<svg {...base} {...p}><circle cx="9" cy="9" r="3.2" /><circle cx="16.5" cy="10" r="2.6" /><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6" /><path d="M15 14.6c2.6-.3 4.8 1.1 5.4 3.9" /></svg>);
 export const ChartIcon = (p: P) => (<svg {...base} {...p}><path d="M5 19V11M10 19V6M15 19v-5M20 19V9" /></svg>);

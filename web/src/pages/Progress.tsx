@@ -48,7 +48,6 @@ export function ProgressPage() {
                   <Stat label="Today" value={fmt(s.todayMs)} />
                   <Stat label="This week" value={fmt(s.weekMs)} />
                   <Stat label="Topics completed" value={String(s.completedTopics)} />
-                  <Stat label="Tasks done" value={String(s.completedTasks)} />
                   <Stat label="Study sessions" value={String(s.sessions)} />
                 </div>
               ) : (
