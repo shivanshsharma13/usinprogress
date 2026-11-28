@@ -6,7 +6,7 @@ import type { Plan, PlanSummary } from '@shared/types';
 import { useAction, useMe, usePlan, usePlans, useRooms } from '../lib/queries';
 import { api } from '../lib/api';
 import { ErrorNote, Field, fmt, Menu, Modal, ProgressBar, Spinner } from '../components/ui';
-import { AddTaskBox, TaskList, TopicList } from '../components/GoalTasks';
+import { AddTopicBox, TaskList, TopicList } from '../components/GoalTasks';
 import { plannedItems } from '@shared/planView';
 import { percent } from '../components/PlanBits';
 
@@ -61,7 +61,7 @@ export function PlanPage() {
           </button>
         </div>
       )}
-      {active && plan.roomId && <AddTaskBox planId={plan.id} today={me.today} existing={plan.tasks} />}
+      {active && plan.roomId && <AddTopicBox planId={plan.id} existing={plan.tasks} />}
 
       {plan.tasks.length ? (
         <TopicList tasks={plan.tasks} today={me.today} active={active && Boolean(plan.roomId)} />

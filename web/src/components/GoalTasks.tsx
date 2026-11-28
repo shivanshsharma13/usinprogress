@@ -1,22 +1,21 @@
 // Tasks, the simple way: a goal is a list of tasks in a room, each with a date or none. Rooms and goal pages
 // both use these pieces: one "Add a task" box, and a list grouped into Missed / Today / Upcoming / No date / Done.
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { addDays, formatDate } from '@shared/dates';
 import { formatMinutes } from '@shared/timer';
-import type { GoalRef, GoalTask, RoomDetail } from '@shared/types';
+import type { GoalTask, RoomDetail } from '@shared/types';
 import { api } from '../lib/api';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { getFocusSettings } from '../lib/focusSettings';
 import { useAction, useMe } from '../lib/queries';
 import { toast } from '../lib/toast';
 import { Field, fmt, Menu, Modal } from './ui';
-import { CheckIcon, ChevronDown, PlayIcon } from './icons';
-import { announce, MergeTopicModal, PartsMeter, SameNameHint, SubtopicPanel, type TopicChange } from './Subtopics';
+import { CheckIcon, ChevronDown, PlayIcon, XIcon } from './icons';
+import { announce, EstSelect, MergeTopicModal, PartsMeter, SameNameHint, SubtopicPanel, type TopicChange } from './Subtopics';
 
 const INVALIDATE = [['room'], ['rooms'], ['plan'], ['plans'], ['home'], ['tasks'], ['progress']];
-const EST = [15, 30, 45, 60, 90];
 
 /** Planned for today, or something you studied, ticked a part of, or completed today. */
 export const isToday = (t: GoalTask, today: string) => t.date === today || Boolean(t.activeToday);
@@ -53,89 +52,77 @@ export function DateChoice({ value, onChange, today }: { value: string | null; o
   );
 }
 
-/**
- * One box to add tasks. In a room, it goes into the goal you pick (your latest one by default; with no goal
- * yet, a "My tasks" goal is made for you). On a goal page, into that goal.
- */
-export function AddTaskBox({ roomId, planId, goals = [], today, autoFocus, existing = [] }: { roomId?: string; planId?: string; goals?: GoalRef[]; today: string; autoFocus?: boolean; existing?: GoalTask[] }) {
+type NewPart = { title: string; date: string; est: number | null };
+const blankPart = (): NewPart => ({ title: '', date: '', est: null });
+
+/** Add a topic to a goal, with its subtopics: each one gets a day and how long it takes. The topic has no day. */
+export function AddTopicBox({ planId, existing = [] }: { planId: string; existing?: GoalTask[] }) {
   const [title, setTitle] = useState('');
-  const [date, setDate] = useState<string | null>(today);
-  const [est, setEst] = useState<number | null>(null);
-  const [goal, setGoal] = useState<string>(goals[0]?.id ?? '');
-  const [open, setOpen] = useState(Boolean(autoFocus));
+  const [parts, setParts] = useState<NewPart[]>([blankPart()]);
+  const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (autoFocus) input.current?.focus();
-  }, [autoFocus]);
-  useEffect(() => {
-    if (!goals.some((g) => g.id === goal)) setGoal(goals[0]?.id ?? '');
-  }, [goals.map((g) => g.id).join()]);
+  const setPart = (i: number, patch: Partial<NewPart>) => setParts((list) => list.map((p, k) => (k === i ? { ...p, ...patch } : p)));
+  const filled = parts.filter((p) => p.title.trim());
 
   const add = useAction(
-    () =>
-      planId
-        ? api.post(`/plans/${planId}/goal-tasks`, { title: title.trim(), date, estMinutes: est })
-        : api.post(`/rooms/${roomId}/tasks`, { title: title.trim(), date, estMinutes: est, planId: goal || null }),
+    async () => {
+      const { topicId } = await api.post<{ id: string; topicId: string }>(`/plans/${planId}/goal-tasks`, { title: title.trim(), date: null });
+      for (const p of filled) await api.post(`/topics/${topicId}/subtopics`, { title: p.title.trim(), date: p.date || null, estMinutes: p.est });
+    },
     {
-      invalidate: INVALIDATE,
-      success: () => (date ? `Added for ${date === today || date === addDays(today, 1) ? dayLabel(date, today).toLowerCase() : dayLabel(date, today)} ✓` : 'Added ✓'),
+      invalidate: [...INVALIDATE, ['subtopics']],
+      success: () => (filled.length ? `Added “${title.trim()}” with ${filled.length} ${filled.length === 1 ? 'subtopic' : 'subtopics'} ✓` : `Added “${title.trim()}” ✓`),
       onSuccess: () => {
         setTitle('');
+        setParts([blankPart()]);
         input.current?.focus();
       },
     },
   );
-  const submit = () => title.trim() && !add.isPending && add.mutate(undefined);
 
   return (
     <form
-      className="card add-task stack"
+      className="card add-topic stack"
       style={{ gap: 10 }}
       onSubmit={(e) => {
         e.preventDefault();
-        submit();
+        if (title.trim() && !add.isPending) add.mutate(undefined);
       }}
     >
-      <div className="row" style={{ gap: 8 }}>
-        <input
-          ref={input}
-          className="input grow"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onFocus={() => setOpen(true)}
-          placeholder="Add a task… e.g. Read chapter 4"
-          maxLength={140}
-          aria-label="New task"
-        />
-        <button className="btn primary" disabled={!title.trim() || add.isPending}>
-          Add
-        </button>
-      </div>
+      <input
+        ref={input}
+        className="input"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onFocus={() => setOpen(true)}
+        placeholder="Add a topic… e.g. Arrays, or Cardiology"
+        maxLength={140}
+        aria-label="New topic"
+      />
       <SameNameHint title={title} existing={existing} onAdded={() => setTitle('')} />
       {open && (
-        <>
-          <DateChoice value={date} onChange={setDate} today={today} />
-          <div className="row wrap" style={{ gap: 6 }} role="group" aria-label="How long (optional)">
-            {EST.map((m) => (
-              <button key={m} type="button" className={`chip-btn small${est === m ? ' on' : ''}`} aria-pressed={est === m} onClick={() => setEst(est === m ? null : m)}>
-                ~{formatMinutes(m)}
-              </button>
-            ))}
-          </div>
-          {!planId && goals.length > 1 && (
-            <label className="row small" style={{ gap: 8 }}>
-              <span className="muted">Goal</span>
-              <select className="input" style={{ width: 'auto', minHeight: 36, padding: '4px 10px' }} value={goal} onChange={(e) => setGoal(e.target.value)}>
-                {goals.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </>
+        <div className="stack" style={{ gap: 6 }}>
+          <b className="small">Subtopics</b>
+          {parts.map((p, i) => (
+            <div key={i} className="new-part">
+              <input className="input" value={p.title} onChange={(e) => setPart(i, { title: e.target.value })} maxLength={140} placeholder={i ? 'Another subtopic' : 'e.g. Two pointers, or Chapter 3'} aria-label={`Subtopic ${i + 1}`} />
+              <input type="date" className="input sub-date" value={p.date} onChange={(e) => setPart(i, { date: e.target.value })} aria-label={`Day for subtopic ${i + 1}`} />
+              <EstSelect value={p.est} onChange={(m) => setPart(i, { est: m })} label={`Time for subtopic ${i + 1}`} />
+              {parts.length > 1 && (
+                <button type="button" className="btn ghost icon small" onClick={() => setParts((list) => list.filter((_, k) => k !== i))} aria-label={`Remove subtopic ${i + 1}`}>
+                  <XIcon width={14} />
+                </button>
+              )}
+            </div>
+          ))}
+          <button type="button" className="link-btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setParts((list) => [...list, blankPart()])}>
+            ＋ Add another subtopic
+          </button>
+        </div>
       )}
+      <button className="btn primary" style={{ alignSelf: 'flex-end' }} disabled={!title.trim() || add.isPending}>
+        Add topic
+      </button>
     </form>
   );
 }

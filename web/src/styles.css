@@ -910,3 +910,8 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .sub-add .input.grow { flex: 1 1 200px; }
 @media (max-width: 520px) { .sub-plan { width: 100%; padding-left: 30px; } }
 .planned-card > summary h2 { margin: 0; }
+/* Adding a topic with its subtopics */
+.new-part { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.new-part > .input:first-child { flex: 1 1 200px; min-width: 0; }
+.add-topic .sub-date { width: 9.5rem; padding: 4px 8px; font-size: 0.85rem; }
+.add-topic .sub-est { width: 6.5rem; padding: 4px 8px; font-size: 0.85rem; }
