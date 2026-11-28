@@ -33,6 +33,7 @@ export function FocusZen({
   onTogglePause,
   onFinish,
   onComplete,
+  completeLabel = 'Complete',
   onExit,
   style,
 }: {
@@ -47,6 +48,7 @@ export function FocusZen({
   onTogglePause: () => void;
   onFinish: () => void;
   onComplete: () => void;
+  completeLabel?: string;
   onExit: () => void;
   style?: React.CSSProperties;
 }) {
@@ -156,7 +158,7 @@ export function FocusZen({
           <StopIcon /> Finish
         </button>
         <button className="btn leaf" disabled={busy} onClick={onComplete}>
-          <CheckIcon /> Complete
+          <CheckIcon /> {completeLabel}
         </button>
       </div>
     </div>,
