@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { ROOM_COLORS } from '@shared/theme';
 import { daysBetween, formatDate } from '@shared/dates';
 import type { GoalTask, MemberProgress, RoomDetail, Topic } from '@shared/types';
@@ -11,18 +11,35 @@ import { ActivityFeed } from '../components/Encourage';
 import { Forest, TodayPlant } from '../components/Garden';
 import { LeaveRoomModal } from '../components/Social';
 import { RevisionsDue } from '../components/Revisions';
-import { AddTaskBox, TaskList, isToday } from '../components/GoalTasks';
+import { TaskList, isToday } from '../components/GoalTasks';
+import { memberItems, MonthPlan, ViewToggle, WeekPlan, type RoomView } from '../components/RoomPlanner';
 import { CamCallButton } from '../components/StudyCam';
-import { ChevronLeft, PlayIcon } from '../components/icons';
+import { ChevronLeft } from '../components/icons';
 
-// Each person owns the tasks they add. Both lists are visible side by side, but only the owner can study,
-// complete or change their own (enforced by the server too).
+// What each of you planned in your goals, by date: 7 days, a month, or today with your plants. Only the owner can
+// tick or start their own (enforced by the server too); planning happens on the goal page.
+const VIEW_KEY = 'uip-room-view';
+function savedView(): RoomView {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    if (v === 'day' || v === 'week' || v === 'month') return v;
+  } catch {}
+  return 'week';
+}
 export function RoomPage() {
   const { id } = useParams();
   const { data: me } = useMe();
   const { data: room, isLoading, error, refetch } = useRoom(id);
-  const [params] = useSearchParams();
   const [editing, setEditing] = useState(false);
+  const [view, setViewState] = useState<RoomView>(savedView);
+  const [weekStart, setWeekStart] = useState<string | null>(null);
+  const [month, setMonth] = useState<string | null>(null);
+  const setView = (v: RoomView) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {}
+  };
   const [leaving, setLeaving] = useState(false);
   const navigate = useNavigate();
   const setStatus = useAction((status: 'active' | 'archived') => api.patch(`/rooms/${id}`, { status }), {
@@ -68,11 +85,37 @@ export function RoomPage() {
         </div>
       </div>
 
-      <div className="grid-2" style={{ alignItems: 'start' }}>
-        {room.members.map((m) => (
-          <PersonColumn key={m.user.id} room={room} member={m} isMe={m.user.id === me.id} today={me.today} autoAdd={m.user.id === me.id && params.get('add') === '1'} />
-        ))}
+      <div className="row between wrap" style={{ gap: 8 }}>
+        <ViewToggle value={view} onChange={setView} />
+        <Link to="/goals" className="small muted">
+          Plan in your goals
+        </Link>
       </div>
+      {view === 'day' ? (
+        <div className="grid-2" style={{ alignItems: 'start' }}>
+          {room.members.map((m) => (
+            <PersonColumn key={m.user.id} room={room} member={m} isMe={m.user.id === me.id} today={me.today} />
+          ))}
+        </div>
+      ) : (
+        (() => {
+          const people = room.members.map((m) => ({ member: m, isMe: m.user.id === me.id, items: memberItems(room, m.user.id, topicAsTask) }));
+          return view === 'week' ? (
+            <WeekPlan people={people} today={me.today} active={room.status === 'active'} start={weekStart ?? me.today} onStart={setWeekStart} />
+          ) : (
+            <MonthPlan
+              people={people}
+              today={me.today}
+              month={month ?? me.today}
+              onMonth={setMonth}
+              onPickDay={(d) => {
+                setWeekStart(d);
+                setView('week');
+              }}
+            />
+          );
+        })()
+      )}
 
       {myArchived.length > 0 && <ArchivedTopics roomId={room.id} topics={myArchived} />}
 
@@ -111,18 +154,13 @@ function topicAsTask(t: Topic, ownerId: string): GoalTask {
 }
 
 /** One person's side of the room: today's plant, an "Add a task" box (yours), and their tasks by day. */
-function PersonColumn({ room, member, isMe, today, autoAdd }: { room: RoomDetail; member: MemberProgress; isMe: boolean; today: string; autoAdd?: boolean }) {
-  const navigate = useNavigate();
+function PersonColumn({ room, member, isMe, today }: { room: RoomDetail; member: MemberProgress; isMe: boolean; today: string }) {
   const ownerId = member.user.id;
   const name = isMe ? 'You' : member.user.displayName;
   const active = room.status === 'active';
-  const linked = new Set(room.tasks.map((t) => t.topicId));
-  const tasks: GoalTask[] = [
-    ...room.tasks.filter((t) => t.ownerId === ownerId),
-    ...room.topics.filter((t) => t.createdBy === ownerId && !linked.has(t.id)).map((t) => topicAsTask(t, ownerId)),
-  ];
   const goals = room.goals.filter((g) => g.ownerId === ownerId);
-  const todays = tasks.filter((t) => isToday(t, today));
+  const items = memberItems(room, ownerId, topicAsTask);
+  const todays = items.filter((t) => isToday(t, today));
   const doneToday = todays.filter((t) => t.done).length;
   const allDone = todays.length > 0 && doneToday === todays.length;
   const trees = room.forest[ownerId] ?? 0;
@@ -152,29 +190,23 @@ function PersonColumn({ room, member, isMe, today, autoAdd }: { room: RoomDetail
                 : todays.length
                   ? `${isMe ? 'Your' : 'The'} plant grows a leaf with every task and blooms when today is finished.`
                   : isMe
-                    ? 'Add a task for today below, and watch the plant grow.'
+                    ? 'Give subtopics a day in your goal, and watch the plant grow.'
                     : 'A rest day. The plant is napping.'}
             </span>
           </div>
           {todays.length > 0 && <ProgressBar value={doneToday} max={todays.length} accent={member.user.accent} label={`${name}: ${doneToday} of ${todays.length} today`} />}
         </div>
-        {isMe && active && room.nextTopic && (
-          <button className="btn primary study-next" onClick={() => navigate(`/study?topic=${room.nextTopic!.id}`)}>
-            <PlayIcon /> <span>Study next: {room.nextTopic.title}</span>
-          </button>
-        )}
       </div>
 
       {isMe && active && <RevisionsDue roomId={room.id} />}
-      {isMe && active && <AddTaskBox roomId={room.id} goals={goals} today={today} autoFocus={autoAdd} existing={tasks} />}
 
       <TaskList
-        tasks={tasks}
+        tasks={items}
         today={today}
         isMe={isMe}
         active={active}
         showGoal={goals.length > 1}
-        empty={<p className="small muted">{isMe ? 'No tasks yet. Add your first one above.' : `${member.user.displayName} hasn’t added any tasks here yet.`}</p>}
+        empty={<p className="small muted">{isMe ? 'Nothing planned yet. Give subtopics a day in your goal.' : `${member.user.displayName} hasn’t planned anything here yet.`}</p>}
       />
 
       <div className="card forest-card">

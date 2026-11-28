@@ -6,7 +6,6 @@ import type { HoursReport as Report, PublicUser } from '@shared/types';
 import { useHoursReport } from '../lib/queries';
 import { personVars } from '../lib/theme';
 import { fmt, Spinner } from './ui';
-import { useSubtopicsOn } from './Subtopics';
 
 type Period = 'week' | 'month' | 'quarter';
 const PERIODS: { key: Period; label: string }[] = [
@@ -228,7 +227,6 @@ function Bars({ title, groups, people, labelEvery }: { title: string; groups: { 
 
 function TopicBars({ person }: { person: Person }) {
   const [all, setAll] = useState(false);
-  const subtopicsOn = useSubtopicsOn();
   const topics = person.report?.topics ?? [];
   const other = person.report?.otherMs ?? 0;
   if (!person.report) return <Spinner />;
@@ -238,7 +236,7 @@ function TopicBars({ person }: { person: Person }) {
   const longest = topics[0];
   return (
     <div className="stack" style={{ gap: 10, ...personVars(person.user.accent) }}>
-      {subtopicsOn && longest && (
+      {longest && (
         <p className="small longest-topic">
           ⏳ Longest: <b>{longest.title}</b>, {fmt(longest.ms)} over {longest.sessions} {longest.sessions === 1 ? 'session' : 'sessions'}
           {longest.subtopics?.length ? ` and ${longest.subtopics.length} ${longest.subtopics.length === 1 ? 'subtopic' : 'subtopics'}` : ''}.
@@ -259,9 +257,9 @@ function TopicBars({ person }: { person: Person }) {
           </div>
           <span className="tiny muted">
             {t.roomName}
-            {subtopicsOn && t.subtopicsTotal ? ` · ${t.subtopicsDone}/${t.subtopicsTotal} subtopics done` : ''}
+            {t.subtopicsTotal ? ` · ${t.subtopicsDone}/${t.subtopicsTotal} subtopics done` : ''}
           </span>
-          {subtopicsOn && Boolean(t.subtopics?.length) && (
+          {Boolean(t.subtopics?.length) && (
             <details className="topic-parts">
               <summary className="tiny muted">
                 {t.subtopics!.length} {t.subtopics!.length === 1 ? 'subtopic' : 'subtopics'} studied

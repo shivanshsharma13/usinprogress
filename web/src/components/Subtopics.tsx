@@ -1,21 +1,19 @@
-// Subtopics (Settings → Motivation & focus): the parts of a topic, like "Pascal's Triangle" → I, II, III.
-// Revising or going deeper adds a subtopic instead of a second topic with the same name. Rooms and goal pages
-// open a task to show its description and subtopics; the timer can start on one; two topics that turned out
-// to be the same can be merged. With the switch off none of this shows and everything works as before.
+// Subtopics: the parts of a topic, like "Pascal's Triangle" → I, II, III. In a goal you give each one a day and
+// how long it takes; the room then shows it on that day as "Topic › Subtopic". A topic is complete when all of its
+// subtopics are. Two topics that turned out to be the same can be merged.
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import type { GoalTask, Subtopic } from '@shared/types';
 import { api } from '../lib/api';
-import { usePref } from '../lib/prefs';
-import { useAction } from '../lib/queries';
+import { useAction, useMe } from '../lib/queries';
+import { addDays, formatDate } from '@shared/dates';
+import { formatMinutes } from '@shared/timer';
 import { toast } from '../lib/toast';
 import { fmt, Modal, ProgressBar } from './ui';
 import { CheckIcon, PlayIcon, XIcon } from './icons';
 
 const INVALIDATE = [['subtopics'], ['room'], ['rooms'], ['plan'], ['plans'], ['progress']];
-
-export const useSubtopicsOn = () => usePref('subtopics')[0];
 
 export function useSubtopics(topicId: string | null | undefined, enabled = true) {
   return useQuery({
@@ -52,14 +50,25 @@ export function SubtopicPanel({ topicId, description, canAct }: { topicId: strin
   const navigate = useNavigate();
   const { data: list, isLoading } = useSubtopics(topicId);
   const [title, setTitle] = useState('');
+  const [newDate, setNewDate] = useState('');
+  const [newEst, setNewEst] = useState('');
   const [editingNote, setEditingNote] = useState(false);
   const [note, setNote] = useState(description);
-  const add = useAction(() => api.post(`/topics/${topicId}/subtopics`, { title: title.trim() }), { invalidate: INVALIDATE, onSuccess: () => setTitle('') });
+  const add = useAction(() => api.post(`/topics/${topicId}/subtopics`, { title: title.trim(), date: newDate || null, estMinutes: newEst ? Number(newEst) : null }), {
+    invalidate: INVALIDATE,
+    onSuccess: () => setTitle(''),
+  });
   const tick = useAction((s: Subtopic) => api.patch<{ topic: TopicChange }>(`/subtopics/${s.id}`, { done: !s.doneAt }), {
     invalidate: INVALIDATE,
     onSuccess: (r) => announce(r.topic),
   });
   const remove = useAction((s: Subtopic) => api.del(`/subtopics/${s.id}`), { invalidate: INVALIDATE, success: 'Subtopic removed' });
+  const today = useMe().data?.today ?? '';
+  // When you'll do a subtopic and how long it takes: the room shows it on that day.
+  const plan = useAction(({ s, patch }: { s: Subtopic; patch: { date?: string | null; estMinutes?: number | null } }) => api.patch(`/subtopics/${s.id}`, patch), {
+    invalidate: INVALIDATE,
+  });
+  const when = (d: string) => (d === today ? 'Today' : d === addDays(today, 1) ? 'Tomorrow' : formatDate(d, { weekday: 'short', day: 'numeric', month: 'short' }));
   const saveNote = useAction(() => api.patch(`/topics/${topicId}`, { description: note.trim() }), {
     invalidate: INVALIDATE,
     success: 'Saved',
@@ -116,7 +125,22 @@ export function SubtopicPanel({ topicId, description, canAct }: { topicId: strin
               <span className="grow sub-title">
                 {s.title}
                 {s.focusedMs > 0 && <span className="tiny muted num"> · {fmt(s.focusedMs)}</span>}
+                {(!canAct || s.doneAt) && (s.date || s.estMinutes) ? (
+                  <span className="tiny muted"> · {[s.date && when(s.date), s.estMinutes && `~${formatMinutes(s.estMinutes)}`].filter(Boolean).join(' · ')}</span>
+                ) : null}
               </span>
+              {canAct && !s.doneAt && (
+                <span className="sub-plan">
+                  <input
+                    type="date"
+                    className={`input sub-date${s.date && today && s.date < today ? ' late' : ''}`}
+                    value={s.date ?? ''}
+                    onChange={(e) => plan.mutate({ s, patch: { date: e.target.value || null } })}
+                    aria-label={`Day for ${s.title}`}
+                  />
+                  <EstSelect value={s.estMinutes ?? null} onChange={(m) => plan.mutate({ s, patch: { estMinutes: m } })} label={`Time for ${s.title}`} />
+                </span>
+              )}
               {canAct && !s.doneAt && (
                 <button className="btn ghost icon small" onClick={() => navigate(`/study?topic=${topicId}&sub=${s.id}`)} aria-label={`Study ${s.title}`}>
                   <PlayIcon width={16} />
@@ -140,20 +164,38 @@ export function SubtopicPanel({ topicId, description, canAct }: { topicId: strin
 
       {canAct && (
         <form
-          className="row"
-          style={{ gap: 6 }}
+          className="sub-add"
           onSubmit={(e) => {
             e.preventDefault();
             if (title.trim() && !add.isPending) add.mutate(undefined);
           }}
         >
           <input className="input grow" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={140} placeholder="Add a subtopic… e.g. Part II, or Revision" aria-label="New subtopic" />
+          <input type="date" className="input sub-date" value={newDate} onChange={(e) => setNewDate(e.target.value)} aria-label="Day for the new subtopic" />
+          <EstSelect value={newEst ? Number(newEst) : null} onChange={(m) => setNewEst(m ? String(m) : '')} label="Time for the new subtopic" />
           <button className="btn small" disabled={!title.trim() || add.isPending}>
             Add
           </button>
         </form>
       )}
     </div>
+  );
+}
+
+const ESTS = [15, 30, 45, 60, 90, 120, 180];
+
+/** How long a subtopic takes. */
+function EstSelect({ value, onChange, label }: { value: number | null; onChange: (m: number | null) => void; label: string }) {
+  const options = value && !ESTS.includes(value) ? [...ESTS, value].sort((a, b) => a - b) : ESTS;
+  return (
+    <select className="input sub-est" value={value ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} aria-label={label}>
+      <option value="">⏱ time</option>
+      {options.map((m) => (
+        <option key={m} value={m}>
+          {formatMinutes(m)}
+        </option>
+      ))}
+    </select>
   );
 }
 

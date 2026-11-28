@@ -42,11 +42,6 @@ export function MotivationSettings() {
           sound is muted, so you just see each other studying. Pause or take a break to talk again. Video goes straight between your phones.
           Both of you need this on.
         </PrefSwitch>
-        <PrefSwitch k="subtopics" label="Subtopics 🧩">
-          Tap a task in a room or goal to give it a description and subtopics (like Pascal's Triangle → I, II, III). To revise or go deeper, add a
-          subtopic instead of a new task with the same name, and pick it when you start the timer. Progress shows which topics take the longest and
-          how many subtopics went into them. You can also merge two topics that turned out to be the same.
-        </PrefSwitch>
         <PrefSwitch k="fullFocus" label="Full-screen focus 🖥️">
           A Full screen button on the timer: only the clock and what you're working on fill the screen, so you can set the phone or laptop aside
           and work. The buttons stay hidden until you move the cursor to the top or bottom edge (tap the screen on a phone), and the screen stays on.

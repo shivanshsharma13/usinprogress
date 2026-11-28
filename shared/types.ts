@@ -224,8 +224,20 @@ export interface Subtopic {
   topicId: string;
   title: string;
   doneAt: number | null;
+  date?: string | null; // the day it's planned for (null = not planned yet)
+  estMinutes?: number | null; // how long it takes
   focusedMs: number;
   sessions: number;
+}
+
+/** A subtopic as goal tasks carry it: planned for a day, done, or touched today. */
+export interface PartRef {
+  id: string;
+  title: string;
+  date: string | null; // the day it's planned for
+  estMinutes: number | null;
+  doneDate: string | null;
+  activeToday?: boolean; // studied or ticked today
 }
 
 export interface RoomDetail extends RoomSummary {
@@ -280,6 +292,7 @@ export interface PlanTask {
   description?: string; // its topic's description
   parts?: SubtopicCount; // its topic's subtopics
   activeToday?: boolean; // studied, a part ticked or completed today, so it shows under Today
+  partList?: PartRef[]; // its topic's subtopics, in order
 }
 
 export type DayStatus = 'upcoming' | 'today' | 'done' | 'partial' | 'missed' | 'rest';
@@ -342,6 +355,10 @@ export interface GoalTask {
   description?: string;
   parts?: SubtopicCount;
   activeToday?: boolean;
+  partList?: PartRef[];
+  // Set on a planned subtopic (rooms and goal lists show these as "Topic › Subtopic"; title is the topic's).
+  subtopicId?: string;
+  subtopicTitle?: string;
 }
 
 /** A goal as a room lists it. */

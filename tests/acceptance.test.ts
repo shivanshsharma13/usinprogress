@@ -1190,3 +1190,48 @@ test('subtopics drive completion, the timer completes one part, and what you did
   assert.deepEqual((await C.sb.rpc('active_today', { p_topics: [topic] })).data, []);
 });
 
+
+test('goals hold topics with subtopics, each planned for a day with a time; the goal moves when a topic is done', async () => {
+  const active = (await A.get('/sessions/active')).body.session;
+  if (active) await A.post(`/sessions/${active.id}/discard`);
+  const tomorrow = addDays(today, 1);
+  const taskId = (await A.post(`/rooms/${roomId}/tasks`, { title: 'Graphs', date: today })).body.id as string;
+  const task = async (who = A) => (await who.get(`/rooms/${roomId}`)).body.tasks.find((t: any) => t.id === taskId);
+  const topic = (await task()).topicId as string;
+  const add = async (title: string) => (await A.post(`/topics/${topic}/subtopics`, { title })).body.id as string;
+
+  // The first subtopic takes over the topic's date; later ones wait in the goal until they get a day.
+  const bfs = await add('BFS');
+  const dfs = await add('DFS');
+  const dp = (await A.post(`/topics/${topic}/subtopics`, { title: 'Dijkstra', date: tomorrow, estMinutes: 45 })).body.id as string;
+  assert.equal((await A.post(`/topics/${topic}/subtopics`, { title: 'x', estMinutes: 5000 })).status, 400);
+  const dij = (await A.get(`/topics/${topic}/subtopics`)).body.subtopics.find((s: any) => s.id === dp);
+  assert.deepEqual([dij.date, dij.estMinutes], [tomorrow, 45]);
+  await A.patch(`/subtopics/${dp}`, { estMinutes: 30 });
+  assert.equal((await task()).estMinutes, 30, 'a topic takes as long as its subtopics');
+  await A.del(`/subtopics/${dp}`);
+  const t1 = await task();
+  assert.equal(t1.date, null, 'the topic itself is no longer dated');
+  assert.deepEqual(t1.partList.map((p: any) => [p.title, p.date]), [['BFS', today], ['DFS', null]]);
+
+  // Plan DFS for tomorrow, then unplan it; bad dates and other people are refused.
+  assert.equal((await A.patch(`/subtopics/${dfs}`, { date: tomorrow })).status, 200);
+  assert.equal((await A.get(`/topics/${topic}/subtopics`)).body.subtopics.find((s: any) => s.id === dfs).date, tomorrow);
+  assert.equal((await A.patch(`/subtopics/${dfs}`, { date: '28-11-2026' })).status, 400);
+  assert.equal((await B.patch(`/subtopics/${dfs}`, { date: today })).status, 403);
+  assert.equal((await A.patch(`/subtopics/${dfs}`, { date: null })).status, 200);
+  assert.equal((await task()).partList.find((p: any) => p.id === dfs).date, null);
+
+  // Your friend sees what you pulled, with the topic's name.
+  assert.deepEqual((await task(B)).partList.map((p: any) => [p.title, p.date]), [['BFS', today], ['DFS', null]]);
+
+  // Ticking a part today marks it as touched today; the goal counts the topic once all parts are done.
+  const goal = async () => (await A.get(`/plans/${t1.planId}`)).body.plan;
+  const before = await goal();
+  await A.patch(`/subtopics/${bfs}`, { done: true });
+  assert.equal((await task()).partList.find((p: any) => p.id === bfs).activeToday, true);
+  assert.equal((await goal()).done, before.done, 'one part done: the topic is not done yet');
+  assert.deepEqual((await A.patch(`/subtopics/${dfs}`, { done: true })).body, { topic: 'completed' });
+  assert.equal((await goal()).done, before.done + 1, 'all parts done: the goal moves on');
+  assert.deepEqual((await C.sb.rpc('active_parts_today', { p_topics: [topic] })).data, []);
+});

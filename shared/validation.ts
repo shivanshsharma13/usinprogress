@@ -124,8 +124,9 @@ export const sessionStartSchema = z.object({
 });
 
 const subtopicTitle = z.string().trim().min(1, 'Give the subtopic a name.').max(140);
-export const subtopicCreateSchema = z.object({ title: subtopicTitle });
-export const subtopicUpdateSchema = z.object({ title: subtopicTitle.optional(), done: z.boolean().optional() });
+const estMinutes = z.number().int().min(1).max(1440).nullable().optional();
+export const subtopicCreateSchema = z.object({ title: subtopicTitle, date: date.nullable().optional(), estMinutes });
+export const subtopicUpdateSchema = z.object({ title: subtopicTitle.optional(), done: z.boolean().optional(), date: date.nullable().optional(), estMinutes });
 export const topicMergeSchema = z.object({ intoId: z.string().uuid() });
 export const sessionSubtopicSchema = z.object({ subtopicId: z.string().uuid().nullable() });
 
