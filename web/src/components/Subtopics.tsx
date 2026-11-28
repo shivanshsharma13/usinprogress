@@ -10,7 +10,7 @@ import { api } from '../lib/api';
 import { usePref } from '../lib/prefs';
 import { useAction } from '../lib/queries';
 import { toast } from '../lib/toast';
-import { fmt, Modal } from './ui';
+import { fmt, Modal, ProgressBar } from './ui';
 import { CheckIcon, PlayIcon, XIcon } from './icons';
 
 const INVALIDATE = [['subtopics'], ['room'], ['rooms'], ['plan'], ['plans'], ['progress']];
@@ -25,6 +25,26 @@ export function useSubtopics(topicId: string | null | undefined, enabled = true)
   });
 }
 
+/** "2/4 subtopics · 50%" with a bar: how far through its parts a topic is. */
+export function PartsMeter({ done, total }: { done: number; total: number }) {
+  const pct = Math.round((done / total) * 100);
+  return (
+    <span className="parts-meter tiny">
+      <ProgressBar value={done} max={total} thin label={`${done} of ${total} subtopics done`} />
+      <span className="muted num">
+        {done}/{total} subtopics · {pct}%
+      </span>
+    </span>
+  );
+}
+
+/** What ticking a subtopic did to its topic. */
+export type TopicChange = 'completed' | 'undone' | null;
+export function announce(change: TopicChange) {
+  if (change === 'completed') toast('All subtopics done, so the topic is complete 🌼', 'success');
+  else if (change === 'undone') toast('Topic reopened: not every subtopic is done', 'notice');
+}
+
 const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
 /** A task opened up: its description and subtopics. Only the owner can change them. */
@@ -35,7 +55,10 @@ export function SubtopicPanel({ topicId, description, canAct }: { topicId: strin
   const [editingNote, setEditingNote] = useState(false);
   const [note, setNote] = useState(description);
   const add = useAction(() => api.post(`/topics/${topicId}/subtopics`, { title: title.trim() }), { invalidate: INVALIDATE, onSuccess: () => setTitle('') });
-  const tick = useAction((s: Subtopic) => api.patch(`/subtopics/${s.id}`, { done: !s.doneAt }), { invalidate: INVALIDATE });
+  const tick = useAction((s: Subtopic) => api.patch<{ topic: TopicChange }>(`/subtopics/${s.id}`, { done: !s.doneAt }), {
+    invalidate: INVALIDATE,
+    onSuccess: (r) => announce(r.topic),
+  });
   const remove = useAction((s: Subtopic) => api.del(`/subtopics/${s.id}`), { invalidate: INVALIDATE, success: 'Subtopic removed' });
   const saveNote = useAction(() => api.patch(`/topics/${topicId}`, { description: note.trim() }), {
     invalidate: INVALIDATE,

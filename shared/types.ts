@@ -209,6 +209,7 @@ export interface Topic {
   createdAt: number;
   progress: Record<string, TopicMemberProgress>; // keyed by user id
   parts: SubtopicCount;
+  activeToday?: boolean; // its owner studied it, ticked a part or completed it today
 }
 
 /** How many subtopics a topic has, and how many are done. */
@@ -278,6 +279,7 @@ export interface PlanTask {
   focusedMs: number;
   description?: string; // its topic's description
   parts?: SubtopicCount; // its topic's subtopics
+  activeToday?: boolean; // studied, a part ticked or completed today, so it shows under Today
 }
 
 export type DayStatus = 'upcoming' | 'today' | 'done' | 'partial' | 'missed' | 'rest';
@@ -339,6 +341,7 @@ export interface GoalTask {
   focusedMs: number;
   description?: string;
   parts?: SubtopicCount;
+  activeToday?: boolean;
 }
 
 /** A goal as a room lists it. */

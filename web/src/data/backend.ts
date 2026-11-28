@@ -151,6 +151,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       Promise.all(roomIds.map((r) => rpc<Row[]>('room_plan_topics', { p_room: r }))).then((x) => x.flat()),
     ]);
     if (!topics.length) return [];
+    const today = await activeToday(topics.map((t) => t.id));
     const progress = topics.flatMap((t) => t.topic_progress ?? []);
     const firsts = topics.flatMap((t) => t.topic_completions ?? []);
     const key = (t: string, u: string) => `${t}:${u}`;
@@ -187,9 +188,16 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         createdAt: t.created_at,
         progress: prog,
         parts: countParts(t.subtopics),
+        activeToday: today.has(t.id),
       };
     });
   }
+
+  /** Which of these topics their owner studied, ticked a part of, or completed today. */
+  const activeToday = async (topicIds: string[]) => new Set(topicIds.length ? await rpc<string[]>('active_today', { p_topics: topicIds }) : []);
+
+  /** A topic with subtopics counts as done only while all of them are. */
+  const partsOpen = (c: SubtopicCount) => c.total > 0 && c.done < c.total;
 
   const countParts = (list: Row[] | undefined): SubtopicCount => ({ done: (list ?? []).filter((x) => x.done_at !== null).length, total: list?.length ?? 0 });
 
@@ -338,10 +346,11 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     if (days) query = query.or(`and(day.gte.${days.min},day.lte.${days.max}),and(planned_day.gte.${days.min},planned_day.lte.${days.max})`);
     const list = loaded ?? (await rows(query));
     const topicIds = ids(list.map((t) => t.topic_id));
-    const time = topicIds.length ? await timeFor(topicIds) : new Map<string, number>();
+    const [time, today] = await Promise.all([topicIds.length ? timeFor(topicIds) : new Map<string, number>(), activeToday(topicIds)]);
     const doneOn = new Map(list.filter((t) => t.topics?.topic_completions?.length).map((t) => [t.topic_id, t.topics.topic_completions[0].local_date as string]));
     for (const t of list) {
       const doneDate = t.topic_id ? (doneOn.get(t.topic_id) ?? null) : null;
+      const parts = countParts(t.topics?.subtopics);
       byPlan.get(t.plan_id)!.push({
         id: t.id,
         day: t.day,
@@ -350,11 +359,12 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         estMinutes: t.est_minutes,
         starred: t.starred,
         topicId: t.topic_id,
-        done: doneDate !== null,
+        done: doneDate !== null && !partsOpen(parts),
         doneDate,
         focusedMs: t.topic_id ? (time.get(t.topic_id) ?? 0) : 0,
         description: t.topics?.description ?? '',
-        parts: countParts(t.topics?.subtopics),
+        parts,
+        activeToday: Boolean(t.topic_id && today.has(t.topic_id)),
       });
     }
     return byPlan;
@@ -894,8 +904,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
       case 'POST /topics/:id/subtopics':
         return { id: await rpc('add_subtopic', { p_topic: p[0], p_title: parse(v.subtopicCreateSchema, body).title }) };
       case 'PATCH /subtopics/:id':
-        await rpc('update_subtopic', { p_id: p[0], p_patch: parse(v.subtopicUpdateSchema, body) });
-        return { ok: true };
+        return rpc('update_subtopic', { p_id: p[0], p_patch: parse(v.subtopicUpdateSchema, body) });
       case 'DELETE /subtopics/:id':
         await rpc('delete_subtopic', { p_id: p[0] });
         return { ok: true };

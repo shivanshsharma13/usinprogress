@@ -11,7 +11,7 @@ import { ActivityFeed } from '../components/Encourage';
 import { Forest, TodayPlant } from '../components/Garden';
 import { LeaveRoomModal } from '../components/Social';
 import { RevisionsDue } from '../components/Revisions';
-import { AddTaskBox, TaskList } from '../components/GoalTasks';
+import { AddTaskBox, TaskList, isToday } from '../components/GoalTasks';
 import { CamCallButton } from '../components/StudyCam';
 import { ChevronLeft, PlayIcon } from '../components/icons';
 
@@ -102,6 +102,7 @@ function topicAsTask(t: Topic, ownerId: string): GoalTask {
     estMinutes: t.estimatedMinutes,
     topicId: t.id,
     done: p?.status === 'completed',
+    activeToday: t.activeToday,
     doneDate: p?.completedAt ? new Date(p.completedAt).toISOString().slice(0, 10) : null,
     focusedMs: p?.focusedMs ?? 0,
     description: t.description,
@@ -121,7 +122,7 @@ function PersonColumn({ room, member, isMe, today, autoAdd }: { room: RoomDetail
     ...room.topics.filter((t) => t.createdBy === ownerId && !linked.has(t.id)).map((t) => topicAsTask(t, ownerId)),
   ];
   const goals = room.goals.filter((g) => g.ownerId === ownerId);
-  const todays = tasks.filter((t) => t.date === today);
+  const todays = tasks.filter((t) => isToday(t, today));
   const doneToday = todays.filter((t) => t.done).length;
   const allDone = todays.length > 0 && doneToday === todays.length;
   const trees = room.forest[ownerId] ?? 0;

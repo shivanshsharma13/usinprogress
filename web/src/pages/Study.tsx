@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { focusedMs, formatClock, formatCountdown, formatMinutes } from '@shared/timer';
-import type { ActiveSession, RoomDetail, SessionRecord, Topic } from '@shared/types';
+import type { ActiveSession, RoomDetail, SessionRecord, Subtopic, Topic } from '@shared/types';
 import { useAction, useActiveSession, useFriends, useMe, useRoom, useRooms } from '../lib/queries';
 import { api, ApiError } from '../lib/api';
 import { toast } from '../lib/toast';
@@ -18,12 +18,13 @@ import { CamBeforeStart } from '../components/StudyCam';
 import { TodayPlant } from '../components/Garden';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { usePref } from '../lib/prefs';
-import { SubtopicPicker, useSubtopicsOn } from '../components/Subtopics';
+import { PartsMeter, SubtopicPicker, useSubtopics, useSubtopicsOn } from '../components/Subtopics';
 import { FocusZen, useFullFocusOn } from '../components/FocusZen';
 
 interface FinishResult {
   session: SessionRecord | null;
   completedTopic: boolean;
+  partDone?: boolean; // "Complete" ticked just the part this timer was on
   nextTopic: { id: string; title: string } | null;
   roomId: string;
 }
@@ -58,6 +59,11 @@ export function StudyPage() {
 
 function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSession; requestedTopic: string | null; onOutcome: (o: Outcome) => void }) {
   const subtopicsOn = useSubtopicsOn();
+  const { data: subtopics = [] } = useSubtopics(session.topicId, subtopicsOn);
+  const openParts = subtopics.filter((p) => !p.doneAt);
+  // On one part with others still open, "Complete" ticks just that part (the server does the same).
+  const partOnly = subtopicsOn && Boolean(session.subtopicId) && openParts.some((p) => p.id !== session.subtopicId);
+  const completeLabel = partOnly ? 'Part done' : 'Complete';
   const fullFocusOn = useFullFocusOn();
   const [zen, setZen] = useState(false);
   const qc = useQueryClient();
@@ -71,7 +77,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
   const target = session.targetMinutes;
   const paused = session.state === 'paused';
 
-  const inv = [['session'], ['room', session.roomId], ['rooms'], ['plan'], ['plans'], ['progress'], ['sessions'], ['tasks']];
+  const inv = [['session'], ['room', session.roomId], ['rooms'], ['plan'], ['plans'], ['progress'], ['sessions'], ['tasks'], ['subtopics']];
   const setSession = (s: ActiveSession) => qc.setQueryData<any>(['session'], s);
 
   const pause = useAction(() => api.post<{ session: ActiveSession }>(`/sessions/${session.id}/${paused ? 'resume' : 'pause'}`), {
@@ -89,12 +95,13 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
       onSuccess: (r, body) => {
         setLongSession(null);
         if (body.parts && body.parts.length > 1) toast(`Saved as ${body.parts.length} tasks 🌱`);
+        if (r.partDone) toast(`“${session.subtopicTitle}” done ✓ ${subtopics.length - openParts.length + 1}/${subtopics.length} subtopics`, 'success');
         qc.setQueryData<any>(['session'], null);
         const plant = body.completeTopic && me ? plantGrowth(qc.getQueryData<RoomDetail>(['room', session.roomId]), me.id, session.topicId) : undefined;
         if (plant && r.completedTopic) celebrate({ topicTitle: session.topicTitle, roomName: session.roomName, accent: me!.accent, ...plant });
         onOutcome({
-          kind: body.completeTopic ? 'completed' : 'finished',
-          topicTitle: session.topicTitle,
+          kind: body.completeTopic && !r.partDone ? 'completed' : 'finished',
+          topicTitle: r.partDone ? `${session.topicTitle} › ${session.subtopicTitle}` : session.topicTitle,
           focusedMs: r.session?.focusedMs ?? null,
           result: r,
           plant: plant && { percent: plant.after, caption: plant.caption },
@@ -134,6 +141,13 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
     invalidate: [['session']],
     onSuccess: (_r, minutes) => qc.setQueryData<any>(['session'], { ...session, targetMinutes: minutes }),
   });
+
+  // Completing the whole topic while parts are still open ticks them all, so ask first.
+  const completeNow = () => {
+    const others = openParts.filter((p) => p.id !== session.subtopicId);
+    if (subtopicsOn && !partOnly && others.length && !confirm(`${others.length} of ${subtopics.length} subtopics aren't done yet. Tick them all and complete “${session.topicTitle}”?`)) return;
+    finish.mutate({ completeTopic: true });
+  };
 
   const busy = pause.isPending || finish.isPending || discard.isPending;
   const togglePause = () => !busy && pause.mutate(undefined);
@@ -195,7 +209,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           )}
         </div>
         <h1 className="focus-title">{session.topicTitle}</h1>
-        {session.subtopicTitle && subtopicsOn && <SubtopicDone session={session} />}
+        {subtopicsOn && (session.subtopicTitle || subtopics.length > 0) && <SubtopicLine title={session.subtopicTitle} parts={subtopics} />}
 
         <div className="timer-ring">
           <span className="halo" aria-hidden="true" />
@@ -256,12 +270,16 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           <button className="btn big" disabled={busy} onClick={() => finish.mutate({})}>
             <StopIcon /> Finish<span className="hide-narrow">&nbsp;session</span>
           </button>
-          <button className="btn big leaf" disabled={busy} onClick={() => finish.mutate({ completeTopic: true })}>
-            <CheckIcon /> Complete<span className="hide-narrow">&nbsp;topic</span>
+          <button className="btn big leaf" disabled={busy} onClick={completeNow}>
+            <CheckIcon /> {completeLabel}
+            {!partOnly && <span className="hide-narrow">&nbsp;topic</span>}
           </button>
         </div>
         <TimerPhotoButton />
-        <p className="tiny muted">Tap the clock or press Space to pause. “Finish session” keeps the topic open; “Complete topic” ticks it off.</p>
+        <p className="tiny muted">
+          Tap the clock or press Space to pause. “Finish session” keeps the topic open;{' '}
+          {partOnly ? '“Part done” ticks off this subtopic; the topic completes when every subtopic is done.' : '“Complete topic” ticks it off.'}
+        </p>
       </div>
 
       <div className="card stack">
@@ -287,7 +305,8 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           onTogglePause={togglePause}
           // Finishing may ask a question (a very long session), so step out of full screen first.
           onFinish={() => (setZen(false), finish.mutate({}))}
-          onComplete={() => (setZen(false), finish.mutate({ completeTopic: true }))}
+          onComplete={() => (setZen(false), completeNow())}
+          completeLabel={completeLabel}
           onExit={() => setZen(false)}
           style={me ? personVars(me.accent) : undefined}
         />
@@ -331,22 +350,13 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
   );
 }
 
-/** The part you're on, under the timer's title, with a tick for when you've finished it. */
-function SubtopicDone({ session }: { session: ActiveSession }) {
-  const [done, setDone] = useState(false);
-  const mark = useAction(() => api.patch(`/subtopics/${session.subtopicId}`, { done: true }), {
-    invalidate: [['subtopics'], ['room'], ['plan']],
-    success: 'Part done ✓',
-    onSuccess: () => setDone(true),
-  });
+/** The part you're on, under the timer's title, and how far through its parts the topic is. */
+function SubtopicLine({ title, parts }: { title?: string | null; parts: Subtopic[] }) {
+  const done = parts.filter((p) => p.doneAt).length;
   return (
-    <div className="row wrap" style={{ justifyContent: 'center', gap: 8 }}>
-      <span className="small muted">› {session.subtopicTitle}</span>
-      {!done && (
-        <button className="btn ghost small" disabled={mark.isPending} onClick={() => mark.mutate(undefined)}>
-          <CheckIcon width={14} /> Part done
-        </button>
-      )}
+    <div className="stack" style={{ alignItems: 'center', gap: 4, width: '100%' }}>
+      {title && <span className="small muted">› {title}</span>}
+      {parts.length > 0 && <PartsMeter done={done} total={parts.length} />}
     </div>
   );
 }

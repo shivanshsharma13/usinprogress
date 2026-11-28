@@ -866,3 +866,8 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
   .zen-leaf, .zen-bloom { display: none; }
   .zen-bar { translate: none !important; }
 }
+
+/* Subtopic progress on a task */
+.parts-meter { display: flex; align-items: center; gap: 8px; width: min(100%, 260px); margin-top: 2px; }
+.parts-meter .bar { flex: 1; min-width: 60px; }
+.parts-meter .num { white-space: nowrap; }

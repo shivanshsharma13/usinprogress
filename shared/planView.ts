@@ -124,6 +124,7 @@ export function goalTasks(plan: PlanRow, tasks: PlanTask[]): GoalTask[] {
     focusedMs: t.focusedMs,
     description: t.description,
     parts: t.parts,
+    activeToday: t.activeToday,
   }));
 }
 

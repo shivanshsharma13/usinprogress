@@ -13,10 +13,13 @@ import { useAction, useMe } from '../lib/queries';
 import { toast } from '../lib/toast';
 import { Field, fmt, Menu, Modal } from './ui';
 import { CheckIcon, ChevronDown, PlayIcon } from './icons';
-import { MergeTopicModal, SameNameHint, SubtopicPanel, useSubtopicsOn } from './Subtopics';
+import { MergeTopicModal, PartsMeter, SameNameHint, SubtopicPanel, useSubtopicsOn } from './Subtopics';
 
 const INVALIDATE = [['room'], ['rooms'], ['plan'], ['plans'], ['home'], ['tasks'], ['progress']];
 const EST = [15, 30, 45, 60, 90];
+
+/** Planned for today, or something you studied, ticked a part of, or completed today. */
+export const isToday = (t: GoalTask, today: string) => t.date === today || Boolean(t.activeToday);
 
 /** "Today", "Tomorrow", "Mon 24 Nov". */
 export function dayLabel(date: string, today: string): string {
@@ -142,13 +145,14 @@ type Group = { key: string; title: string; tasks: GoalTask[]; collapsed?: boolea
 
 /** Your (or your friend's) tasks, grouped so today is always on top and nothing gets lost. */
 export function TaskList({ tasks, today, isMe, active = true, showGoal, empty }: { tasks: GoalTask[]; today: string; isMe: boolean; active?: boolean; showGoal?: boolean; empty?: React.ReactNode }) {
-  const missed = tasks.filter((t) => !t.done && t.date !== null && t.date < today);
-  const todays = tasks.filter((t) => t.date === today).sort((a, b) => Number(a.done) - Number(b.done));
-  const upcoming = tasks.filter((t) => !t.done && t.date !== null && t.date > today).sort((a, b) => a.date!.localeCompare(b.date!));
+  const elsewhere = tasks.filter((t) => !isToday(t, today));
+  const missed = elsewhere.filter((t) => !t.done && t.date !== null && t.date < today);
+  const todays = tasks.filter((t) => isToday(t, today)).sort((a, b) => Number(a.done) - Number(b.done));
+  const upcoming = elsewhere.filter((t) => !t.done && t.date !== null && t.date > today).sort((a, b) => a.date!.localeCompare(b.date!));
   const soon = upcoming.filter((t) => t.date! <= addDays(today, 7));
   const later = upcoming.filter((t) => t.date! > addDays(today, 7));
-  const undated = tasks.filter((t) => !t.done && t.date === null);
-  const done = tasks.filter((t) => t.done && t.date !== today).sort((a, b) => (b.doneDate ?? '').localeCompare(a.doneDate ?? ''));
+  const undated = elsewhere.filter((t) => !t.done && t.date === null);
+  const done = elsewhere.filter((t) => t.done).sort((a, b) => (b.doneDate ?? '').localeCompare(a.doneDate ?? ''));
 
   const moveAll = useAction((ids: string[]) => Promise.all(ids.map((id) => api.patch(`/goal-tasks/${id}`, { date: today }))), {
     invalidate: INVALIDATE,
@@ -220,6 +224,7 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
   const [expanded, setExpanded] = useState(false);
   const [merging, setMerging] = useState(false);
   const legacy = t.id.startsWith('topic:'); // a topic without a goal task (from before goals lived in rooms)
+  const openParts = t.parts ? t.parts.total - t.parts.done : 0;
   const complete = useAction(() => api.post(`/topics/${t.topicId}/complete`), {
     invalidate: INVALIDATE,
     onSuccess: () => {
@@ -235,10 +240,11 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
 
   const meta = [
     showDate && t.date ? (t.date < today && !t.done ? `was ${dayLabel(t.date, today)}` : dayLabel(t.date, today)) : '',
+    // In Today because of what you did, not because it was planned for today.
+    t.activeToday && t.date !== today ? (t.done ? (t.doneDate === today ? 'done today' : 'revised today') : 'studied today') : '',
     showGoal && t.planTitle ? t.planTitle : '',
     t.estMinutes ? `~${formatMinutes(t.estMinutes)}` : '',
     t.focusedMs ? `${fmt(t.focusedMs)} spent` : '',
-    subtopicsOn && t.parts?.total ? `${t.parts.done}/${t.parts.total} subtopics` : '',
     subtopicsOn && t.description ? '📝' : '',
   ]
     .filter(Boolean)
@@ -250,7 +256,11 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
       <button
         className="task-check"
         disabled={!canAct || complete.isPending || undo.isPending}
-        onClick={() => (t.done ? confirm('Mark this as not done?') && undo.mutate(undefined) : complete.mutate(undefined))}
+        onClick={() =>
+          t.done
+            ? confirm(t.parts?.total ? 'Mark this as not done? Its subtopics stay ticked; untick one to reopen it.' : 'Mark this as not done?') && undo.mutate(undefined)
+            : (!openParts || confirm(`${openParts} of ${t.parts!.total} subtopics aren't done yet. Tick them all and complete “${t.title}”?`)) && complete.mutate(undefined)
+        }
         aria-label={t.done ? `${t.title} is done. Mark as not done` : `Mark ${t.title} done`}
         aria-pressed={t.done}
       >
@@ -262,6 +272,7 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
             {t.title} <ChevronDown width={14} className="task-chevron" />
           </span>
           {meta && <span className="tiny muted">{meta}</span>}
+          {t.parts?.total ? <PartsMeter done={t.parts.done} total={t.parts.total} /> : null}
         </button>
       ) : (
         <div className="grow" style={{ minWidth: 0 }}>

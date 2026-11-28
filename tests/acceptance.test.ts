@@ -1137,7 +1137,56 @@ test('subtopics: parts of a topic, sessions on a part, hours by part, and mergin
   assert.ok(!after.topics.some((t: any) => t.id === dupe || t.id === part3), 'merged topics are archived');
   const merged = after.topics.find((t: any) => t.id === pascal);
   assert.equal(merged.progress[a.id].sessions, 2, 'their time moved across');
-  assert.equal(merged.progress[a.id].status, 'completed', 'a completion moves too');
+  assert.equal(merged.progress[a.id].firstCompletedAt !== null, true, 'a completion moves too');
+  assert.equal(merged.progress[a.id].status, 'revising', 'but with part II still open it is not complete');
   const titles = (await A.get(`/topics/${pascal}/subtopics`)).body.subtopics.map((x: any) => [x.title, Boolean(x.doneAt), x.sessions]);
   assert.deepEqual(titles, [['I', true, 0], ['II', false, 1], ['Pascal’s Triangle III', true, 1]]);
 });
+
+test('subtopics drive completion, the timer completes one part, and what you did today shows under Today', async () => {
+  const active = (await A.get('/sessions/active')).body.session;
+  if (active) await A.post(`/sessions/${active.id}/discard`);
+  const yesterday = addDays(today, -1);
+  const taskId = (await A.post(`/rooms/${roomId}/tasks`, { title: 'Binary trees', date: yesterday })).body.id as string;
+  const task = async () => (await A.get(`/rooms/${roomId}`)).body.tasks.find((t: any) => t.id === taskId);
+  const topic = (await task()).topicId as string;
+  const status = async () => (await A.get(`/rooms/${roomId}`)).body.topics.find((t: any) => t.id === topic).progress[a.id].status;
+  const add = async (title: string) => (await A.post(`/topics/${topic}/subtopics`, { title })).body.id as string;
+  const [one, two, three] = [await add('Traversals'), await add('Height'), await add('LCA')];
+
+  assert.equal((await task()).activeToday, false, 'planned yesterday and untouched: not today');
+  assert.deepEqual((await A.patch(`/subtopics/${one}`, { done: true })).body, { topic: null });
+  assert.equal((await task()).activeToday, true, 'ticking a part today puts it under Today');
+  assert.deepEqual((await task()).parts, { done: 1, total: 3 });
+
+  // "Complete" on a timer that's on a part ticks just that part.
+  const s = (await A.post('/sessions', { topicId: topic, subtopicId: two })).body.session;
+  await srv.db.query('UPDATE study_sessions SET started_at = started_at - 600000 WHERE id = ?', [s.id]);
+  const fin = (await A.post(`/sessions/${s.id}/finish`, { completeTopic: true })).body;
+  assert.equal(fin.partDone, true);
+  assert.equal(fin.completedTopic, false);
+  assert.equal(await status(), 'in_progress');
+  assert.equal((await task()).done, false);
+
+  // The last part completes the topic; unticking one undoes it; a new part reopens it for revision.
+  assert.deepEqual((await A.patch(`/subtopics/${three}`, { done: true })).body, { topic: 'completed' });
+  assert.equal(await status(), 'completed');
+  assert.equal((await task()).done, true);
+  assert.deepEqual((await A.patch(`/subtopics/${three}`, { done: false })).body, { topic: 'undone' });
+  assert.equal(await status(), 'in_progress');
+  await A.patch(`/subtopics/${three}`, { done: true });
+  await add('Diameter');
+  assert.equal(await status(), 'revising', 'a new part on a finished topic opens it for revision');
+  assert.equal((await task()).done, false, 'not done while a part is open');
+
+  // Completing the whole topic ticks its remaining parts.
+  assert.equal((await A.post(`/topics/${topic}/complete`)).status, 200);
+  const list = (await A.get(`/topics/${topic}/subtopics`)).body.subtopics;
+  assert.ok(list.every((x: any) => x.doneAt), 'all parts ticked');
+  assert.equal((await task()).done, true);
+
+  // Your friend sees it under your Today too; strangers can't ask.
+  assert.equal((await B.get(`/rooms/${roomId}`)).body.tasks.find((t: any) => t.id === taskId).activeToday, true);
+  assert.deepEqual((await C.sb.rpc('active_today', { p_topics: [topic] })).data, []);
+});
+
