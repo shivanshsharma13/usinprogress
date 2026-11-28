@@ -1,22 +1,21 @@
 // Tasks, the simple way: a goal is a list of tasks in a room, each with a date or none. Rooms and goal pages
 // both use these pieces: one "Add a task" box, and a list grouped into Missed / Today / Upcoming / No date / Done.
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { addDays, formatDate } from '@shared/dates';
 import { formatMinutes } from '@shared/timer';
-import type { GoalRef, GoalTask, RoomDetail } from '@shared/types';
+import type { GoalTask, RoomDetail } from '@shared/types';
 import { api } from '../lib/api';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { getFocusSettings } from '../lib/focusSettings';
 import { useAction, useMe } from '../lib/queries';
 import { toast } from '../lib/toast';
 import { Field, fmt, Menu, Modal } from './ui';
-import { CheckIcon, ChevronDown, PlayIcon } from './icons';
-import { MergeTopicModal, PartsMeter, SameNameHint, SubtopicPanel, useSubtopicsOn } from './Subtopics';
+import { CheckIcon, ChevronDown, PlayIcon, XIcon } from './icons';
+import { announce, EstSelect, MergeTopicModal, PartsMeter, SameNameHint, SubtopicPanel, type TopicChange } from './Subtopics';
 
 const INVALIDATE = [['room'], ['rooms'], ['plan'], ['plans'], ['home'], ['tasks'], ['progress']];
-const EST = [15, 30, 45, 60, 90];
 
 /** Planned for today, or something you studied, ticked a part of, or completed today. */
 export const isToday = (t: GoalTask, today: string) => t.date === today || Boolean(t.activeToday);
@@ -53,90 +52,77 @@ export function DateChoice({ value, onChange, today }: { value: string | null; o
   );
 }
 
-/**
- * One box to add tasks. In a room, it goes into the goal you pick (your latest one by default; with no goal
- * yet, a "My tasks" goal is made for you). On a goal page, into that goal.
- */
-export function AddTaskBox({ roomId, planId, goals = [], today, autoFocus, existing = [] }: { roomId?: string; planId?: string; goals?: GoalRef[]; today: string; autoFocus?: boolean; existing?: GoalTask[] }) {
-  const subtopicsOn = useSubtopicsOn();
+type NewPart = { title: string; date: string; est: number | null };
+const blankPart = (): NewPart => ({ title: '', date: '', est: null });
+
+/** Add a topic to a goal, with its subtopics: each one gets a day and how long it takes. The topic has no day. */
+export function AddTopicBox({ planId, existing = [] }: { planId: string; existing?: GoalTask[] }) {
   const [title, setTitle] = useState('');
-  const [date, setDate] = useState<string | null>(today);
-  const [est, setEst] = useState<number | null>(null);
-  const [goal, setGoal] = useState<string>(goals[0]?.id ?? '');
-  const [open, setOpen] = useState(Boolean(autoFocus));
+  const [parts, setParts] = useState<NewPart[]>([blankPart()]);
+  const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (autoFocus) input.current?.focus();
-  }, [autoFocus]);
-  useEffect(() => {
-    if (!goals.some((g) => g.id === goal)) setGoal(goals[0]?.id ?? '');
-  }, [goals.map((g) => g.id).join()]);
+  const setPart = (i: number, patch: Partial<NewPart>) => setParts((list) => list.map((p, k) => (k === i ? { ...p, ...patch } : p)));
+  const filled = parts.filter((p) => p.title.trim());
 
   const add = useAction(
-    () =>
-      planId
-        ? api.post(`/plans/${planId}/goal-tasks`, { title: title.trim(), date, estMinutes: est })
-        : api.post(`/rooms/${roomId}/tasks`, { title: title.trim(), date, estMinutes: est, planId: goal || null }),
+    async () => {
+      const { topicId } = await api.post<{ id: string; topicId: string }>(`/plans/${planId}/goal-tasks`, { title: title.trim(), date: null });
+      for (const p of filled) await api.post(`/topics/${topicId}/subtopics`, { title: p.title.trim(), date: p.date || null, estMinutes: p.est });
+    },
     {
-      invalidate: INVALIDATE,
-      success: () => (date ? `Added for ${date === today || date === addDays(today, 1) ? dayLabel(date, today).toLowerCase() : dayLabel(date, today)} ✓` : 'Added ✓'),
+      invalidate: [...INVALIDATE, ['subtopics']],
+      success: () => (filled.length ? `Added “${title.trim()}” with ${filled.length} ${filled.length === 1 ? 'subtopic' : 'subtopics'} ✓` : `Added “${title.trim()}” ✓`),
       onSuccess: () => {
         setTitle('');
+        setParts([blankPart()]);
         input.current?.focus();
       },
     },
   );
-  const submit = () => title.trim() && !add.isPending && add.mutate(undefined);
 
   return (
     <form
-      className="card add-task stack"
+      className="card add-topic stack"
       style={{ gap: 10 }}
       onSubmit={(e) => {
         e.preventDefault();
-        submit();
+        if (title.trim() && !add.isPending) add.mutate(undefined);
       }}
     >
-      <div className="row" style={{ gap: 8 }}>
-        <input
-          ref={input}
-          className="input grow"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onFocus={() => setOpen(true)}
-          placeholder="Add a task… e.g. Read chapter 4"
-          maxLength={140}
-          aria-label="New task"
-        />
-        <button className="btn primary" disabled={!title.trim() || add.isPending}>
-          Add
-        </button>
-      </div>
-      {subtopicsOn && <SameNameHint title={title} existing={existing} onAdded={() => setTitle('')} />}
+      <input
+        ref={input}
+        className="input"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onFocus={() => setOpen(true)}
+        placeholder="Add a topic… e.g. Arrays, or Cardiology"
+        maxLength={140}
+        aria-label="New topic"
+      />
+      <SameNameHint title={title} existing={existing} onAdded={() => setTitle('')} />
       {open && (
-        <>
-          <DateChoice value={date} onChange={setDate} today={today} />
-          <div className="row wrap" style={{ gap: 6 }} role="group" aria-label="How long (optional)">
-            {EST.map((m) => (
-              <button key={m} type="button" className={`chip-btn small${est === m ? ' on' : ''}`} aria-pressed={est === m} onClick={() => setEst(est === m ? null : m)}>
-                ~{formatMinutes(m)}
-              </button>
-            ))}
-          </div>
-          {!planId && goals.length > 1 && (
-            <label className="row small" style={{ gap: 8 }}>
-              <span className="muted">Goal</span>
-              <select className="input" style={{ width: 'auto', minHeight: 36, padding: '4px 10px' }} value={goal} onChange={(e) => setGoal(e.target.value)}>
-                {goals.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </>
+        <div className="stack" style={{ gap: 6 }}>
+          <b className="small">Subtopics</b>
+          {parts.map((p, i) => (
+            <div key={i} className="new-part">
+              <input className="input" value={p.title} onChange={(e) => setPart(i, { title: e.target.value })} maxLength={140} placeholder={i ? 'Another subtopic' : 'e.g. Two pointers, or Chapter 3'} aria-label={`Subtopic ${i + 1}`} />
+              <input type="date" className="input sub-date" value={p.date} onChange={(e) => setPart(i, { date: e.target.value })} aria-label={`Day for subtopic ${i + 1}`} />
+              <EstSelect value={p.est} onChange={(m) => setPart(i, { est: m })} label={`Time for subtopic ${i + 1}`} />
+              {parts.length > 1 && (
+                <button type="button" className="btn ghost icon small" onClick={() => setParts((list) => list.filter((_, k) => k !== i))} aria-label={`Remove subtopic ${i + 1}`}>
+                  <XIcon width={14} />
+                </button>
+              )}
+            </div>
+          ))}
+          <button type="button" className="link-btn small" style={{ alignSelf: 'flex-start' }} onClick={() => setParts((list) => [...list, blankPart()])}>
+            ＋ Add another subtopic
+          </button>
+        </div>
       )}
+      <button className="btn primary" style={{ alignSelf: 'flex-end' }} disabled={!title.trim() || add.isPending}>
+        Add topic
+      </button>
     </form>
   );
 }
@@ -154,22 +140,12 @@ export function TaskList({ tasks, today, isMe, active = true, showGoal, empty }:
   const undated = elsewhere.filter((t) => !t.done && t.date === null);
   const done = elsewhere.filter((t) => t.done).sort((a, b) => (b.doneDate ?? '').localeCompare(a.doneDate ?? ''));
 
-  const moveAll = useAction((ids: string[]) => Promise.all(ids.map((id) => api.patch(`/goal-tasks/${id}`, { date: today }))), {
-    invalidate: INVALIDATE,
-    success: 'Moved to today',
-  });
-
   const groups: Group[] = [
     {
       key: 'missed',
       title: `Missed (${missed.length})`,
       tasks: missed,
       collapsed: missed.length > 5,
-      action: isMe && active && missed.length > 0 && (
-        <button className="btn ghost small" disabled={moveAll.isPending} onClick={() => moveAll.mutate(missed.filter((t) => !t.id.startsWith('topic:')).map((t) => t.id))}>
-          Move all to today
-        </button>
-      ),
     },
     { key: 'today', title: 'Today', tasks: todays },
     { key: 'soon', title: 'Upcoming', tasks: soon },
@@ -185,10 +161,10 @@ export function TaskList({ tasks, today, isMe, active = true, showGoal, empty }:
         const rows = (
           <div className="task-rows">
             {g.tasks.length ? (
-              g.tasks.map((t) => <TaskRow key={t.id} task={t} siblings={tasks} today={today} isMe={isMe} active={active} showGoal={showGoal} showDate={g.key !== 'today'} />)
+              g.tasks.map((t) => <ItemRow key={t.id} item={t} today={today} isMe={isMe} active={active} showGoal={showGoal} showDate={g.key !== 'today'} />)
             ) : (
               <p className="small muted" style={{ margin: '4px 0' }}>
-                {isMe ? 'Nothing for today yet. Add a task above.' : 'Nothing planned for today.'}
+                Nothing planned for today.
               </p>
             )}
           </div>
@@ -220,11 +196,12 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
   const qc = useQueryClient();
   const { data: me } = useMe();
   const [editing, setEditing] = useState(false);
-  const subtopicsOn = useSubtopicsOn() && Boolean(t.topicId);
+  const openable = Boolean(t.topicId);
   const [expanded, setExpanded] = useState(false);
   const [merging, setMerging] = useState(false);
   const legacy = t.id.startsWith('topic:'); // a topic without a goal task (from before goals lived in rooms)
   const openParts = t.parts ? t.parts.total - t.parts.done : 0;
+  const hasParts = Boolean(t.parts?.total);
   const complete = useAction(() => api.post(`/topics/${t.topicId}/complete`), {
     invalidate: INVALIDATE,
     onSuccess: () => {
@@ -245,7 +222,7 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
     showGoal && t.planTitle ? t.planTitle : '',
     t.estMinutes ? `~${formatMinutes(t.estMinutes)}` : '',
     t.focusedMs ? `${fmt(t.focusedMs)} spent` : '',
-    subtopicsOn && t.description ? '📝' : '',
+    t.description ? '📝' : '',
   ]
     .filter(Boolean)
     .join(' · ');
@@ -266,7 +243,7 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
       >
         {t.done && <CheckIcon width={15} />}
       </button>
-      {subtopicsOn ? (
+      {openable ? (
         <button className="grow task-open" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={`${t.title}: ${expanded ? 'hide' : 'show'} description and subtopics`}>
           <span className="task-title">
             {t.title} <ChevronDown width={14} className="task-chevron" />
@@ -288,15 +265,16 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
               <span className="hide-narrow">Study</span>
             </button>
           )}
-          {(!legacy || subtopicsOn) && (
+          {(!legacy || openable) && (
             <Menu
               label={`More for ${t.title}`}
               items={[
                 { label: 'Edit', onClick: () => setEditing(true), hidden: legacy },
-                { label: 'Do it today', onClick: () => move.mutate(today), hidden: legacy || t.date === today || t.done },
-                { label: 'Move to tomorrow', onClick: () => move.mutate(addDays(today, 1)), hidden: legacy || t.date === addDays(today, 1) || t.done },
-                { label: 'No date', onClick: () => move.mutate(null), hidden: legacy || t.date === null || t.done },
-                { label: 'Merge into another topic…', onClick: () => setMerging(true), hidden: !subtopicsOn },
+                // A topic with subtopics is planned a subtopic at a time (open it to give each a day).
+                { label: 'Do it today', onClick: () => move.mutate(today), hidden: legacy || t.date === today || t.done || hasParts },
+                { label: 'Move to tomorrow', onClick: () => move.mutate(addDays(today, 1)), hidden: legacy || t.date === addDays(today, 1) || t.done || hasParts },
+                { label: 'No date', onClick: () => move.mutate(null), hidden: legacy || t.date === null || t.done || hasParts },
+                { label: 'Merge into another topic…', onClick: () => setMerging(true), hidden: !openable },
                 { label: 'Remove', danger: true, onClick: () => confirm(`Remove “${t.title}”? Its study time stays in your history.`) && remove.mutate(undefined), hidden: legacy },
               ]}
             />
@@ -306,7 +284,89 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
       {editing && <EditTaskModal task={t} today={today} onClose={() => setEditing(false)} />}
       {merging && <MergeTopicModal task={t} candidates={siblings} onClose={() => setMerging(false)} />}
     </div>
-    {subtopicsOn && expanded && <SubtopicPanel topicId={t.topicId!} description={t.description ?? ''} canAct={canAct} />}
+    {openable && expanded && <SubtopicPanel topicId={t.topicId!} description={t.description ?? ''} canAct={canAct} />}
+    </div>
+  );
+}
+
+/** A goal's main topics, open ones first; open one to plan its subtopics. */
+export function TopicList({ tasks, today, active }: { tasks: GoalTask[]; today: string; active: boolean }) {
+  const open = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+  return (
+    <div className="stack task-groups">
+      <section className="task-group">
+        <b className="small">Topics ({open.length})</b>
+        <div className="task-rows">
+          {open.map((t) => (
+            <TaskRow key={t.id} task={t} siblings={tasks} today={today} isMe active={active} showDate />
+          ))}
+          {!open.length && <p className="small muted" style={{ margin: '4px 0' }}>Every topic is done 🌼</p>}
+        </div>
+      </section>
+      {done.length > 0 && (
+        <details className="task-group">
+          <summary>
+            <b className="small">Done topics ({done.length})</b>
+          </summary>
+          <div className="task-rows">
+            {done.map((t) => (
+              <TaskRow key={t.id} task={t} siblings={tasks} today={today} isMe active={active} showDate />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** One planned item: a subtopic as "Topic › Subtopic", or a topic without subtopics. Tick it or start it. */
+export function ItemRow({ item: t, today, isMe, active, showGoal, showDate, compact }: { item: GoalTask; today: string; isMe: boolean; active: boolean; showGoal?: boolean; showDate: boolean; compact?: boolean }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { data: me } = useMe();
+  const canAct = isMe && active && Boolean(t.topicId);
+  const inv = [...INVALIDATE, ['subtopics']];
+  const tickPart = useAction(() => api.patch<{ topic: TopicChange }>(`/subtopics/${t.subtopicId}`, { done: !t.done }), { invalidate: inv, onSuccess: (r) => announce(r.topic) });
+  const complete = useAction(() => api.post(`/topics/${t.topicId}/complete`), {
+    invalidate: inv,
+    onSuccess: () => {
+      const room = qc.getQueriesData<RoomDetail>({ queryKey: ['room'] }).find(([, r]) => r?.tasks?.some((x) => x.topicId === t.topicId))?.[1];
+      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, t.topicId!) });
+      else toast('Done 🌼', 'success');
+    },
+  });
+  const undo = useAction(() => api.post(`/topics/${t.topicId}/reopen`, { mode: 'undo' }), { invalidate: inv });
+  const busy = tickPart.isPending || complete.isPending || undo.isPending;
+  const name = t.subtopicTitle ?? t.title;
+  const tick = () => (t.subtopicId ? tickPart.mutate(undefined) : t.done ? confirm('Mark this as not done?') && undo.mutate(undefined) : complete.mutate(undefined));
+  const meta = [
+    showDate && t.date ? (t.date < today && !t.done ? `was ${dayLabel(t.date, today)}` : dayLabel(t.date, today)) : '',
+    // In Today because of what you did, not because it was planned for today.
+    t.activeToday && t.date !== today ? (t.done ? 'done today' : 'studied today') : '',
+    showGoal && t.planTitle ? t.planTitle : '',
+    t.estMinutes ? `~${formatMinutes(t.estMinutes)}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="task-entry">
+      <div className={`task-row${t.done ? ' done' : ''}${compact ? ' compact' : ''}`}>
+        <button className="task-check" disabled={!canAct || busy} onClick={tick} aria-label={t.done ? `${name} is done. Mark as not done` : `Mark ${name} done`} aria-pressed={t.done}>
+          {t.done && <CheckIcon width={15} />}
+        </button>
+        <div className="grow" style={{ minWidth: 0 }}>
+          {t.subtopicId && <div className="tiny muted part-of">{t.title} ›</div>}
+          <div className="task-title">{name}</div>
+          {meta && <div className="tiny muted">{meta}</div>}
+        </div>
+        {canAct && !t.done && (
+          <button className={`btn small${compact ? ' icon' : ''}`} onClick={() => navigate(`/study?topic=${t.topicId}${t.subtopicId ? `&sub=${t.subtopicId}` : ''}`)} aria-label={`Start ${name}`}>
+            <PlayIcon />
+            {!compact && <span className="hide-narrow">Start</span>}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -196,6 +196,9 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   /** Which of these topics their owner studied, ticked a part of, or completed today. */
   const activeToday = async (topicIds: string[]) => new Set(topicIds.length ? await rpc<string[]>('active_today', { p_topics: topicIds }) : []);
 
+  /** Which subtopics of these topics their owner studied or ticked today. */
+  const activeParts = async (topicIds: string[]) => new Set(topicIds.length ? await rpc<string[]>('active_parts_today', { p_topics: topicIds }) : []);
+
   /** A topic with subtopics counts as done only while all of them are. */
   const partsOpen = (c: SubtopicCount) => c.total > 0 && c.done < c.total;
 
@@ -328,7 +331,7 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
   // ───────────── goals (plans) ─────────────
 
   /** Tasks with done state and time. `timeFor` supplies focused time per topic. */
-  const PLAN_TASK_COLUMNS = '*, topics(description, subtopics(done_at), topic_completions(local_date))';
+  const PLAN_TASK_COLUMNS = '*, topics(description, subtopics(id, title, done_at, planned_for, est_minutes, position), topic_completions(local_date))';
 
   async function planTasks(planIds: string[], timeFor: (topicIds: string[]) => Promise<Map<string, number>>, days?: { min: number; max: number }, loaded?: Row[]): Promise<Map<string, PlanTask[]>> {
     const byPlan = new Map<string, PlanTask[]>(planIds.map((id) => [id, []]));
@@ -346,7 +349,12 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
     if (days) query = query.or(`and(day.gte.${days.min},day.lte.${days.max}),and(planned_day.gte.${days.min},planned_day.lte.${days.max})`);
     const list = loaded ?? (await rows(query));
     const topicIds = ids(list.map((t) => t.topic_id));
-    const [time, today] = await Promise.all([topicIds.length ? timeFor(topicIds) : new Map<string, number>(), activeToday(topicIds)]);
+    const [time, today, partsToday] = await Promise.all([
+      topicIds.length ? timeFor(topicIds) : new Map<string, number>(),
+      activeToday(topicIds),
+      activeParts(topicIds),
+    ]);
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const doneOn = new Map(list.filter((t) => t.topics?.topic_completions?.length).map((t) => [t.topic_id, t.topics.topic_completions[0].local_date as string]));
     for (const t of list) {
       const doneDate = t.topic_id ? (doneOn.get(t.topic_id) ?? null) : null;
@@ -356,7 +364,8 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         day: t.day,
         plannedDay: t.planned_day,
         title: t.title,
-        estMinutes: t.est_minutes,
+        // A topic with subtopics takes as long as they do together.
+        estMinutes: (t.topics?.subtopics ?? []).reduce((sum: number, x: Row) => sum + (x.est_minutes ?? 0), 0) || t.est_minutes,
         starred: t.starred,
         topicId: t.topic_id,
         done: doneDate !== null && !partsOpen(parts),
@@ -365,6 +374,9 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         description: t.topics?.description ?? '',
         parts,
         activeToday: Boolean(t.topic_id && today.has(t.topic_id)),
+        partList: [...(t.topics?.subtopics ?? [])]
+          .sort((a: Row, b: Row) => a.position - b.position)
+          .map((s: Row) => ({ id: s.id, title: s.title, date: s.planned_for, estMinutes: s.est_minutes, doneDate: s.done_at === null ? null : localDate(s.done_at, tz), activeToday: partsToday.has(s.id) })),
       });
     }
     return byPlan;
@@ -901,8 +913,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { ok: true };
       case 'GET /topics/:id/subtopics':
         return { subtopics: await rpc('topic_subtopics', { p_topic: p[0] }) };
-      case 'POST /topics/:id/subtopics':
-        return { id: await rpc('add_subtopic', { p_topic: p[0], p_title: parse(v.subtopicCreateSchema, body).title }) };
+      case 'POST /topics/:id/subtopics': {
+        const input = parse(v.subtopicCreateSchema, body);
+        return { id: await rpc('add_subtopic', { p_topic: p[0], p_title: input.title, p_date: input.date ?? null, p_est: input.estMinutes ?? null }) };
+      }
       case 'PATCH /subtopics/:id':
         return rpc('update_subtopic', { p_id: p[0], p_patch: parse(v.subtopicUpdateSchema, body) });
       case 'DELETE /subtopics/:id':
@@ -977,7 +991,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { moved: await rpc('merge_goal', { p_from: p[0], p_into: parse(v.goalMergeSchema, body).into }) };
       case 'POST /plans/:id/goal-tasks': {
         const input = parse(v.goalTaskCreateSchema, body);
-        return { id: await rpc('add_goal_task', { p_plan: p[0], p_date: input.date, p_title: input.title, p_est: input.estMinutes ?? null }) };
+        const id = await rpc<string>('add_goal_task', { p_plan: p[0], p_date: input.date, p_title: input.title, p_est: input.estMinutes ?? null });
+        // Its topic too, so subtopics can be added straight away.
+        const topicId = ((await rows(sb.from('plan_tasks').select('topic_id').eq('id', id)))[0]?.topic_id as string | undefined) ?? null;
+        return { id, topicId };
       }
       case 'POST /rooms/:id/tasks': {
         const input = parse(v.goalTaskCreateSchema, body);

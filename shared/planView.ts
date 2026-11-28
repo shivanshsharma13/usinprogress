@@ -125,7 +125,34 @@ export function goalTasks(plan: PlanRow, tasks: PlanTask[]): GoalTask[] {
     description: t.description,
     parts: t.parts,
     activeToday: t.activeToday,
+    partList: t.partList,
   }));
+}
+
+/**
+ * What's planned by day: each subtopic with a day (or worked on today) as "Topic › Subtopic", and topics without
+ * subtopics whole, by their date. Rooms and a goal's Planned list show the same.
+ */
+export function plannedItems(tasks: GoalTask[]): GoalTask[] {
+  return tasks.flatMap((t) => {
+    if (!t.parts?.total) return t.date !== null || t.activeToday ? [t] : [];
+    return (t.partList ?? [])
+      .filter((p) => p.date !== null || p.activeToday)
+      .map((p) => ({
+        ...t,
+        id: `sub:${p.id}`,
+        subtopicId: p.id,
+        subtopicTitle: p.title,
+        date: p.date,
+        done: p.doneDate !== null,
+        doneDate: p.doneDate,
+        activeToday: p.activeToday,
+        estMinutes: p.estMinutes,
+        focusedMs: 0,
+        parts: undefined,
+        partList: undefined,
+      }));
+  });
 }
 
 export function buildPlan(plan: PlanRow, sprints: SprintSpan[], tasks: PlanTask[], today: string): Plan {

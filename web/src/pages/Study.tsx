@@ -18,7 +18,7 @@ import { CamBeforeStart } from '../components/StudyCam';
 import { TodayPlant } from '../components/Garden';
 import { celebrate, plantGrowth } from '../lib/celebrate';
 import { usePref } from '../lib/prefs';
-import { PartsMeter, SubtopicPicker, useSubtopics, useSubtopicsOn } from '../components/Subtopics';
+import { PartsMeter, SubtopicPicker, useSubtopics } from '../components/Subtopics';
 import { FocusZen, useFullFocusOn } from '../components/FocusZen';
 
 interface FinishResult {
@@ -58,11 +58,10 @@ export function StudyPage() {
 // ───────────── Running / paused ─────────────
 
 function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSession; requestedTopic: string | null; onOutcome: (o: Outcome) => void }) {
-  const subtopicsOn = useSubtopicsOn();
-  const { data: subtopics = [] } = useSubtopics(session.topicId, subtopicsOn);
+  const { data: subtopics = [] } = useSubtopics(session.topicId);
   const openParts = subtopics.filter((p) => !p.doneAt);
   // On one part with others still open, "Complete" ticks just that part (the server does the same).
-  const partOnly = subtopicsOn && Boolean(session.subtopicId) && openParts.some((p) => p.id !== session.subtopicId);
+  const partOnly = Boolean(session.subtopicId) && openParts.some((p) => p.id !== session.subtopicId);
   const completeLabel = partOnly ? 'Part done' : 'Complete';
   const fullFocusOn = useFullFocusOn();
   const [zen, setZen] = useState(false);
@@ -145,7 +144,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
   // Completing the whole topic while parts are still open ticks them all, so ask first.
   const completeNow = () => {
     const others = openParts.filter((p) => p.id !== session.subtopicId);
-    if (subtopicsOn && !partOnly && others.length && !confirm(`${others.length} of ${subtopics.length} subtopics aren't done yet. Tick them all and complete “${session.topicTitle}”?`)) return;
+    if (!partOnly && others.length && !confirm(`${others.length} of ${subtopics.length} subtopics aren't done yet. Tick them all and complete “${session.topicTitle}”?`)) return;
     finish.mutate({ completeTopic: true });
   };
 
@@ -186,9 +185,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
 
   return (
     <div className="stack-lg" style={{ maxWidth: 560, margin: '0 auto', width: '100%' }}>
-      <Link to={`/rooms/${session.roomId}`} className="row small muted" style={{ textDecoration: 'none' }}>
-        <ChevronLeft width={18} /> {session.roomName}
-      </Link>
+      <BackButton fallback={`/rooms/${session.roomId}`} label={session.roomName} />
 
       {requestedTopic && (
         <div className="banner" role="status">
@@ -209,7 +206,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           )}
         </div>
         <h1 className="focus-title">{session.topicTitle}</h1>
-        {subtopicsOn && (session.subtopicTitle || subtopics.length > 0) && <SubtopicLine title={session.subtopicTitle} parts={subtopics} />}
+        {(session.subtopicTitle || subtopics.length > 0) && <SubtopicLine title={session.subtopicTitle} parts={subtopics} />}
 
         <div className="timer-ring">
           <span className="halo" aria-hidden="true" />
@@ -295,7 +292,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
       {zen && fullFocusOn && (
         <FocusZen
           title={session.topicTitle}
-          subtitle={subtopicsOn ? session.subtopicTitle : null}
+          subtitle={session.subtopicTitle}
           face={face}
           sub={target ? (reached ? `${formatClock(elapsed)} focused · ${target}m reached` : `of ${target}m · ${formatClock(elapsed)} focused`) : 'focused this session'}
           paused={paused}
@@ -346,6 +343,20 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           <p>This time won't count toward anything. A record stays in your history so nothing disappears silently.</p>
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** Back to where you came from (the room or goal you pressed Start in), or to the fallback when opened directly. */
+function BackButton({ fallback, label }: { fallback: string; label?: string }) {
+  const navigate = useNavigate();
+  const canGoBack = typeof window !== 'undefined' && (window.history.state?.idx ?? 0) > 0;
+  return (
+    <div className="row" style={{ gap: 8 }}>
+      <button className="btn ghost small" onClick={() => (canGoBack ? navigate(-1) : navigate(fallback))}>
+        <ChevronLeft width={18} /> Back
+      </button>
+      {label && <span className="small muted">{label}</span>}
     </div>
   );
 }
@@ -613,10 +624,8 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
     setTargetText(selected?.sessionTargetMinutes ? String(selected.sessionTargetMinutes) : '');
   }, [selected?.id]);
   // Subtopics: which part of the topic (?sub= when you pressed ▶ on one).
-  const subtopicsOn = useSubtopicsOn();
   const [subtopicId, setSubtopicId] = useState<string | null>(params.get('sub'));
   useEffect(() => setSubtopicId(params.get('sub')), [topicId]);
-  const sub = subtopicsOn ? subtopicId : null;
 
   const start = useAction(
     () =>
@@ -627,13 +636,13 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
               topicId: selected!.id,
               targetMinutes: targetText ? Math.round(Number(targetText)) : null,
             })
-            .then((r) => (sub ? api.post<{ session: ActiveSession }>(`/sessions/${r.session.id}/subtopic`, { subtopicId: sub }) : r))
+            .then((r) => (subtopicId ? api.post<{ session: ActiveSession }>(`/sessions/${r.session.id}/subtopic`, { subtopicId }) : r))
         : api.post<{ session: ActiveSession }>('/sessions', {
             topicId: selected!.id,
             targetMinutes: targetText ? Math.round(Number(targetText)) : null,
             remindAfterHour: remind,
             taskId,
-            subtopicId: sub,
+            subtopicId,
           }),
     {
       invalidate: [['session'], ['room', roomId ?? ''], ['rooms']],
@@ -671,6 +680,7 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
 
   return (
     <div className="stack-lg" style={{ maxWidth: 640, margin: '0 auto' }}>
+      <BackButton fallback="/" />
       <div className="page-head" style={{ marginBottom: 0 }}>
         <div>
           <h1>Study</h1>
@@ -736,7 +746,7 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
             <span className="chip c">{statusLabel(myProgress?.status)}</span>
           </div>
           {selected.description && <p className="small muted">{selected.description}</p>}
-          {subtopicsOn && <SubtopicPicker topicId={selected.id} value={subtopicId} onChange={setSubtopicId} />}
+          <SubtopicPicker topicId={selected.id} value={subtopicId} onChange={setSubtopicId} />
           <div className="grid-3" style={{ gap: 10 }}>
             <Stat label="Estimated to finish" value={selected.estimatedMinutes ? formatMinutes(selected.estimatedMinutes) : '—'} />
             <Stat label="Time spent so far" value={fmt(myProgress?.focusedMs ?? 0)} />

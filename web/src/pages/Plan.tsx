@@ -6,7 +6,8 @@ import type { Plan, PlanSummary } from '@shared/types';
 import { useAction, useMe, usePlan, usePlans, useRooms } from '../lib/queries';
 import { api } from '../lib/api';
 import { ErrorNote, Field, fmt, Menu, Modal, ProgressBar, Spinner } from '../components/ui';
-import { AddTaskBox, TaskList } from '../components/GoalTasks';
+import { AddTopicBox, TaskList, TopicList } from '../components/GoalTasks';
+import { plannedItems } from '@shared/planView';
 import { percent } from '../components/PlanBits';
 
 export function PlanPage() {
@@ -20,6 +21,7 @@ export function PlanPage() {
   if (isLoading || !me) return <Spinner />;
   if (error || !plan) return <ErrorNote error={error} retry={refetch} />;
   const active = plan.status === 'active';
+  const planned = plannedItems(plan.tasks);
 
   return (
     <div className="stack-lg" style={{ maxWidth: 720, margin: '0 auto', width: '100%' }}>
@@ -32,7 +34,7 @@ export function PlanPage() {
           <p className="small muted" style={{ margin: 0 }}>
             {plan.roomId ? (
               <>
-                In <Link to={`/rooms/${plan.roomId}`}>{plan.roomName}</Link> · {plan.done} of {plan.total} done · {fmt(plan.focusedMs)} spent
+                In <Link to={`/rooms/${plan.roomId}`}>{plan.roomName}</Link> · {plan.done} of {plan.total} topics done · {fmt(plan.focusedMs)} spent
               </>
             ) : (
               'Not in a room yet'
@@ -59,15 +61,32 @@ export function PlanPage() {
           </button>
         </div>
       )}
-      {active && plan.roomId && <AddTaskBox planId={plan.id} today={me.today} existing={plan.tasks} />}
+      {active && plan.roomId && <AddTopicBox planId={plan.id} existing={plan.tasks} />}
 
-      <TaskList
-        tasks={plan.tasks}
-        today={me.today}
-        isMe
-        active={active && Boolean(plan.roomId)}
-        empty={<p className="small muted">No tasks yet. Add your first one above — pick Today, Tomorrow or any day.</p>}
-      />
+      {plan.tasks.length ? (
+        <TopicList tasks={plan.tasks} today={me.today} active={active && Boolean(plan.roomId)} />
+      ) : (
+        <p className="small muted">No topics yet. Add your first one above, then open it to add subtopics.</p>
+      )}
+
+      {/* The same list as the room (what's planned by day), folded away at the end. */}
+      <details className="card planned-card">
+        <summary className="row between">
+          <h2>Planned</h2>
+          <span className="small muted">
+            {planned.filter((t) => !t.done && t.date === me.today).length} today · {planned.filter((t) => !t.done && t.date !== null && t.date > me.today).length} coming up
+          </span>
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          <TaskList
+            tasks={planned}
+            today={me.today}
+            isMe
+            active={active && Boolean(plan.roomId)}
+            empty={<p className="small muted">Nothing planned yet. Open a topic above and give its subtopics a day; they show here and in {plan.roomName ?? 'the room'}.</p>}
+          />
+        </div>
+      </details>
 
       {dialog === 'rename' && <RenameModal plan={plan} onClose={() => setDialog(null)} />}
       {dialog === 'room' && <RoomModal plan={plan} onClose={() => setDialog(null)} />}

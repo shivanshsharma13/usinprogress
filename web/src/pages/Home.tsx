@@ -112,15 +112,15 @@ export function HomePage() {
               <Empty
                 title="Let's start small."
                 action={
-                  <Link className="btn primary big" to={friend ? (rooms.length ? `/rooms/${rooms[0].id}?add=1` : '/rooms?new=1') : '/friends'}>
-                    {friend ? (rooms.length ? 'Add a task for today' : 'Create a room together') : 'Find your friend'}
+                  <Link className="btn primary big" to={friend ? (rooms.length ? '/goals' : '/rooms?new=1') : '/friends'}>
+                    {friend ? (rooms.length ? 'Plan today in your goals' : 'Create a room together') : 'Find your friend'}
                   </Link>
                 }
               >
                 {friend
                   ? nothingYet
-                    ? rooms.length ? `Add a task for today, then press start. We'll keep track of the rest.` : `Create a room with ${friend.user.displayName}, add a task, and press start. We'll keep track of the rest.`
-                    : 'Everything is done for now. Add another task for today, or plan one for tomorrow.'
+                    ? rooms.length ? `Add topics and subtopics to a goal, give them a day, then press start. We'll keep track of the rest.` : `Create a room with ${friend.user.displayName}, add a task, and press start. We'll keep track of the rest.`
+                    : 'Everything is done for now. Plan another subtopic for today, or one for tomorrow.'
                   : 'Us in Progress is better together. Find your friend by their username to begin.'}
               </Empty>
             </div>
