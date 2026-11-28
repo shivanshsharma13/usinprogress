@@ -16,7 +16,7 @@ import { PhotoNudge } from './PhotoCheers';
 import { CamHost } from './StudyCam';
 import { refreshPush } from '../lib/push';
 import { notify } from '../lib/notifications';
-import { CalendarIcon, ChartIcon, FriendsIcon, GoalIcon, HomeIcon, MoonIcon, PauseIcon, PlayIcon, RoomIcon, SunIcon } from './icons';
+import { ChartIcon, FriendsIcon, GoalIcon, HomeIcon, MoonIcon, PauseIcon, PlayIcon, RoomIcon, SunIcon } from './icons';
 
 // Served under a sub-path on GitHub Pages, so public files are addressed from the base URL.
 const LOGO = `${import.meta.env.BASE_URL}favicon.svg`;
@@ -24,7 +24,6 @@ const LOGO = `${import.meta.env.BASE_URL}favicon.svg`;
 const NAV = [
   { to: '/', label: 'Home', icon: HomeIcon, end: true },
   { to: '/goals', label: 'Goals', icon: GoalIcon },
-  { to: '/calendar', label: 'Calendar', icon: CalendarIcon },
   { to: '/rooms', label: 'Rooms', icon: RoomIcon },
   { to: '/friends', label: 'Friends', icon: FriendsIcon },
 ];

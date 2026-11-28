@@ -35,7 +35,6 @@ await time('GET /plans', () => api.request('GET', '/plans'));
 await time('GET /plans/:id', () => api.request('GET', `/plans/${plans[0].id}`));
 await time('GET /friends', () => api.request('GET', '/friends'));
 await time('GET /friends/:id', () => api.request('GET', `/friends/${friends[0].user.id}`));
-await time('GET /tasks (month)', () => api.request('GET', '/tasks?from=2026-10-01&to=2026-10-31'));
 await time('GET /progress', () => api.request('GET', '/progress'));
 await time('GET /activity', () => api.request('GET', '/activity'));
 await time('GET /sessions/active', () => api.request('GET', '/sessions/active'));

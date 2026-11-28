@@ -103,7 +103,6 @@ export interface ActiveSession {
   targetMinutes: number | null;
   remindAfterHour: boolean;
   isRevision: boolean;
-  taskId: string | null;
   togetherId?: string | null; // studying together with a friend (see Together)
   subtopicId?: string | null; // the part of the topic this session is on (Subtopics)
   subtopicTitle?: string | null;
@@ -244,7 +243,6 @@ export interface RoomDetail extends RoomSummary {
   topics: Topic[];
   archivedTopics: Topic[];
   activity: Activity[];
-  sprints: RoomSprint[]; // both members' sprints pulled into this room
   forest: Record<string, number>; // per member: days they finished everything planned in this room
   blooms: number; // weekly challenges the two members won together (golden sunflowers)
   goals: GoalRef[]; // both members' goals in this room
@@ -374,59 +372,6 @@ export interface Plan extends PlanSummary {
   tasks: GoalTask[]; // every task, with its date
 }
 
-/** A goal task on a calendar day: yours, or your friend's from a sprint pulled into a shared room. */
-export interface CalendarPlanItem {
-  id: string; // plan task id
-  planId: string;
-  planTitle: string;
-  sprintNumber: number;
-  ownerId: string;
-  title: string;
-  date: string;
-  estMinutes: number | null;
-  done: boolean;
-  topicId: string | null;
-  roomId: string | null; // the room its sprint is pulled into, if any
-  roomName: string | null;
-}
-
-/** A sprint's span, for marking it on the calendar. */
-export interface SprintMark {
-  planId: string;
-  planTitle: string;
-  ownerId: string;
-  number: number;
-  startDate: string;
-  endDate: string;
-  roomName: string | null;
-}
-
-/** A pulled sprint as shown in a room, for either member. */
-export interface RoomSprint extends PlanSprint {
-  planId: string;
-  planTitle: string;
-  ownerId: string;
-}
-
-export interface Task {
-  id: string;
-  ownerId: string;
-  title: string;
-  description: string;
-  date: string | null; // null = not scheduled on the calendar
-  startTime: string | null;
-  durationMinutes: number | null;
-  roomId: string | null;
-  roomName: string | null;
-  topicId: string | null;
-  topicTitle: string | null;
-  shared: boolean;
-  note: string; // empty for other people
-  completed: boolean;
-  completedAt: number | null;
-  status: 'active' | 'archived';
-}
-
 export interface Activity {
   id: string;
   type: 'reaction' | 'message' | 'topic_completed' | 'room_created' | 'friend_accepted' | 'topic_added' | 'challenge_set' | 'challenge_won' | 'together_joined' | 'day_finished';
@@ -446,7 +391,6 @@ export interface ProgressStats {
   todayMs: number;
   weekMs: number;
   completedTopics: number;
-  completedTasks: number;
   sessions: number;
   daily: { date: string; ms: number }[]; // last 7 days
 }
@@ -475,15 +419,15 @@ export interface HoursReport {
 export interface HomeData {
   me: Me;
   activeSession: ActiveSession | null;
+  // What to study now: the first thing planned for today in your goals, or the next topic in a room.
   primary:
-    | { kind: 'task'; task: Task }
+    | { kind: 'item'; item: GoalTask }
     | { kind: 'topic'; roomId: string; roomName: string; topicId: string; topicTitle: string }
     | null;
   friends: Friend[];
-  today: { focusedMs: number; completedTopics: CompletionSummary[]; completedTasks: number };
+  today: { focusedMs: number; completedTopics: CompletionSummary[]; partsDone: number };
   plans: PlanSummary[];
   rooms: RoomSummary[];
-  upcoming: Task[];
-  plannedTasks: CalendarPlanItem[]; // your open goal tasks from today on
+  comingUp: GoalTask[]; // open planned items from today on, soonest first
   unread: number;
 }

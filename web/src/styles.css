@@ -114,7 +114,7 @@ p { margin: 0; }
     backdrop-filter: blur(8px); border-bottom: 1px solid var(--border);
   }
   .bottom-nav {
-    display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+    display: grid; grid-template-columns: repeat(4, 1fr); position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
     background: var(--surface); border-top: 1px solid var(--border); padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
   }
   .bottom-nav a {

@@ -111,7 +111,7 @@ test('only accepted friends can create private rooms; rooms have exactly two mem
   await assert.rejects(srv.db.query('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)', [roomId, c.id, Date.now()]), /ROOM_FULL/);
 });
 
-test('each member adds, edits and reorders their own topics; the partner can only see them', async () => {
+test('each member adds and edits their own topics; the partner can only see them', async () => {
   for (const [title, est] of [
     ['Arrays', 120],
     ['Binary Search', 180],
@@ -125,22 +125,18 @@ test('each member adds, edits and reorders their own topics; the partner can onl
   for (const title of ['Enzyme kinetics', 'Carbohydrate metabolism']) bTopics.push((await B.post(`/rooms/${roomId}/topics`, { title })).body.id);
 
   assert.equal((await A.patch(`/topics/${topics[0]}`, { title: 'Arrays & Strings' })).status, 200);
-  assert.equal((await A.put(`/rooms/${roomId}/topics/order`, { topicIds: [topics[0], topics[1], topics[3], topics[2]] })).status, 200);
   const room = (await B.get(`/rooms/${roomId}`)).body;
   const aTitles = room.topics.filter((t: any) => t.createdBy === a.id).map((t: any) => t.title);
-  assert.deepEqual(aTitles, ['Arrays & Strings', 'Binary Search', 'Trees', 'Linked Lists']);
+  assert.deepEqual(aTitles, ['Arrays & Strings', 'Binary Search', 'Linked Lists', 'Trees']);
   assert.equal(room.topics.find((t: any) => t.id === topics[0]).estimatedMinutes, 120);
-  await A.put(`/rooms/${roomId}/topics/order`, { topicIds: topics });
 
-  // The partner can see A's topics but cannot edit, reorder, archive, complete or study them.
+  // The partner can see A's topics but cannot edit, archive, complete or study them.
   assert.equal((await B.patch(`/topics/${topics[0]}`, { title: 'Hijacked' })).status, 403);
-  assert.equal((await B.put(`/rooms/${roomId}/topics/order`, { topicIds: topics })).status, 400);
   assert.equal((await B.del(`/topics/${topics[0]}`)).status, 403);
   assert.equal((await B.post(`/topics/${topics[0]}/complete`)).status, 403);
   assert.equal((await B.post(`/topics/${topics[0]}/reopen`, { mode: 'revise' })).status, 403);
   assert.equal((await B.post('/sessions', { topicId: topics[0] })).status, 403);
   assert.equal((await A.post('/sessions', { topicId: bTopics[0] })).status, 403);
-  assert.equal((await B.post('/tasks', { title: 'x', date: today, topicId: topics[0] })).status, 400);
   assert.equal((await A.get(`/rooms/${roomId}`)).body.topics.find((t: any) => t.id === topics[0]).title, 'Arrays & Strings');
 });
 
@@ -334,200 +330,6 @@ test('reconnecting replays nothing: realtime events only invalidate, state comes
 
 // ───────────── Goals ─────────────
 
-test('a goal starts with one sprint; sprints are added, resized and removed as needed', async () => {
-  // Started 3 days ago with 4-day sprints: day 0..2 are past, day 3 (end of sprint 1) is today.
-  const res = await A.post('/plans', { title: 'GTFO 2026', startDate: addDays(today, -3), sprintDays: 4 });
-  assert.equal(res.status, 201);
-  const planId = res.body.id;
-  const get = async () => (await A.get(`/plans/${planId}`)).body.plan;
-  let plan = await get();
-  assert.equal(plan.sprintCount, 1);
-  assert.equal(plan.endDate, today);
-
-  const add = async (day: number | null, title: string, estMinutes = 20) => A.post(`/plans/${planId}/tasks`, { day, title, estMinutes });
-  for (const [day, title] of [[0, 'Set Matrix Zeroes'], [0, 'Pascal’s Triangle'], [1, 'Kadane'], [3, 'Next Permutation'], [3, 'Majority Element II']] as const) {
-    assert.equal((await add(day, title)).status, 201);
-  }
-  assert.equal((await add(5, 'Two Sum')).status, 400); // no sprint 2 yet
-
-  // Add a sprint of a different length when you need it.
-  assert.equal((await A.post(`/plans/${planId}/sprints`, { days: 3 })).body.number, 2);
-  assert.equal((await add(5, 'Two Sum')).status, 201);
-  plan = await get();
-  assert.deepEqual(plan.sprints.map((s: any) => s.length), [4, 3]);
-  assert.equal(plan.endDate, addDays(today, 3));
-  assert.deepEqual(plan.sprints[0].days.map((d: any) => d.status), ['missed', 'missed', 'rest', 'today']);
-  // Unfinished tasks on past days are the backlog.
-  assert.equal(plan.backlog, 3);
-  assert.deepEqual(plan.backlogTasks.map((t: any) => t.title), ['Set Matrix Zeroes', 'Pascal’s Triangle', 'Kadane']);
-
-  // Lengthening sprint 1 pushes sprint 2 (and its tasks) back; shortening brings them forward.
-  await A.patch(`/plans/${planId}/sprints/1`, { days: 5 });
-  plan = await get();
-  assert.equal(plan.sprints[1].startDate, addDays(today, 2));
-  assert.equal(plan.sprints[1].days[1].tasks[0].title, 'Two Sum');
-  await A.patch(`/plans/${planId}/sprints/1`, { days: 4 });
-  assert.equal((await get()).sprints[1].days[1].tasks[0].title, 'Two Sum');
-  assert.equal((await A.patch(`/plans/${planId}/sprints/1`, { days: 2 })).status, 400); // would cut days with tasks
-
-  // Only the last, empty sprint can be removed.
-  assert.equal((await A.del(`/plans/${planId}/sprints/1`)).status, 400);
-  assert.equal((await A.del(`/plans/${planId}/sprints/2`)).status, 400);
-  await A.post(`/plans/${planId}/sprints`, {});
-  assert.equal((await get()).sprints[2].length, 4);
-  assert.equal((await A.del(`/plans/${planId}/sprints/3`)).status, 200);
-  assert.equal((await get()).sprintCount, 2);
-});
-
-test('pulled sprints: study in the room, backlog stays out until you schedule it, and sprints can leave the room', async () => {
-  const planId = (await A.get('/plans')).body.plans.find((p: any) => p.title === 'GTFO 2026').id;
-  const get = async () => (await A.get(`/plans/${planId}`)).body.plan;
-  assert.equal((await B.get(`/plans/${planId}`)).status, 404);
-  assert.equal((await B.post(`/plans/${planId}/sprints/1/pull`, { roomId })).status, 404);
-
-  assert.equal((await A.post(`/plans/${planId}/sprints/1/pull`, { roomId })).status, 200);
-  let plan = await get();
-  const [s1] = plan.sprints;
-  const todays = s1.days[3].tasks;
-  const backlogTask = plan.backlogTasks[0];
-  assert.ok(todays.every((t: any) => t.topicId));
-
-  // The partner sees the sprint in the room, read-only.
-  let room = (await B.get(`/rooms/${roomId}`)).body;
-  assert.equal(room.sprints.find((sp: any) => sp.planId === planId).ownerId, a.id);
-  assert.equal((await B.post(`/topics/${todays[0].topicId}/complete`)).status, 403);
-
-  // "Study next" is today's first task — never a backlog task.
-  room = (await A.get(`/rooms/${roomId}`)).body;
-  assert.equal(room.nextTopic.id, todays[0].topicId);
-  assert.ok(room.topics.find((t: any) => t.id === todays[0].topicId).planTaskId);
-  const s = (await A.post('/sessions', { topicId: todays[0].topicId })).body.session;
-  assert.equal((await A.post(`/sessions/${s.id}/finish`, { completeTopic: true })).body.nextTopic.id, todays[1].topicId);
-
-  // You decide when a backlog task comes back: schedule it for today. Its old day keeps its history.
-  await A.patch(`/plan-tasks/${backlogTask.id}`, { day: 3 });
-  plan = await get();
-  assert.equal(plan.backlog, 2);
-  assert.ok(plan.sprints[0].days[3].tasks.some((t: any) => t.id === backlogTask.id));
-  assert.equal(plan.sprints[0].days[0].status, 'missed');
-  const moved = plan.sprints[0].days[3].tasks.find((t: any) => t.id === backlogTask.id);
-  assert.equal(moved.plannedDay, 0);
-  await A.post(`/topics/${moved.topicId}/complete`);
-  assert.equal((await get()).sprints[0].days[0].status, 'missed'); // done, but not on its day
-
-  // A task done on its own day counts for that day.
-  const other = plan.backlogTasks.find((t: any) => t.title === 'Pascal’s Triangle');
-  await A.patch(`/plan-tasks/${other.id}`, { day: 3 });
-  const otherTopic = (await get()).sprints[0].days[3].tasks.find((t: any) => t.id === other.id).topicId;
-  await A.post(`/topics/${otherTopic}/complete`);
-  await srv.db.query('UPDATE topic_completions SET local_date = ? WHERE topic_id = ?', [addDays(today, -3), otherTopic]);
-  assert.equal((await get()).sprints[0].days[0].status, 'partial');
-
-  // Parking today's task in the backlog takes it out of the room.
-  await A.patch(`/plan-tasks/${todays[1].id}`, { day: null });
-  room = (await A.get(`/rooms/${roomId}`)).body;
-  const roomToday = room.sprints.find((sp: any) => sp.planId === planId).days[3].tasks.map((t: any) => t.id);
-  assert.ok(!roomToday.includes(todays[1].id));
-  assert.notEqual(room.nextTopic?.id, todays[1].topicId);
-
-  // Take the sprint out of the room: its topics are archived; pull it back and they return, still done.
-  const doneBefore = (await get()).done;
-  await A.post(`/plans/${planId}/sprints/1/unpull`);
-  room = (await A.get(`/rooms/${roomId}`)).body;
-  assert.ok(!room.sprints.some((sp: any) => sp.planId === planId));
-  assert.ok(room.archivedTopics.some((t: any) => t.id === todays[0].topicId));
-  assert.equal((await get()).sprints[0].roomId, null);
-  await A.post(`/plans/${planId}/sprints/1/pull`, { roomId });
-  room = (await A.get(`/rooms/${roomId}`)).body;
-  assert.ok(room.topics.some((t: any) => t.id === todays[0].topicId));
-  assert.equal((await get()).done, doneBefore);
-
-  // Sprints can live in different rooms; moving a task between them moves its topic.
-  await A.post(`/plans/${planId}/sprints/2/pull`, { roomId: room2Id });
-  await A.patch(`/plan-tasks/${todays[0].id}`, { day: 5 });
-  assert.ok((await A.get(`/rooms/${room2Id}`)).body.topics.some((t: any) => t.id === todays[0].topicId));
-
-  // Editing on the plan keeps the room topic in step; removing a task keeps its history.
-  const extra = (await A.post(`/plans/${planId}/tasks`, { day: 3, title: 'Count Inversions', estMinutes: 23 })).body.id;
-  await A.patch(`/plan-tasks/${extra}`, { title: 'Count Inversions (merge sort)', starred: true });
-  const task = (await get()).sprints[0].days[3].tasks.find((t: any) => t.id === extra);
-  assert.equal(task.starred, true);
-  assert.equal((await A.get(`/rooms/${roomId}`)).body.topics.find((t: any) => t.id === task.topicId).title, 'Count Inversions (merge sort)');
-  await A.del(`/plan-tasks/${extra}`);
-  assert.ok((await A.get(`/rooms/${roomId}`)).body.archivedTopics.some((t: any) => t.id === task.topicId));
-
-  // Review & complete takes the sprint out of the room view.
-  await A.post(`/plans/${planId}/sprints/1/complete`);
-  assert.ok(!(await A.get(`/rooms/${roomId}`)).body.sprints.some((sp: any) => sp.planId === planId));
-  assert.equal((await A.get('/plans')).body.plans.find((p: any) => p.id === planId).sprintsCompleted, 1);
-});
-
-// ───────────── Calendar ─────────────
-
-test('the calendar and home show goal tasks; a friend sees only sprints pulled into a shared room', async () => {
-  const planId = (await A.post('/plans', { title: 'Calendar plan', startDate: today, sprintDays: 3 })).body.id;
-  await A.post(`/plans/${planId}/tasks`, { day: 0, title: 'Heaps today', estMinutes: 30 });
-  await A.post(`/plans/${planId}/tasks`, { day: 2, title: 'Tries later', estMinutes: 40 });
-  await A.post(`/plans/${planId}/tasks`, { day: null, title: 'Parked idea' });
-  const range = `from=${today}&to=${addDays(today, 7)}`;
-
-  let mine = (await A.get(`/tasks?${range}`)).body;
-  const titles = mine.planItems.filter((i: any) => i.planId === planId).map((i: any) => [i.title, i.date]);
-  assert.deepEqual(titles, [['Heaps today', today], ['Tries later', addDays(today, 2)]]); // backlog isn't on the calendar
-  assert.ok(mine.sprints.some((s: any) => s.planId === planId && s.number === 1 && s.startDate === today));
-  const home = (await A.get('/home')).body;
-  assert.ok(home.plannedTasks.some((t: any) => t.title === 'Heaps today'));
-
-  // Not pulled into a room yet: the friend sees nothing.
-  let theirs = (await B.get(`/tasks?${range}`)).body;
-  assert.ok(!theirs.planItems.some((i: any) => i.planId === planId));
-  await A.post(`/plans/${planId}/sprints/1/pull`, { roomId });
-  theirs = (await B.get(`/tasks?${range}`)).body;
-  const seen = theirs.planItems.filter((i: any) => i.planId === planId);
-  assert.equal(seen.length, 2);
-  assert.equal(seen[0].ownerId, a.id);
-  assert.equal(seen[0].topicId, null); // nothing to act on
-  assert.equal(seen[0].roomId, roomId);
-  assert.equal((await C.get(`/tasks?${range}`)).body.planItems.length, 0);
-
-  // Finishing it updates the calendar and drops it from "Coming up".
-  mine = (await A.get(`/tasks?${range}`)).body;
-  const heaps = mine.planItems.find((i: any) => i.title === 'Heaps today');
-  const s = (await A.post('/sessions', { topicId: heaps.topicId })).body.session;
-  // The session length can change mid-session.
-  assert.equal((await A.patch(`/sessions/${s.id}`, { targetMinutes: 25 })).status, 200);
-  assert.equal((await A.get('/sessions/active')).body.session.targetMinutes, 25);
-  await A.post(`/sessions/${s.id}/finish`, { completeTopic: true });
-  assert.equal((await A.get(`/tasks?${range}`)).body.planItems.find((i: any) => i.id === heaps.id).done, true);
-  assert.ok(!(await A.get('/home')).body.plannedTasks.some((t: any) => t.id === heaps.id));
-});
-
-test('calendar: shared items are visible to the partner, private ones and notes are not; moving keeps sessions', async () => {
-  const shared = (await A.post('/tasks', { title: 'Graphs practice', date: addDays(today, 1), roomId, topicId: topics[3], shared: true, note: 'my private note' })).body.task;
-  const privateTask = (await A.post('/tasks', { title: 'Dentist', date: addDays(today, 1) })).body.task;
-
-  const bView = (await B.get(`/tasks?from=${today}&to=${addDays(today, 7)}`)).body.tasks;
-  const seen = bView.find((t: any) => t.id === shared.id);
-  assert.ok(seen);
-  assert.equal(seen.note, '');
-  assert.equal(seen.ownerId, a.id);
-  assert.ok(!bView.some((t: any) => t.id === privateTask.id));
-  assert.equal((await C.get(`/tasks?from=${today}&to=${addDays(today, 7)}`)).body.tasks.length, 0);
-
-  // B can't edit or complete A's task.
-  assert.equal((await B.patch(`/tasks/${shared.id}`, { completed: true })).status, 404);
-
-  // Start studying from the scheduled topic, then move the task: the session survives.
-  const s = (await A.post('/sessions', { topicId: topics[3], taskId: shared.id })).body.session;
-  await A.post(`/sessions/${s.id}/finish`, {});
-  const moved = await A.patch(`/tasks/${shared.id}`, { date: addDays(today, 3) });
-  assert.equal(moved.body.task.date, addDays(today, 3));
-  const sessions = (await A.get('/sessions')).body.sessions;
-  assert.ok(sessions.some((x: any) => x.id === s.id && x.state === 'finished'));
-});
-
-// ───────────── Privacy, history, encouragement ─────────────
-
 test('archiving a topic keeps its history and sessions', async () => {
   const before = (await A.get('/sessions')).body.sessions.filter((s: any) => s.topicId === topics[3]).length;
   assert.equal((await B.del(`/topics/${topics[3]}`)).status, 403);
@@ -588,7 +390,7 @@ test('failed writes are reported accurately', async () => {
   assert.equal(bad.status, 400);
   assert.equal(bad.body.error.code, 'VALIDATION');
   const before = (await A.get(`/rooms/${roomId}`)).body.topics.length;
-  assert.equal((await A.put(`/rooms/${roomId}/topics/order`, { topicIds: [topics[0], crypto.randomUUID()] })).status, 400);
+  assert.equal((await A.patch(`/topics/${crypto.randomUUID()}`, { title: 'Nowhere' })).status, 404);
   assert.equal((await A.get(`/rooms/${roomId}`)).body.topics.length, before);
   // Writing to tables directly (bypassing the checked functions) is refused by the database.
   const direct = await A.sb.from('topic_completions').insert({ topic_id: topics[1], user_id: a.id, kind: 'first', completed_at: 0, local_date: today });
@@ -647,25 +449,30 @@ test('a forgotten password is reset through the emailed link', async () => {
   assert.equal((await new Client(srv.base).put('/auth/password', { password: 'whatever123', confirm: 'whatever123' })).status, 401);
 });
 
-test('the room forest grows a tree for each day everything planned was finished', async () => {
-  const planId = (await A.post('/plans', { title: 'Forest check', startDate: today, sprintDays: 3 })).body.id;
-  for (const title of ['Tree one', 'Tree two']) await A.post(`/plans/${planId}/tasks`, { day: 0, title });
-  assert.equal((await A.post(`/plans/${planId}/sprints/1/pull`, { roomId })).status, 200);
+test('the room forest grows a tree for each day everything planned was finished, subtopics included', async () => {
+  const add = async (title: string) => (await A.post(`/rooms/${roomId}/tasks`, { title, date: today })).body.id as string;
+  const [one, two] = [await add('Tree one'), await add('Tree two')];
+  const topicOf = async (id: string) => (await A.get(`/rooms/${roomId}`)).body.tasks.find((t: any) => t.id === id).topicId as string;
   const forest = async (who: Client) => (await who.get(`/rooms/${roomId}`)).body.forest?.[a.id] ?? 0;
   const before = await forest(A);
 
-  const todays = (await A.get(`/plans/${planId}`)).body.plan.sprints[0].days[0].tasks;
-  await A.post(`/topics/${todays[0].topicId}/complete`);
+  await A.post(`/topics/${await topicOf(one)}/complete`);
   assert.equal(await forest(A), before, 'half of today is not a full day yet');
-  await A.post(`/topics/${todays[1].topicId}/complete`);
+  await A.post(`/topics/${await topicOf(two)}/complete`);
   assert.equal(await forest(A), before + 1, 'finishing today plants a tree');
   assert.equal(await forest(B), before + 1, 'the room partner sees the same count');
+
+  // A subtopic planned for today counts too: the day is full again only once it's ticked.
+  const three = await add('Tree three');
+  const part = (await A.post(`/topics/${await topicOf(three)}/subtopics`, { title: 'Roots', date: today })).body.id;
+  assert.equal(await forest(A), before, 'an open subtopic today: not a full day');
+  await A.patch(`/subtopics/${part}`, { done: true });
+  assert.equal(await forest(A), before + 1);
 
   // Only room members can count it.
   const { data, error } = await C.sb.rpc('room_forest', { p_room: roomId });
   assert.ok(error || !data.length);
 });
-
 test('the hours report gives daily and per-topic totals to you and your friend only', async () => {
   const from = addDays(today, -6);
   const mine = await A.get(`/progress/hours?userId=${a.id}&from=${from}&to=${today}`);

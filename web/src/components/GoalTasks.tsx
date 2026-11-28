@@ -219,7 +219,7 @@ function TaskRow({ task: t, siblings, today, isMe, active, showGoal, showDate }:
     invalidate: INVALIDATE,
     onSuccess: () => {
       const room = qc.getQueriesData<RoomDetail>({ queryKey: ['room'] }).find(([, r]) => r?.tasks?.some((x) => x.topicId === t.topicId))?.[1];
-      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, t.topicId!) });
+      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, me.today, t.topicId!) });
       else toast('Done 🌼', 'success');
     },
   });
@@ -345,7 +345,7 @@ export function ItemRow({ item: t, today, isMe, active, showGoal, showDate, comp
     invalidate: inv,
     onSuccess: () => {
       const room = qc.getQueriesData<RoomDetail>({ queryKey: ['room'] }).find(([, r]) => r?.tasks?.some((x) => x.topicId === t.topicId))?.[1];
-      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, t.topicId!) });
+      if (getFocusSettings().celebrate && me) celebrate({ topicTitle: t.title, roomName: room?.name ?? '', accent: me.accent, ...plantGrowth(room, me.id, me.today, t.topicId!) });
       else toast('Done 🌼', 'success');
     },
   });

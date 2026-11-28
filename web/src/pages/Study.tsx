@@ -34,7 +34,6 @@ type Outcome = { kind: 'completed' | 'finished'; topicTitle: string; focusedMs: 
 export function StudyPage() {
   const [params, setParams] = useSearchParams();
   const topicParam = params.get('topic');
-  const taskParam = params.get('task');
   const { data: session, isLoading } = useActiveSession();
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
@@ -52,7 +51,7 @@ export function StudyPage() {
       />
     );
   }
-  return <StartScreen topicId={topicParam} taskId={taskParam} outcome={outcome} clearOutcome={() => setOutcome(null)} />;
+  return <StartScreen topicId={topicParam} outcome={outcome} clearOutcome={() => setOutcome(null)} />;
 }
 
 // ───────────── Running / paused ─────────────
@@ -96,7 +95,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
         if (body.parts && body.parts.length > 1) toast(`Saved as ${body.parts.length} tasks 🌱`);
         if (r.partDone) toast(`“${session.subtopicTitle}” done ✓ ${subtopics.length - openParts.length + 1}/${subtopics.length} subtopics`, 'success');
         qc.setQueryData<any>(['session'], null);
-        const plant = body.completeTopic && me ? plantGrowth(qc.getQueryData<RoomDetail>(['room', session.roomId]), me.id, session.topicId) : undefined;
+        const plant = body.completeTopic && me ? plantGrowth(qc.getQueryData<RoomDetail>(['room', session.roomId]), me.id, me.today, session.topicId) : undefined;
         if (plant && r.completedTopic) celebrate({ topicTitle: session.topicTitle, roomName: session.roomName, accent: me!.accent, ...plant });
         onOutcome({
           kind: body.completeTopic && !r.partDone ? 'completed' : 'finished',
@@ -572,7 +571,7 @@ function useTopicRoom(topicId: string | null) {
   });
 }
 
-function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: string | null; taskId: string | null; outcome: Outcome | null; clearOutcome: () => void }) {
+function StartScreen({ topicId, outcome, clearOutcome }: { topicId: string | null; outcome: Outcome | null; clearOutcome: () => void }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const { data: me } = useMe();
@@ -629,7 +628,6 @@ function StartScreen({ topicId, taskId, outcome, clearOutcome }: { topicId: stri
             topicId: selected!.id,
             targetMinutes: targetText ? Math.round(Number(targetText)) : null,
             remindAfterHour: remind,
-            taskId,
             subtopicId,
           }),
     {

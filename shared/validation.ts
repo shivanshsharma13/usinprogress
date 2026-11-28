@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { ACCENTS, REACTIONS } from './theme.ts';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a valid date');
-const time = z.string().regex(/^\d{2}:\d{2}$/, 'Use a valid time');
 const minutes = z.number().int().min(1).max(100_000);
 const text = (max: number) => z.string().trim().max(max);
 const title = z.string().trim().min(1, 'Please add a title').max(140);
@@ -113,13 +112,11 @@ export const topicUpdateSchema = topicCreateSchema.partial().extend({
   status: z.enum(['active', 'archived']).optional(),
 });
 
-export const reorderSchema = z.object({ topicIds: z.array(z.string()).min(1).max(500) });
 
 export const sessionStartSchema = z.object({
   topicId: z.string().min(1),
   targetMinutes: minutes.max(600).nullable().optional(),
   remindAfterHour: z.boolean().optional(),
-  taskId: z.string().nullable().optional(),
   subtopicId: z.string().uuid().nullable().optional(),
 });
 
@@ -220,41 +217,6 @@ export const goalTaskUpdateSchema = z.object({
 
 export const goalMergeSchema = z.object({ into: z.string().uuid() });
 
-export const sprintCreateSchema = z.object({ days: sprintLength.optional() });
-export const sprintUpdateSchema = z.object({ days: sprintLength });
-
-export const planTaskCreateSchema = z.object({
-  day: z.number().int().min(0).nullable(), // null = straight into the backlog
-  title,
-  estMinutes: minutes.max(24 * 60).nullable().optional(),
-});
-
-export const planTaskUpdateSchema = z.object({
-  day: z.number().int().min(0).nullable().optional(),
-  title: title.optional(),
-  estMinutes: minutes.max(24 * 60).nullable().optional(),
-  starred: z.boolean().optional(),
-});
-
-export const pullSprintSchema = z.object({ roomId: z.string().min(1, 'Choose a room') });
-
-export const taskCreateSchema = z.object({
-  title,
-  description: text(1000).optional(),
-  date,
-  startTime: time.nullable().optional(),
-  durationMinutes: minutes.max(24 * 60).nullable().optional(),
-  roomId: z.string().nullable().optional(),
-  topicId: z.string().nullable().optional(),
-  shared: z.boolean().optional(),
-  note: text(1000).optional(),
-});
-
-export const taskUpdateSchema = taskCreateSchema.partial().extend({
-  completed: z.boolean().optional(),
-  status: z.enum(['active', 'archived']).optional(),
-});
-
 export const encourageSchema = z.object({
   recipientId: z.string().min(1),
   reaction: z.enum(Object.keys(REACTIONS) as [keyof typeof REACTIONS, ...(keyof typeof REACTIONS)[]]).optional(),
@@ -263,5 +225,4 @@ export const encourageSchema = z.object({
 });
 
 export type SignUpInput = z.infer<typeof signUpSchema>;
-export type TaskCreateInput = z.infer<typeof taskCreateSchema>;
 export type TopicCreateInput = z.infer<typeof topicCreateSchema>;
