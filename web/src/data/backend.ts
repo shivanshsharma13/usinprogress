@@ -991,7 +991,10 @@ export function createBackend(sb: SupabaseClient, opts: { now?: () => number } =
         return { moved: await rpc('merge_goal', { p_from: p[0], p_into: parse(v.goalMergeSchema, body).into }) };
       case 'POST /plans/:id/goal-tasks': {
         const input = parse(v.goalTaskCreateSchema, body);
-        return { id: await rpc('add_goal_task', { p_plan: p[0], p_date: input.date, p_title: input.title, p_est: input.estMinutes ?? null }) };
+        const id = await rpc<string>('add_goal_task', { p_plan: p[0], p_date: input.date, p_title: input.title, p_est: input.estMinutes ?? null });
+        // Its topic too, so subtopics can be added straight away.
+        const topicId = ((await rows(sb.from('plan_tasks').select('topic_id').eq('id', id)))[0]?.topic_id as string | undefined) ?? null;
+        return { id, topicId };
       }
       case 'POST /rooms/:id/tasks': {
         const input = parse(v.goalTaskCreateSchema, body);

@@ -185,7 +185,7 @@ export function SubtopicPanel({ topicId, description, canAct }: { topicId: strin
 const ESTS = [15, 30, 45, 60, 90, 120, 180];
 
 /** How long a subtopic takes. */
-function EstSelect({ value, onChange, label }: { value: number | null; onChange: (m: number | null) => void; label: string }) {
+export function EstSelect({ value, onChange, label }: { value: number | null; onChange: (m: number | null) => void; label: string }) {
   const options = value && !ESTS.includes(value) ? [...ESTS, value].sort((a, b) => a - b) : ESTS;
   return (
     <select className="input sub-est" value={value ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)} aria-label={label}>
