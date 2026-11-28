@@ -320,7 +320,7 @@ export function TopicList({ tasks, today, active }: { tasks: GoalTask[]; today: 
       {done.length > 0 && (
         <details className="task-group">
           <summary>
-            <b className="small">Done ({done.length})</b>
+            <b className="small">Done topics ({done.length})</b>
           </summary>
           <div className="task-rows">
             {done.map((t) => (

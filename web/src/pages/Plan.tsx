@@ -21,6 +21,7 @@ export function PlanPage() {
   if (isLoading || !me) return <Spinner />;
   if (error || !plan) return <ErrorNote error={error} retry={refetch} />;
   const active = plan.status === 'active';
+  const planned = plannedItems(plan.tasks);
 
   return (
     <div className="stack-lg" style={{ maxWidth: 720, margin: '0 auto', width: '100%' }}>
@@ -62,23 +63,30 @@ export function PlanPage() {
       )}
       {active && plan.roomId && <AddTaskBox planId={plan.id} today={me.today} existing={plan.tasks} />}
 
-      {/* The same list as the room: what's planned for today, missed or coming up. */}
-      <div className="card stack">
-        <h2>Planned</h2>
-        <TaskList
-          tasks={plannedItems(plan.tasks)}
-          today={me.today}
-          isMe
-          active={active && Boolean(plan.roomId)}
-          empty={<p className="small muted">Nothing planned yet. Open a topic below and give its subtopics a day; they show here and in {plan.roomName ?? 'the room'}.</p>}
-        />
-      </div>
-
       {plan.tasks.length ? (
         <TopicList tasks={plan.tasks} today={me.today} active={active && Boolean(plan.roomId)} />
       ) : (
         <p className="small muted">No topics yet. Add your first one above, then open it to add subtopics.</p>
       )}
+
+      {/* The same list as the room (what's planned by day), folded away at the end. */}
+      <details className="card planned-card">
+        <summary className="row between">
+          <h2>Planned</h2>
+          <span className="small muted">
+            {planned.filter((t) => !t.done && t.date === me.today).length} today · {planned.filter((t) => !t.done && t.date !== null && t.date > me.today).length} coming up
+          </span>
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          <TaskList
+            tasks={planned}
+            today={me.today}
+            isMe
+            active={active && Boolean(plan.roomId)}
+            empty={<p className="small muted">Nothing planned yet. Open a topic above and give its subtopics a day; they show here and in {plan.roomName ?? 'the room'}.</p>}
+          />
+        </div>
+      </details>
 
       {dialog === 'rename' && <RenameModal plan={plan} onClose={() => setDialog(null)} />}
       {dialog === 'room' && <RoomModal plan={plan} onClose={() => setDialog(null)} />}

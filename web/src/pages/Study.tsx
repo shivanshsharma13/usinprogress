@@ -184,9 +184,7 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
 
   return (
     <div className="stack-lg" style={{ maxWidth: 560, margin: '0 auto', width: '100%' }}>
-      <Link to={`/rooms/${session.roomId}`} className="row small muted" style={{ textDecoration: 'none' }}>
-        <ChevronLeft width={18} /> {session.roomName}
-      </Link>
+      <BackButton fallback={`/rooms/${session.roomId}`} label={session.roomName} />
 
       {requestedTopic && (
         <div className="banner" role="status">
@@ -344,6 +342,20 @@ function ActiveTimer({ session, requestedTopic, onOutcome }: { session: ActiveSe
           <p>This time won't count toward anything. A record stays in your history so nothing disappears silently.</p>
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** Back to where you came from (the room or goal you pressed Start in), or to the fallback when opened directly. */
+function BackButton({ fallback, label }: { fallback: string; label?: string }) {
+  const navigate = useNavigate();
+  const canGoBack = typeof window !== 'undefined' && (window.history.state?.idx ?? 0) > 0;
+  return (
+    <div className="row" style={{ gap: 8 }}>
+      <button className="btn ghost small" onClick={() => (canGoBack ? navigate(-1) : navigate(fallback))}>
+        <ChevronLeft width={18} /> Back
+      </button>
+      {label && <span className="small muted">{label}</span>}
     </div>
   );
 }
@@ -666,6 +678,7 @@ function StartScreen({ topicId, outcome, clearOutcome }: { topicId: string | nul
 
   return (
     <div className="stack-lg" style={{ maxWidth: 640, margin: '0 auto' }}>
+      <BackButton fallback="/" />
       <div className="page-head" style={{ marginBottom: 0 }}>
         <div>
           <h1>Study</h1>

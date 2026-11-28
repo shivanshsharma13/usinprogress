@@ -909,3 +909,4 @@ details.rest[open] > summary::after { transform: rotate(180deg); }
 .sub-add { display: flex; flex-wrap: wrap; gap: 6px; }
 .sub-add .input.grow { flex: 1 1 200px; }
 @media (max-width: 520px) { .sub-plan { width: 100%; padding-left: 30px; } }
+.planned-card > summary h2 { margin: 0; }
